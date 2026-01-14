@@ -1,0 +1,351 @@
+{
+  "name": "Sageworks -> HubSpot",
+  "type": "SHARED",
+  "summary": "Updates HubSpot records when Sageworks loan is completed",
+  "description": "Triggered by Sageworks webhook, validates loan status, updates HubSpot contact/company lifecycle stage to customer, and marks deal as closed won",
+  "tags": ["sageworks", "hubspot", "loan-completion"],
+  "author": "vqnguyen1",
+  "categories": [],
+  "pieces": [
+    "@activepieces/piece-webhook",
+    "@vqnguyen1/piece-sageworks",
+    "@activepieces/piece-hubspot"
+  ],
+  "status": "PUBLISHED",
+  "blogUrl": "",
+  "metadata": null,
+  "flows": [
+    {
+      "displayName": "Sageworks -> HubSpot",
+      "trigger": {
+        "name": "trigger",
+        "valid": true,
+        "displayName": "Catch Webhook (Sageworks)",
+        "type": "PIECE_TRIGGER",
+        "settings": {
+          "propertySettings": {
+            "authType": {
+              "type": "MANUAL"
+            },
+            "authFields": {
+              "type": "MANUAL",
+              "schema": {}
+            }
+          },
+          "pieceName": "@activepieces/piece-webhook",
+          "pieceVersion": "~0.1.25",
+          "input": {
+            "authType": "none",
+            "authFields": {}
+          },
+          "sampleData": {
+            "body": {
+              "loanId": "12345",
+              "event": "loan.status.changed",
+              "status": "completed"
+            }
+          },
+          "triggerName": "catch_webhook"
+        },
+        "nextAction": {
+          "name": "step_1",
+          "skip": false,
+          "type": "PIECE",
+          "valid": true,
+          "displayName": "Proposed Loan - Get",
+          "settings": {
+            "input": {
+              "auth": "{{connections['SAGEWORKS_CONNECTION']}}",
+              "id": "{{trigger['body']['loanId']}}"
+            },
+            "pieceName": "@vqnguyen1/piece-sageworks",
+            "actionName": "proposed_loan_get",
+            "sampleData": {
+              "id": "12345",
+              "status": "completed",
+              "businessType": "Company",
+              "crmIdentifier": "hubspot-deal-123",
+              "customer": {
+                "id": "cust-456",
+                "crmIdentifier": "hubspot-company-789"
+              }
+            },
+            "pieceVersion": "~0.0.2",
+            "propertySettings": {
+              "id": {
+                "type": "MANUAL"
+              }
+            },
+            "errorHandlingOptions": {
+              "retryOnFailure": {
+                "value": false
+              },
+              "continueOnFailure": {
+                "value": false
+              }
+            }
+          },
+          "nextAction": {
+            "name": "step_2",
+            "skip": false,
+            "type": "ROUTER",
+            "valid": true,
+            "displayName": "Router - Check Status Completed",
+            "children": [
+              {
+                "name": "step_3",
+                "skip": false,
+                "type": "ROUTER",
+                "valid": true,
+                "displayName": "Router - Check Business Type",
+                "children": [
+                  {
+                    "name": "step_4",
+                    "skip": false,
+                    "type": "PIECE",
+                    "valid": true,
+                    "displayName": "Update Company - Lifecycle Stage",
+                    "settings": {
+                      "input": {
+                        "auth": "{{connections['HUBSPOT_CONNECTION']}}",
+                        "companyId": "{{step_1['customer']['crmIdentifier']}}",
+                        "objectProperties": {
+                          "lifecyclestage": "customer"
+                        },
+                        "additionalPropertiesToRetrieve": []
+                      },
+                      "pieceName": "@activepieces/piece-hubspot",
+                      "actionName": "update-company",
+                      "sampleData": {},
+                      "pieceVersion": "~0.8.0",
+                      "propertySettings": {
+                        "markdown": {
+                          "type": "MANUAL"
+                        },
+                        "companyId": {
+                          "type": "MANUAL"
+                        },
+                        "objectProperties": {
+                          "type": "MANUAL"
+                        },
+                        "additionalPropertiesToRetrieve": {
+                          "type": "MANUAL"
+                        }
+                      },
+                      "errorHandlingOptions": {
+                        "retryOnFailure": {
+                          "value": true
+                        },
+                        "continueOnFailure": {
+                          "value": false
+                        }
+                      }
+                    },
+                    "nextAction": {
+                      "name": "step_6",
+                      "skip": false,
+                      "type": "PIECE",
+                      "valid": true,
+                      "displayName": "Update Deal - Closed Won",
+                      "settings": {
+                        "input": {
+                          "auth": "{{connections['HUBSPOT_CONNECTION']}}",
+                          "dealId": "{{step_1['crmIdentifier']}}",
+                          "pipelineId": "default",
+                          "pipelineStageId": "closedwon",
+                          "objectProperties": {},
+                          "additionalPropertiesToRetrieve": []
+                        },
+                        "pieceName": "@activepieces/piece-hubspot",
+                        "actionName": "update-deal",
+                        "sampleData": {},
+                        "pieceVersion": "~0.8.0",
+                        "propertySettings": {
+                          "markdown": {
+                            "type": "MANUAL"
+                          },
+                          "dealId": {
+                            "type": "MANUAL"
+                          },
+                          "dealname": {
+                            "type": "MANUAL"
+                          },
+                          "pipelineId": {
+                            "type": "MANUAL"
+                          },
+                          "pipelineStageId": {
+                            "type": "MANUAL"
+                          },
+                          "objectProperties": {
+                            "type": "MANUAL"
+                          },
+                          "additionalPropertiesToRetrieve": {
+                            "type": "MANUAL"
+                          }
+                        },
+                        "errorHandlingOptions": {
+                          "retryOnFailure": {
+                            "value": true
+                          },
+                          "continueOnFailure": {
+                            "value": false
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "name": "step_5",
+                    "skip": false,
+                    "type": "PIECE",
+                    "valid": true,
+                    "displayName": "Update Contact - Lifecycle Stage",
+                    "settings": {
+                      "input": {
+                        "auth": "{{connections['HUBSPOT_CONNECTION']}}",
+                        "contactId": "{{step_1['customer']['crmIdentifier']}}",
+                        "objectProperties": {
+                          "lifecyclestage": "customer"
+                        },
+                        "additionalPropertiesToRetrieve": []
+                      },
+                      "pieceName": "@activepieces/piece-hubspot",
+                      "actionName": "update-contact",
+                      "sampleData": {},
+                      "pieceVersion": "~0.8.0",
+                      "propertySettings": {
+                        "markdown": {
+                          "type": "MANUAL"
+                        },
+                        "contactId": {
+                          "type": "MANUAL"
+                        },
+                        "objectProperties": {
+                          "type": "MANUAL"
+                        },
+                        "additionalPropertiesToRetrieve": {
+                          "type": "MANUAL"
+                        }
+                      },
+                      "errorHandlingOptions": {
+                        "retryOnFailure": {
+                          "value": true
+                        },
+                        "continueOnFailure": {
+                          "value": false
+                        }
+                      }
+                    },
+                    "nextAction": {
+                      "name": "step_7",
+                      "skip": false,
+                      "type": "PIECE",
+                      "valid": true,
+                      "displayName": "Update Deal - Closed Won (Contact Path)",
+                      "settings": {
+                        "input": {
+                          "auth": "{{connections['HUBSPOT_CONNECTION']}}",
+                          "dealId": "{{step_1['crmIdentifier']}}",
+                          "pipelineId": "default",
+                          "pipelineStageId": "closedwon",
+                          "objectProperties": {},
+                          "additionalPropertiesToRetrieve": []
+                        },
+                        "pieceName": "@activepieces/piece-hubspot",
+                        "actionName": "update-deal",
+                        "sampleData": {},
+                        "pieceVersion": "~0.8.0",
+                        "propertySettings": {
+                          "markdown": {
+                            "type": "MANUAL"
+                          },
+                          "dealId": {
+                            "type": "MANUAL"
+                          },
+                          "dealname": {
+                            "type": "MANUAL"
+                          },
+                          "pipelineId": {
+                            "type": "MANUAL"
+                          },
+                          "pipelineStageId": {
+                            "type": "MANUAL"
+                          },
+                          "objectProperties": {
+                            "type": "MANUAL"
+                          },
+                          "additionalPropertiesToRetrieve": {
+                            "type": "MANUAL"
+                          }
+                        },
+                        "errorHandlingOptions": {
+                          "retryOnFailure": {
+                            "value": true
+                          },
+                          "continueOnFailure": {
+                            "value": false
+                          }
+                        }
+                      }
+                    }
+                  }
+                ],
+                "settings": {
+                  "branches": [
+                    {
+                      "branchName": "Business (Company)",
+                      "branchType": "CONDITION",
+                      "conditions": [
+                        [
+                          {
+                            "operator": "TEXT_EXACTLY_MATCHES",
+                            "firstValue": "{{step_1['businessType']}}",
+                            "secondValue": "Company",
+                            "caseSensitive": false
+                          }
+                        ]
+                      ]
+                    },
+                    {
+                      "branchName": "Individual (Contact)",
+                      "branchType": "FALLBACK"
+                    }
+                  ],
+                  "sampleData": {},
+                  "executionType": "EXECUTE_FIRST_MATCH"
+                }
+              },
+              null
+            ],
+            "settings": {
+              "branches": [
+                {
+                  "branchName": "Status is Completed",
+                  "branchType": "CONDITION",
+                  "conditions": [
+                    [
+                      {
+                        "operator": "TEXT_EXACTLY_MATCHES",
+                        "firstValue": "{{step_1['status']}}",
+                        "secondValue": "completed",
+                        "caseSensitive": false
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "branchName": "Status Not Completed - Do Nothing",
+                  "branchType": "FALLBACK"
+                }
+              ],
+              "sampleData": {},
+              "executionType": "EXECUTE_FIRST_MATCH"
+            }
+          }
+        }
+      },
+      "valid": true,
+      "schemaVersion": "10"
+    }
+  ]
+}
