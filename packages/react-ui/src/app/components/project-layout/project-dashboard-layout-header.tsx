@@ -1,5 +1,6 @@
 import { t } from 'i18next';
 import {
+  Bot,
   ChevronDown,
   History,
   Link2,
@@ -88,6 +89,13 @@ export const ProjectDashboardLayoutHeader = () => {
         checkAccess(Permission.READ_PROJECT_RELEASE) &&
         !isEmbedded,
       show: project.releasesEnabled,
+    },
+    {
+      to: authenticationSession.appendProjectRoutePrefix('/ai-assistant'),
+      icon: Bot,
+      label: t('AI Assistant'),
+      hasPermission: checkAccess(Permission.READ_FLOW),
+      show: true,
     },
   ];
 

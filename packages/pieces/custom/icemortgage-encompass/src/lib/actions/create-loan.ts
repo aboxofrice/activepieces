@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const createLoan = createAction({
   name: 'loan_create',
@@ -54,12 +54,11 @@ export const createLoan = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanData, loanFolder, view, templateType, templatePath } = context.propsValue;
 
     // Get access token
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     // Build query parameters
     const queryParams = new URLSearchParams();
@@ -68,7 +67,7 @@ export const createLoan = createAction({
     if (templateType) queryParams.append('templateType', templateType);
     if (templatePath) queryParams.append('templatePath', templatePath);
 
-    const url = `${baseUrl}/encompass/v3/loans${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+    const url = `${authProps.baseUrl}/encompass/v3/loans${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.POST,

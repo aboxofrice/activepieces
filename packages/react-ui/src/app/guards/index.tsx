@@ -28,6 +28,7 @@ import { PlatformLayout } from '../components/platform-layout';
 import { ProjectDashboardLayout } from '../components/project-layout';
 import { BuilderNavigationSidebar } from '../components/sidebar/builder';
 import NotFoundPage from '../routes/404-page';
+import { AIAssistantPage } from '../routes/ai-assistant';
 import AuthenticatePage from '../routes/authenticate';
 import { ChangePasswordPage } from '../routes/change-password';
 import { AppConnectionsPage } from '../routes/connections';
@@ -249,6 +250,18 @@ const routes = [
       <PageTitle title="Todo Testing">
         <TodoTestingPage />
       </PageTitle>
+    ),
+  }),
+  ...ProjectRouterWrapper({
+    path: routesThatRequireProjectId.aiAssistant,
+    element: (
+      <ProjectDashboardLayout>
+        <RoutePermissionGuard permission={Permission.READ_FLOW}>
+          <PageTitle title="AI Assistant">
+            <AIAssistantPage />
+          </PageTitle>
+        </RoutePermissionGuard>
+      </ProjectDashboardLayout>
     ),
   }),
   ...ProjectRouterWrapper({

@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const addDocumentComments = createAction({
   name: 'document_add_comments',
@@ -41,11 +41,10 @@ export const addDocumentComments = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId, documentId, comments, view } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const queryParams = new URLSearchParams();
     queryParams.append('action', 'add');
@@ -53,7 +52,7 @@ export const addDocumentComments = createAction({
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.PATCH,
-      url: `${baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}/comments?${queryParams.toString()}`,
+      url: `${authProps.baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}/comments?${queryParams.toString()}`,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,

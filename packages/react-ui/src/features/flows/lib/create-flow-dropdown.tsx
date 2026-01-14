@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { t } from 'i18next';
-import { ChevronDown, Plus, Upload, Workflow } from 'lucide-react';
+import { ChevronDown, Plus, Sparkles, Upload, Workflow } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -21,7 +21,7 @@ import {
 import { foldersApi } from '@/features/folders/lib/folders-api';
 import { useAuthorization } from '@/hooks/authorization-hooks';
 import { authenticationSession } from '@/lib/authentication-session';
-import { cn, NEW_FLOW_QUERY_PARAM } from '@/lib/utils';
+import { cn, NEW_FLOW_QUERY_PARAM, routesThatRequireProjectId } from '@/lib/utils';
 import {
   Permission,
   PopulatedFlow,
@@ -128,6 +128,20 @@ export const CreateFlowDropdown = ({
               <span>{t('Use a template')}</span>
             </DropdownMenuItem>
           </SelectFlowTemplateDialog>
+
+          <DropdownMenuItem
+            onSelect={() => {
+              navigate(
+                authenticationSession.appendProjectRoutePrefix(
+                  routesThatRequireProjectId.aiAssistant,
+                ),
+              );
+            }}
+            disabled={isCreateFlowPending}
+          >
+            <Sparkles className="h-4 w-4 me-2" />
+            <span>{t('From AI')}</span>
+          </DropdownMenuItem>
 
           {!embedState.hideExportAndImportFlow && (
             <ImportFlowDialog

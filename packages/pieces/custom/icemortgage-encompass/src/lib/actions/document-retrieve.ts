@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const retrieveDocument = createAction({
   name: 'document_retrieve',
@@ -24,15 +24,14 @@ export const retrieveDocument = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId, documentId } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.GET,
-      url: `${baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}`,
+      url: `${authProps.baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}`,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,

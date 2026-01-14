@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const listDocuments = createAction({
   name: 'document_list',
@@ -44,18 +44,17 @@ export const listDocuments = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId, view, includeRemoved, requireActiveAttachments } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const queryParams = new URLSearchParams();
     if (view) queryParams.append('view', view);
     if (includeRemoved) queryParams.append('includeRemoved', 'true');
     if (requireActiveAttachments) queryParams.append('requireActiveAttachments', 'true');
 
-    const url = `${baseUrl}/encompass/v3/loans/${loanId}/documents${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+    const url = `${authProps.baseUrl}/encompass/v3/loans/${loanId}/documents${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.GET,
