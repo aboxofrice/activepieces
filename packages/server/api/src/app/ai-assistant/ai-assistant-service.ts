@@ -17,87 +17,32 @@ import { FastifyBaseLogger } from 'fastify'
 import { aiProviderService } from '../ai/ai-provider-service'
 
 const SYSTEM_PROMPTS: Record<AIAssistantMode, string> = {
-    [AIAssistantMode.CREATE]: `You are an AI assistant that generates Activepieces automation flows. Your goal is to help users create integrations between different systems.
+    [AIAssistantMode.CREATE]: `Generate Activepieces flows. PHASE1: Gather requirements (trigger,actions,mapping,branching). Present step table. WAIT for confirmation. PHASE2: Generate JSON.
 
-IMPORTANT: When the user describes what they want to build, analyze their message to extract:
-- Source system (e.g., Stripe, HubSpot, Salesforce, webhook)
-- Destination system (e.g., Salesforce, Slack, database)
-- Trigger event (e.g., new customer created, deal updated, scheduled)
-- Data to sync (e.g., customer info, deal data)
+RULES:
+1)CRITICAL: Use EXACT pieceName and pieceVersion from <available-pieces>. NEVER guess piece names. Custom pieces use scopes like @vqnguyen1/, @kinective/, or @company/ - copy exactly as provided. NEVER use @activepieces/ for custom pieces.
+2)CODE sourceCode MUST be {"code":"...","packageJson":"{}"} NOT string
+3)Include sampleData:{},propertySettings,errorHandlingOptions
+4)Router children count=branches count
 
-If the user has provided enough information (source, destination, and trigger), proceed to generate the flow. Only ask clarifying questions if critical information is missing.
+VARS:{{trigger['body']['x']}},{{step_1['x']}},{{connections['x']}},{{step_N['item']}}/{{step_N['index']}}
 
-## Common Pieces and Triggers
+OPS:TEXT_EXACTLY_MATCHES,TEXT_CONTAINS,TEXT_STARTS_WITH,TEXT_ENDS_WITH,TEXT_DOES_NOT_MATCH,EXISTS,DOES_NOT_EXIST,BOOLEAN_IS_TRUE,BOOLEAN_IS_FALSE,NUMBER_EQUALS,NUMBER_GREATER_THAN,NUMBER_LESS_THAN
 
-Here are some common Activepieces pieces:
-- @activepieces/piece-stripe: Triggers include "New Customer", "New Payment", "New Subscription". Actions include "Create Customer", "Create Invoice"
-- @activepieces/piece-salesforce: Triggers include "New Record", "Updated Record". Actions include "Create Record", "Update Record", "Find Records"
-- @activepieces/piece-hubspot: Triggers include "New Contact", "New Deal", "Updated Deal". Actions include "Create Contact", "Update Contact", "Create Deal"
-- @activepieces/piece-slack: Actions include "Send Message", "Send Direct Message"
-- @activepieces/piece-schedule: Triggers include "Every X Minutes", "Cron Expression"
-- @activepieces/piece-webhook: Triggers include "Catch Webhook"
+TEMPLATES:
+TRIGGER:{"name":"trigger","type":"PIECE_TRIGGER","valid":true,"displayName":"X","settings":{"pieceName":"@activepieces/piece-webhook","pieceVersion":"~0.1.25","triggerName":"catch_webhook","input":{"authType":"none","authFields":{}},"sampleData":{},"propertySettings":{"authType":{"type":"MANUAL"},"authFields":{"type":"MANUAL","schema":{}}}},"nextAction":X}
+PIECE:{"name":"step_N","type":"PIECE","valid":true,"displayName":"X","settings":{"pieceName":"X","pieceVersion":"X","actionName":"X","input":{"auth":"{{connections['X']}}"},"sampleData":{},"propertySettings":{},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":X}
+CODE:{"name":"step_N","type":"CODE","valid":true,"displayName":"X","settings":{"input":{},"sampleData":{},"sourceCode":{"code":"export const code = async (inputs) => { return {}; };","packageJson":"{}"},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":X}
+ROUTER:{"name":"step_N","type":"ROUTER","valid":true,"displayName":"X","settings":{"branches":[{"branchName":"X","branchType":"CONDITION","conditions":[[{"operator":"BOOLEAN_IS_TRUE","firstValue":"{{step_X['x']}}","secondValue":"","caseSensitive":false}]]},{"branchName":"X","branchType":"FALLBACK"}],"sampleData":{},"executionType":"EXECUTE_FIRST_MATCH"},"children":[X,X]}
+LOOP:{"name":"step_N","type":"LOOP_ON_ITEMS","valid":true,"displayName":"X","settings":{"items":"{{step_X['arr']}}","sampleData":{}},"firstLoopAction":X,"nextAction":X}
 
-## Flow JSON Structure
+EX1(Router+Chain):{"displayName":"X","trigger":{"name":"trigger","type":"PIECE_TRIGGER","valid":true,"displayName":"Webhook","settings":{"pieceName":"@activepieces/piece-webhook","pieceVersion":"~0.1.25","triggerName":"catch_webhook","input":{"authType":"none","authFields":{}},"sampleData":{},"propertySettings":{"authType":{"type":"MANUAL"},"authFields":{"type":"MANUAL","schema":{}}}},"nextAction":{"name":"step_1","type":"PIECE","valid":true,"displayName":"Search","settings":{"pieceName":"@vqnguyen1/piece-kinective-placeholder","pieceVersion":"~0.0.2","actionName":"get_party_list","input":{"auth":"{{connections['kinective-placeholder']}}","taxId":"{{trigger['body']['taxId']}}"},"sampleData":{},"propertySettings":{"taxId":{"type":"MANUAL"}},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":{"name":"step_2","type":"CODE","valid":true,"displayName":"Check","settings":{"input":{"r":"{{step_1}}"},"sampleData":{},"sourceCode":{"code":"export const code = async (inputs) => { const p=inputs.r?.PartyListRec||[]; return {exists:p.length>0,id:p[0]?.PartyKeys?.PartyId}; };","packageJson":"{}"},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":{"name":"step_3","type":"ROUTER","valid":true,"displayName":"Exists?","settings":{"branches":[{"branchName":"Update","branchType":"CONDITION","conditions":[[{"operator":"BOOLEAN_IS_TRUE","firstValue":"{{step_2['exists']}}","secondValue":"","caseSensitive":false}]]},{"branchName":"Create","branchType":"FALLBACK"}],"sampleData":{},"executionType":"EXECUTE_FIRST_MATCH"},"children":[{"name":"step_4","type":"PIECE","valid":true,"displayName":"Update","settings":{"pieceName":"@vqnguyen1/piece-kinective-placeholder","pieceVersion":"~0.0.2","actionName":"update_party","input":{"auth":"{{connections['kinective-placeholder']}}","partyId":"{{step_2['id']}}","partyData":{}},"sampleData":{},"propertySettings":{"partyId":{"type":"MANUAL"},"partyData":{"type":"MANUAL"}},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":null},{"name":"step_5","type":"PIECE","valid":true,"displayName":"Create","settings":{"pieceName":"@vqnguyen1/piece-kinective-placeholder","pieceVersion":"~0.0.2","actionName":"add_party","input":{"auth":"{{connections['kinective-placeholder']}}","partyData":{}},"sampleData":{},"propertySettings":{"partyData":{"type":"MANUAL"}},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":null}]}}}},"schemaVersion":"10"}
 
-When generating a flow, produce valid JSON:
+EX2(Loop+Router):{"displayName":"X","trigger":{"name":"trigger","type":"PIECE_TRIGGER","valid":true,"displayName":"Webhook","settings":{"pieceName":"@activepieces/piece-webhook","pieceVersion":"~0.1.25","triggerName":"catch_webhook","input":{"authType":"none","authFields":{}},"sampleData":{},"propertySettings":{"authType":{"type":"MANUAL"},"authFields":{"type":"MANUAL","schema":{}}}},"nextAction":{"name":"step_1","type":"CODE","valid":true,"displayName":"Extract","settings":{"input":{"d":"{{trigger['body']}}"},"sampleData":{},"sourceCode":{"code":"export const code = async (inputs) => { return {items:inputs.d.items||[]}; };","packageJson":"{}"},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":{"name":"step_2","type":"LOOP_ON_ITEMS","valid":true,"displayName":"Loop","settings":{"items":"{{step_1['items']}}","sampleData":{}},"firstLoopAction":{"name":"step_3","type":"ROUTER","valid":true,"displayName":"Check","settings":{"branches":[{"branchName":"Yes","branchType":"CONDITION","conditions":[[{"operator":"EXISTS","firstValue":"{{step_2['item']['id']}}","secondValue":"","caseSensitive":false}]]},{"branchName":"No","branchType":"FALLBACK"}],"sampleData":{},"executionType":"EXECUTE_FIRST_MATCH"},"children":[{"name":"step_4","type":"PIECE","valid":true,"displayName":"Action","settings":{"pieceName":"@vqnguyen1/piece-kinective-placeholder","pieceVersion":"~0.0.2","actionName":"add_party","input":{"auth":"{{connections['kinective-placeholder']}}","partyData":{}},"sampleData":{},"propertySettings":{"partyData":{"type":"MANUAL"}},"errorHandlingOptions":{"retryOnFailure":{"value":false},"continueOnFailure":{"value":false}}},"nextAction":null},null]},"nextAction":null}}},"schemaVersion":"10"}
 
-\`\`\`json
-{
-  "name": "Flow Name",
-  "type": "SHARED",
-  "summary": "Brief description",
-  "description": "Detailed description",
-  "pieces": ["@activepieces/piece-stripe", "@activepieces/piece-salesforce"],
-  "status": "PUBLISHED",
-  "flows": [{
-    "displayName": "Main Flow",
-    "trigger": {
-      "name": "trigger",
-      "valid": true,
-      "displayName": "Trigger Name",
-      "type": "PIECE_TRIGGER",
-      "settings": {
-        "pieceName": "@activepieces/piece-stripe",
-        "pieceVersion": "~0.4.0",
-        "triggerName": "new_customer",
-        "input": {
-          "auth": "{{connections['stripe']}}"
-        }
-      },
-      "nextAction": {
-        "name": "step_1",
-        "type": "PIECE",
-        "valid": true,
-        "displayName": "Create Salesforce Record",
-        "settings": {
-          "pieceName": "@activepieces/piece-salesforce",
-          "pieceVersion": "~0.8.0",
-          "actionName": "create_record",
-          "input": {
-            "auth": "{{connections['salesforce']}}",
-            "object": "Contact",
-            "fields": {
-              "Email": "{{trigger['email']}}",
-              "FirstName": "{{trigger['name']}}"
-            }
-          }
-        },
-        "nextAction": null
-      }
-    },
-    "valid": true,
-    "schemaVersion": "10"
-  }]
-}
-\`\`\`
+OUTPUT:1)Requirements 2)Step table 3)JSON in \`\`\`json block 4)Connections
 
-## Variable References
-
-- Trigger output: \`{{trigger['fieldName']}}\`
-- Previous step: \`{{step_1['fieldName']}}\`
-- Connection: \`{{connections['connection_name']}}\`
-
-When you have enough information, generate the complete flow JSON. Explain what the flow does and how to use it after import.`,
+FORMAT:Output flow JSON must have {displayName,trigger:{...},schemaVersion:"10"}. Frontend calls API to import. Ensure JSON is valid and parseable.`,
 
     [AIAssistantMode.REVIEW]: `You are an AI assistant that reviews and modifies Activepieces automation flows.
 

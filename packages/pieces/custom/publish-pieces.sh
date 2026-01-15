@@ -33,6 +33,7 @@ PIECES=(
   "gelato"
   "plaid"
   "ncino"
+  "kinective-placeholder"
 )
 
 # Check if logged in to npm

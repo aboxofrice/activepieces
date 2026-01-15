@@ -156,30 +156,126 @@ export const FlowWizard = ({ provider, model, onBack, onFlowGenerated }: FlowWiz
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Import flow mutation - defined before generateMutation so it can be called from onSuccess
+  const importMutation = useMutation({
+    mutationFn: async (flowJson: string) => {
+      setImportError(null);
+
+      // Parse the generated JSON
+      let parsedFlow;
+      try {
+        parsedFlow = JSON.parse(flowJson);
+      } catch (e) {
+        throw new Error(`Invalid JSON format: ${e instanceof Error ? e.message : 'Parse error'}`);
+      }
+
+      // Handle both template format (with flows array) and direct import format
+      const flowData = parsedFlow.flows?.[0] || parsedFlow;
+
+      // Validate required fields
+      if (!flowData.trigger) {
+        throw new Error('Flow must have a trigger. The AI may have generated an incomplete flow.');
+      }
+
+      if (!flowData.trigger.settings?.pieceName) {
+        throw new Error('Trigger must have a pieceName in settings.');
+      }
+
+      if (!flowData.trigger.type) {
+        throw new Error('Trigger must have a type (e.g., PIECE_TRIGGER).');
+      }
+
+      // Validate action chain
+      let currentAction = flowData.trigger.nextAction;
+      const stepNames = new Set(['trigger']);
+      while (currentAction) {
+        if (!currentAction.name) {
+          throw new Error('Each action must have a unique name.');
+        }
+        if (stepNames.has(currentAction.name)) {
+          throw new Error(`Duplicate step name: ${currentAction.name}`);
+        }
+        stepNames.add(currentAction.name);
+
+        if (currentAction.type === 'PIECE' && !currentAction.settings?.pieceName) {
+          throw new Error(`Action "${currentAction.name}" must have a pieceName in settings.`);
+        }
+
+        // Handle branching
+        if (currentAction.type === 'BRANCH') {
+          // Branch validation - just check it exists, don't traverse deeply
+          if (!currentAction.settings?.conditions) {
+            throw new Error(`Branch "${currentAction.name}" must have conditions.`);
+          }
+          break; // Stop linear chain validation for branches
+        }
+
+        currentAction = currentAction.nextAction;
+      }
+
+      // Create a new flow first
+      const displayName = flowData.displayName || parsedFlow.name || `${wizardData.sourceSystemName} to ${wizardData.destinationSystemName}`;
+      const newFlow = await flowsApi.create({
+        displayName,
+        projectId: authenticationSession.getProjectId()!,
+      });
+
+      // Import the flow content
+      const importedFlow = await flowsApi.update(newFlow.id, {
+        type: FlowOperationType.IMPORT_FLOW,
+        request: {
+          displayName,
+          trigger: flowData.trigger,
+          schemaVersion: flowData.schemaVersion || '10',
+        },
+      });
+
+      return importedFlow;
+    },
+    onSuccess: (flow) => {
+      toast.success(t('Flow imported successfully!'));
+      onFlowGenerated(generatedFlow!);
+      navigate(`/flows/${flow.id}`);
+    },
+    onError: (error: unknown) => {
+      console.error('Import error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to import flow';
+      setImportError(errorMessage);
+    },
+  });
+
   const generateMutation = useMutation({
     mutationFn: aiAssistantApi.chat,
     onSuccess: (response) => {
       setErrorMessage(null);
       const content = response.message.content;
+      let flowJson: string | null = null;
       const jsonMatch = content.match(/```json\n?([\s\S]*?)\n?```/);
       if (jsonMatch) {
-        setGeneratedFlow(jsonMatch[1]);
+        flowJson = jsonMatch[1];
       } else {
         const rawJsonMatch = content.match(/\{[\s\S]*\}/);
         if (rawJsonMatch) {
-          setGeneratedFlow(rawJsonMatch[0]);
+          flowJson = rawJsonMatch[0];
         } else {
-          setGeneratedFlow(content);
+          flowJson = content;
         }
+      }
+      setGeneratedFlow(flowJson);
+      // Auto-import the flow after generation
+      if (flowJson) {
+        importMutation.mutate(flowJson);
       }
     },
     onError: (error: unknown) => {
       // Extract error message from Axios error structure
       let message = 'Unknown error';
-      const axiosError = error as { response?: { data?: { message?: string; code?: string }; status?: number }; message?: string };
+      const axiosError = error as { response?: { data?: { message?: string; code?: string; params?: { message?: string } }; status?: number }; message?: string };
 
       if (axiosError.response?.data?.message) {
         message = axiosError.response.data.message;
+      } else if (axiosError.response?.data?.params?.message) {
+        message = axiosError.response.data.params.message;
       } else if (axiosError.response?.data?.code) {
         message = axiosError.response.data.code;
       } else if (axiosError.message) {
@@ -192,12 +288,15 @@ export const FlowWizard = ({ provider, model, onBack, onFlowGenerated }: FlowWiz
 
       if (message.includes('ENTITY_NOT_FOUND') || message.includes('not found') || status === 404) {
         setErrorMessage(t('AI provider not configured. Please configure an AI provider in Platform Settings → AI Providers.'));
-      } else if (message.includes('quota') || message.includes('insufficient_quota') || message.includes('rate limit')) {
-        setErrorMessage(t('AI provider quota exceeded. Please check your billing and plan details with your AI provider.'));
-      } else if (message.includes('API key') || message.includes('authentication') || status === 401 || status === 403) {
+      } else if (message.includes('quota') || message.includes('insufficient_quota') || message.includes('rate limit') ||
+                 message.includes('credit') || message.includes('billing') || message.includes('RESOURCE_EXHAUSTED')) {
+        setErrorMessage(t('AI provider quota exceeded or out of credits. Please add credits to your provider account or switch to a different provider.'));
+      } else if (message.includes('API key') || message.includes('authentication') || message.includes('UNAUTHENTICATED') || status === 401 || status === 403) {
         setErrorMessage(t('Invalid API key for the selected AI provider. Please check your configuration.'));
       } else if (status === 500) {
-        setErrorMessage(t('Server error while generating flow. Please check the AI provider configuration and try again.'));
+        // For 500 errors, show a more helpful message with the actual error
+        const shortMessage = message.length > 150 ? message.substring(0, 150) + '...' : message;
+        setErrorMessage(t('Server error: {message}', { message: shortMessage }));
       } else {
         setErrorMessage(t('Failed to generate flow: {message}', { message }));
       }
@@ -241,19 +340,57 @@ export const FlowWizard = ({ provider, model, onBack, onFlowGenerated }: FlowWiz
     const triggerLabel = triggers.find(t => t.value === wizardData.triggerType)?.label || wizardData.triggerType;
     const actionLabel = actions.find(a => a.value === wizardData.actionType)?.label || wizardData.actionType;
 
-    const prompt = `Generate an Activepieces flow JSON for this integration:
+    // Extract trigger props for context
+    const selectedTrigger = sourcePieceDetails?.triggers?.[wizardData.triggerType];
+    const triggerProps = selectedTrigger?.props
+      ? Object.entries(selectedTrigger.props).map(([key, prop]: [string, any]) => ({
+          name: key,
+          displayName: prop.displayName,
+          required: prop.required,
+          type: prop.type,
+        }))
+      : [];
 
-**Source System:** ${wizardData.sourceSystemName} (${wizardData.sourceSystem})
+    // Extract action props for context
+    const selectedAction = destPieceDetails?.actions?.[wizardData.actionType];
+    const actionProps = selectedAction?.props
+      ? Object.entries(selectedAction.props).map(([key, prop]: [string, any]) => ({
+          name: key,
+          displayName: prop.displayName,
+          required: prop.required,
+          type: prop.type,
+        }))
+      : [];
+
+    // Build piece metadata for AI context
+    const pieceMetadata = `<available-pieces>
+<source-piece name="${wizardData.sourceSystem}" version="${sourcePieceDetails?.version || '~0.5.0'}">
+  <trigger name="${wizardData.triggerType}" displayName="${triggerLabel}">
+    <props>${JSON.stringify(triggerProps)}</props>
+  </trigger>
+</source-piece>
+<destination-piece name="${wizardData.destinationSystem}" version="${destPieceDetails?.version || '~0.5.0'}">
+  <action name="${wizardData.actionType}" displayName="${actionLabel}">
+    <props>${JSON.stringify(actionProps)}</props>
+  </action>
+</destination-piece>
+</available-pieces>`;
+
+    const prompt = `${pieceMetadata}
+
+Generate an Activepieces flow JSON:
+
+**Source:** ${wizardData.sourceSystemName} (${wizardData.sourceSystem})
 **Trigger:** ${triggerLabel} (${wizardData.triggerType})
-${wizardData.triggerDescription ? `**Trigger Details:** ${wizardData.triggerDescription}` : ''}
+${wizardData.triggerDescription ? `**Details:** ${wizardData.triggerDescription}` : ''}
 
-**Destination System:** ${wizardData.destinationSystemName} (${wizardData.destinationSystem})
+**Destination:** ${wizardData.destinationSystemName} (${wizardData.destinationSystem})
 **Action:** ${actionLabel} (${wizardData.actionType})
-${wizardData.actionDescription ? `**Action Details:** ${wizardData.actionDescription}` : ''}
+${wizardData.actionDescription ? `**Details:** ${wizardData.actionDescription}` : ''}
 
-${wizardData.additionalDetails ? `**Additional Details:** ${wizardData.additionalDetails}` : ''}
+${wizardData.additionalDetails ? `**Additional:** ${wizardData.additionalDetails}` : ''}
 
-Please generate a complete, valid Activepieces flow JSON that I can import. Include appropriate field mappings based on common fields for these systems.`;
+Generate complete, import-ready JSON with field mappings.`;
 
     generateMutation.mutate({
       provider,
@@ -282,57 +419,6 @@ Please generate a complete, valid Activepieces flow JSON that I can import. Incl
       URL.revokeObjectURL(url);
     }
   };
-
-  // Import flow mutation
-  const importMutation = useMutation({
-    mutationFn: async (flowJson: string) => {
-      setImportError(null);
-
-      // Parse the generated JSON
-      let parsedFlow;
-      try {
-        parsedFlow = JSON.parse(flowJson);
-      } catch {
-        throw new Error('Invalid JSON format');
-      }
-
-      // The AI generates a template format with flows array
-      // We need to extract the first flow
-      const flowData = parsedFlow.flows?.[0] || parsedFlow;
-
-      if (!flowData.trigger) {
-        throw new Error('Flow must have a trigger');
-      }
-
-      // Create a new flow first
-      const displayName = flowData.displayName || parsedFlow.name || `${wizardData.sourceSystemName} to ${wizardData.destinationSystemName}`;
-      const newFlow = await flowsApi.create({
-        displayName,
-        projectId: authenticationSession.getProjectId()!,
-      });
-
-      // Import the flow content
-      const importedFlow = await flowsApi.update(newFlow.id, {
-        type: FlowOperationType.IMPORT_FLOW,
-        request: {
-          displayName,
-          trigger: flowData.trigger,
-          schemaVersion: flowData.schemaVersion || '10',
-        },
-      });
-
-      return importedFlow;
-    },
-    onSuccess: (flow) => {
-      toast.success(t('Flow imported successfully!'));
-      onFlowGenerated(generatedFlow!);
-      navigate(`/flows/${flow.id}`);
-    },
-    onError: (error: Error) => {
-      console.error('Import error:', error);
-      setImportError(error.message || 'Failed to import flow');
-    },
-  });
 
   const handleImport = () => {
     if (generatedFlow) {

@@ -268,11 +268,43 @@ export const AIAssistantPage = () => {
       };
       setMessages((prev) => [...prev, assistantMessage]);
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
+      // Extract detailed error message from Axios error
+      const axiosError = error as {
+        response?: {
+          data?: { message?: string; code?: string; params?: { message?: string } };
+          status?: number
+        };
+        message?: string
+      };
+
+      let errorContent = '';
+      const status = axiosError.response?.status;
+      const serverMessage = axiosError.response?.data?.message
+        || axiosError.response?.data?.params?.message
+        || axiosError.message
+        || 'Unknown error';
+
+      // Check for quota/credit errors
+      if (serverMessage.includes('quota') || serverMessage.includes('insufficient_quota') ||
+          serverMessage.includes('credit') || serverMessage.includes('billing') ||
+          serverMessage.includes('rate limit') || serverMessage.includes('RESOURCE_EXHAUSTED')) {
+        errorContent = t('**API Quota Exceeded**\n\nYour AI provider has run out of credits or exceeded rate limits.\n\n**Solutions:**\n1. Add credits to your provider account\n2. Wait a few minutes if rate limited\n3. Switch to a different AI provider\n\nProvider error: {message}', { message: serverMessage.substring(0, 200) });
+      } else if (serverMessage.includes('API key') || serverMessage.includes('authentication') ||
+                 serverMessage.includes('UNAUTHENTICATED') || status === 401 || status === 403) {
+        errorContent = t('**Authentication Error**\n\nThe API key for your AI provider is invalid or expired.\n\nPlease check your AI provider configuration in Settings → AI Providers.');
+      } else if (serverMessage.includes('ENTITY_NOT_FOUND') || serverMessage.includes('not found') || status === 404) {
+        errorContent = t('**AI Provider Not Found**\n\nNo AI provider is configured for this platform.\n\nPlease configure an AI provider in Settings → AI Providers.');
+      } else if (status === 500) {
+        errorContent = t('**Server Error**\n\nAn error occurred while processing your request.\n\nDetails: {message}', { message: serverMessage.substring(0, 300) });
+      } else {
+        errorContent = t('**Error**\n\n{message}', { message: serverMessage });
+      }
+
       const errorMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: t('Sorry, I encountered an error. Please try again.') + `\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        content: errorContent,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
