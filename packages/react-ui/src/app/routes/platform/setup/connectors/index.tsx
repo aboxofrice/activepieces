@@ -84,7 +84,8 @@ const PlatformConnectorsPage = () => {
           },
         },
         {
-          accessorKey: 'packageName',
+          id: 'packageName',
+          accessorKey: 'name',
           header: ({ column }) => (
             <DataTableColumnHeader
               column={column}

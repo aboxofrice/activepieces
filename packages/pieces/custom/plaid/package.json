@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "tags": ["plaid", "banking", "financial-data"],
   "dependencies": {
     "tslib": "^2.3.0"
   },

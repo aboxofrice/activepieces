@@ -24,6 +24,7 @@ export const PieceBase = Type.Object({
   minimumSupportedRelease: Type.Optional(Type.String()),
   maximumSupportedRelease: Type.Optional(Type.String()),
   i18n:I18nForPiece,
+  packageTags: Type.Optional(Type.Array(Type.String())),
 })
 
 export type PieceBase = {
@@ -42,6 +43,7 @@ export type PieceBase = {
   minimumSupportedRelease?: string;
   maximumSupportedRelease?: string;
   i18n?: Partial<Record<LocalesEnum, Record<string, string>>>
+  packageTags?: string[];
   // this method didn't exist in older version
   getContextInfo: (() => { version: ContextVersion }) | undefined;
 }

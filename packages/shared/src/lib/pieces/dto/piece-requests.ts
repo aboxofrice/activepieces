@@ -116,6 +116,7 @@ export const AddPieceRequestBody = Type.Union([
         }),
         pieceVersion: ExactVersionType,
         pieceArchive: ApMultipartFile,
+        tags: Type.Optional(Type.Array(Type.String())),
     }, {
         title: 'Private Piece',
     }),
@@ -126,6 +127,7 @@ export const AddPieceRequestBody = Type.Union([
             minLength: 1,
         }),
         pieceVersion: ExactVersionType,
+        tags: Type.Optional(Type.Array(Type.String())),
     }, {
         title: 'NPM Piece',
     }),

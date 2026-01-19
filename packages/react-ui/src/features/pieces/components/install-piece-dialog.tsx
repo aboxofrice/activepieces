@@ -1,16 +1,25 @@
 import { typeboxResolver } from '@hookform/resolvers/typebox';
 import { Static, Type } from '@sinclair/typebox';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { HttpStatusCode } from 'axios';
 import { t } from 'i18next';
-import { Plus } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import pako from 'pako';
 import { useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
+import { CreateTagDialog } from '@/app/routes/platform/setup/pieces/create-tag-dialog';
 import { ApMarkdown } from '@/components/custom/markdown';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +36,12 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -34,6 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { piecesTagsApi } from '@/features/platform-admin/lib/pieces-tags';
 import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
 import { api } from '@/lib/api';
@@ -52,6 +68,7 @@ const FormSchema = Type.Object(
     scope: Type.Enum(PieceScope),
     pieceVersion: Type.Optional(Type.String()),
     pieceArchive: Type.Optional(Type.Any()),
+    tags: Type.Optional(Type.Array(Type.String())),
   },
   {
     errorMessage: {
@@ -71,16 +88,27 @@ const InstallPieceDialog = ({
   const { platform } = platformHooks.useCurrentPlatform();
   const isEnabled = platform.plan.managePiecesEnabled;
   const [isOpen, setIsOpen] = useState(false);
+  const [tagsPopoverOpen, setTagsPopoverOpen] = useState(false);
+  const [createTagDialogOpen, setCreateTagDialogOpen] = useState(false);
 
   const { data: privatePiecesEnabled } = flagsHooks.useFlag<boolean>(
     ApFlagId.PRIVATE_PIECES_ENABLED,
   );
+
+  const { data: availableTags = [], refetch: refetchTags } = useQuery({
+    queryKey: ['tags'],
+    queryFn: async () => {
+      const response = await piecesTagsApi.list({ limit: 100 });
+      return response.data;
+    },
+  });
 
   const form = useForm<Static<typeof FormSchema>>({
     resolver: typeboxResolver(FormSchema),
     defaultValues: {
       scope,
       packageType: PackageType.REGISTRY,
+      tags: [],
     },
   });
 
@@ -307,6 +335,126 @@ const InstallPieceDialog = ({
                 )}
               />
             )}
+
+            <FormField
+              name="tags"
+              control={form.control}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Tags (Optional)')}</FormLabel>
+                  <div className="flex flex-col gap-2">
+                    <Popover
+                      open={tagsPopoverOpen}
+                      onOpenChange={setTagsPopoverOpen}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="w-full justify-start"
+                          type="button"
+                        >
+                          {t('Select tags...')}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[200px] p-0" align="start">
+                        <Command>
+                          <CommandList>
+                            {availableTags.length === 0 ? (
+                              <CommandEmpty>{t('No tags created.')}</CommandEmpty>
+                            ) : (
+                              <ScrollArea viewPortClassName="max-h-[200px]">
+                                <CommandGroup>
+                                  {availableTags.map((tag) => {
+                                    const isSelected = field.value?.includes(
+                                      tag.name,
+                                    );
+                                    return (
+                                      <CommandItem
+                                        key={tag.id}
+                                        onSelect={() => {
+                                          const currentTags = field.value || [];
+                                          if (isSelected) {
+                                            field.onChange(
+                                              currentTags.filter(
+                                                (t) => t !== tag.name,
+                                              ),
+                                            );
+                                          } else {
+                                            field.onChange([
+                                              ...currentTags,
+                                              tag.name,
+                                            ]);
+                                          }
+                                        }}
+                                      >
+                                        <div
+                                          className={`mr-2 flex h-4 w-4 items-center justify-center rounded-sm border ${
+                                            isSelected
+                                              ? 'bg-primary border-primary'
+                                              : 'border-input'
+                                          }`}
+                                        >
+                                          {isSelected && (
+                                            <span className="text-primary-foreground text-xs">
+                                              ✓
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span>{tag.name}</span>
+                                      </CommandItem>
+                                    );
+                                  })}
+                                </CommandGroup>
+                              </ScrollArea>
+                            )}
+                            <CreateTagDialog
+                              onTagCreated={(tag) => {
+                                refetchTags();
+                                const currentTags = field.value || [];
+                                field.onChange([...currentTags, tag.name]);
+                              }}
+                              isOpen={createTagDialogOpen}
+                              setIsOpen={setCreateTagDialogOpen}
+                            >
+                              <CommandItem
+                                className="justify-center text-center"
+                                onSelect={() => {
+                                  setCreateTagDialogOpen(true);
+                                }}
+                              >
+                                + {t('New Tag')}
+                              </CommandItem>
+                            </CreateTagDialog>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    {field.value && field.value.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {field.value.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="flex items-center gap-1"
+                          >
+                            {tag}
+                            <X
+                              className="h-3 w-3 cursor-pointer"
+                              onClick={() => {
+                                field.onChange(
+                                  field.value?.filter((t) => t !== tag) || [],
+                                );
+                              }}
+                            />
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             {form?.formState?.errors?.root?.serverError && (
               <FormMessage>

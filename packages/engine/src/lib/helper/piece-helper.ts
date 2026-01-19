@@ -20,6 +20,8 @@ import {
     ExecuteValidateAuthResponse,
     isNil,
 } from '@activepieces/shared'
+import * as fs from 'fs/promises'
+import * as path from 'path'
 import { EngineConstants } from '../handler/context/engine-constants'
 import { testExecutionContext } from '../handler/context/test-execution-context'
 import { createFlowsContext } from '../services/flows.service'
@@ -152,12 +154,28 @@ export const pieceHelper = {
         const pieceFolderPath = await pieceLoader.getPiecePath({ packageName: pieceAlias, devPieces })
         const i18n = await pieceTranslation.initializeI18n(pieceFolderPath)
         const fullMetadata = piece.metadata()
+
+        // Read tags from package.json if available
+        let packageTags: string[] | undefined
+        try {
+            const packageJsonPath = path.join(pieceFolderPath, 'package.json')
+            const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8')
+            const packageJson = JSON.parse(packageJsonContent)
+            if (packageJson.tags && Array.isArray(packageJson.tags)) {
+                packageTags = packageJson.tags
+            }
+        }
+        catch {
+            // package.json doesn't exist or doesn't have tags - that's fine
+        }
+
         return {
             ...fullMetadata,
             name: pieceName,
             version: pieceVersion,
             authors: piece.authors,
             i18n,
+            packageTags,
         }
     },
 }

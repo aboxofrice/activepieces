@@ -28,6 +28,7 @@ import { system } from '../helper/system/system'
 import { userInteractionWatcher } from '../workers/user-interaction-watcher'
 import { REDIS_REFRESH_LOCAL_PIECES_CHANNEL } from './metadata/local-piece-cache'
 import { pieceMetadataService } from './metadata/piece-metadata-service'
+import { pieceTagService } from './tags/pieces/piece-tag.service'
 
 export const pieceInstallService = (log: FastifyBaseLogger) => ({
     async installPiece(
@@ -59,6 +60,13 @@ export const pieceInstallService = (log: FastifyBaseLogger) => ({
                 pieceType: PieceType.CUSTOM,
                 archiveId,
             })
+            // Merge package.json tags with API-provided tags (API tags take precedence and are added first)
+            const packageJsonTags = pieceInformation.packageTags ?? []
+            const apiTags = params.tags ?? []
+            const allTags = [...new Set([...apiTags, ...packageJsonTags])]
+            if (allTags.length > 0) {
+                await pieceTagService.set(platformId, savedPiece.name, allTags)
+            }
             await pubsub.publish(REDIS_REFRESH_LOCAL_PIECES_CHANNEL, '')
             return savedPiece
         }

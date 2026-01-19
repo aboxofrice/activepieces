@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "tags": ["narmi", "banking", "account-opening"],
   "dependencies": {
     "tslib": "^2.3.0"
   },

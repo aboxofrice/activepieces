@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "tags": ["ice", "mortgage", "loan-origination"],
   "dependencies": {
     "tslib": "^2.3.0"
   },

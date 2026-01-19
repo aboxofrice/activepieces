@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "tags": ["sageworks", "banking", "credit-analysis"],
   "dependencies": {
     "tslib": "^2.3.0"
   },

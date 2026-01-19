@@ -71,7 +71,7 @@ export const piecesApi = {
   syncFromCloud() {
     return api.post<void>(`/v1/pieces/sync`, {});
   },
-  async install(params: AddPieceRequestBody) {
+  async install(params: AddPieceRequestBody & { tags?: string[] }) {
     const formData = new FormData();
     formData.set('packageType', params.packageType);
     formData.set('pieceName', params.pieceName);
@@ -82,6 +82,11 @@ export const piecesApi = {
         params.pieceArchive as unknown as File
       ).arrayBuffer();
       formData.append('pieceArchive', new Blob([buffer]));
+    }
+    if (params.tags && params.tags.length > 0) {
+      params.tags.forEach((tag) => {
+        formData.append('tags', tag);
+      });
     }
 
     return api.post<PieceMetadataModel>('/v1/pieces', formData, undefined, {
