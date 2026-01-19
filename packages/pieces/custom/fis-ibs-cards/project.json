@@ -1,0 +1,22 @@
+{
+  "name": "pieces-fis-ibs-cards",
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/pieces/custom/fis-ibs-cards/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/packages/pieces/custom/fis-ibs-cards",
+        "main": "packages/pieces/custom/fis-ibs-cards/src/index.ts",
+        "tsConfig": "packages/pieces/custom/fis-ibs-cards/tsconfig.lib.json",
+        "assets": [
+          "packages/pieces/custom/fis-ibs-cards/*.md",
+          "packages/pieces/custom/fis-ibs-cards/*.png"
+        ]
+      }
+    }
+  },
+  "tags": []
+}
