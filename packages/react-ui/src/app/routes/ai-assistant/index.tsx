@@ -1,9 +1,17 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
-import { Bot, MessageSquare, PenLine, Plus, Send, Settings2, Sparkles, Wand2 } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { Bot, MessageSquare, PenLine, Send, Settings2, Sparkles, Wand2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
 import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import {
   Card,
   CardContent,
@@ -21,6 +29,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { aiAssistantApi } from '@/features/ai-assistant/lib/ai-assistant-api';
+import { piecesApi } from '@/features/pieces/lib/pieces-api';
 import { aiProviderApi } from '@/features/platform-admin/lib/ai-provider-api';
 import { cn } from '@/lib/utils';
 import {
@@ -187,7 +196,28 @@ export const AIAssistantPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(null);
+  const [mentionCursorPos, setMentionCursorPos] = useState<number | null>(null);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Fetch pieces for @ mention autocomplete
+  const { data: pieces = [] } = useQuery({
+    queryKey: ['pieces-for-mention'],
+    queryFn: () => piecesApi.list({ includeHidden: false, includeTags: false }),
+  });
+
+  // Filter pieces based on mention search
+  const filteredPieces = mentionSearch
+    ? pieces.filter(
+        (p) =>
+          p.displayName.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+          p.name.toLowerCase().includes(mentionSearch.toLowerCase()),
+      ).slice(0, 8)
+    : pieces.slice(0, 8);
 
   // Fetch AI providers
   const { data: providers = [], isLoading: isLoadingProviders } = useQuery({
@@ -268,11 +298,43 @@ export const AIAssistantPage = () => {
       };
       setMessages((prev) => [...prev, assistantMessage]);
     },
-    onError: (error) => {
+    onError: (error: unknown) => {
+      // Extract detailed error message from Axios error
+      const axiosError = error as {
+        response?: {
+          data?: { message?: string; code?: string; params?: { message?: string } };
+          status?: number
+        };
+        message?: string
+      };
+
+      let errorContent = '';
+      const status = axiosError.response?.status;
+      const serverMessage = axiosError.response?.data?.message
+        || axiosError.response?.data?.params?.message
+        || axiosError.message
+        || 'Unknown error';
+
+      // Check for quota/credit errors
+      if (serverMessage.includes('quota') || serverMessage.includes('insufficient_quota') ||
+          serverMessage.includes('credit') || serverMessage.includes('billing') ||
+          serverMessage.includes('rate limit') || serverMessage.includes('RESOURCE_EXHAUSTED')) {
+        errorContent = t('**API Quota Exceeded**\n\nYour AI provider has run out of credits or exceeded rate limits.\n\n**Solutions:**\n1. Add credits to your provider account\n2. Wait a few minutes if rate limited\n3. Switch to a different AI provider\n\nProvider error: {message}', { message: serverMessage.substring(0, 200) });
+      } else if (serverMessage.includes('API key') || serverMessage.includes('authentication') ||
+                 serverMessage.includes('UNAUTHENTICATED') || status === 401 || status === 403) {
+        errorContent = t('**Authentication Error**\n\nThe API key for your AI provider is invalid or expired.\n\nPlease check your AI provider configuration in Settings → AI Providers.');
+      } else if (serverMessage.includes('ENTITY_NOT_FOUND') || serverMessage.includes('not found') || status === 404) {
+        errorContent = t('**AI Provider Not Found**\n\nNo AI provider is configured for this platform.\n\nPlease configure an AI provider in Settings → AI Providers.');
+      } else if (status === 500) {
+        errorContent = t('**Server Error**\n\nAn error occurred while processing your request.\n\nDetails: {message}', { message: serverMessage.substring(0, 300) });
+      } else {
+        errorContent = t('**Error**\n\n{message}', { message: serverMessage });
+      }
+
       const errorMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: t('Sorry, I encountered an error. Please try again.') + `\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        content: errorContent,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -315,7 +377,109 @@ export const AIAssistantPage = () => {
     }
   };
 
+  // Handle input change and detect @ mentions
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      const cursorPos = e.target.selectionStart;
+      setInput(value);
+
+      // Find the @ symbol before cursor
+      const textBeforeCursor = value.slice(0, cursorPos);
+      const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+
+      if (lastAtIndex !== -1) {
+        // Check if @ is at start or preceded by whitespace
+        const charBeforeAt = lastAtIndex > 0 ? value[lastAtIndex - 1] : ' ';
+        if (charBeforeAt === ' ' || charBeforeAt === '\n' || lastAtIndex === 0) {
+          const searchText = textBeforeCursor.slice(lastAtIndex + 1);
+          // Only open if there's no space after @
+          if (!searchText.includes(' ') && !searchText.includes('\n')) {
+            setMentionOpen(true);
+            setMentionSearch(searchText);
+            setMentionStartIndex(lastAtIndex);
+            setMentionCursorPos(cursorPos); // Store cursor position for later use
+            setMentionSelectedIndex(0); // Reset selection when search changes
+            return;
+          }
+        }
+      }
+
+      // Close mention popover
+      setMentionOpen(false);
+      setMentionSearch('');
+      setMentionStartIndex(null);
+    },
+    [],
+  );
+
+  // Handle piece selection from mention popover
+  const handlePieceSelect = useCallback(
+    (pieceName: string) => {
+      if (mentionStartIndex === null || mentionCursorPos === null) return;
+
+      // Get text before the @ symbol (not including the @)
+      const beforeMention = input.slice(0, mentionStartIndex);
+
+      // Get text after the cursor position when @ was typed (this removes @searchText)
+      const afterMention = input.slice(mentionCursorPos);
+
+      // Replace "@searchText" with the full piece name (which already has @ in scoped names)
+      const newValue = `${beforeMention}${pieceName} ${afterMention}`;
+      setInput(newValue);
+
+      // Close popover
+      setMentionOpen(false);
+      setMentionSearch('');
+      setMentionStartIndex(null);
+      setMentionCursorPos(null);
+      setMentionSelectedIndex(0);
+
+      // Focus textarea and set cursor position
+      setTimeout(() => {
+        if (textareaRef.current) {
+          const newCursorPos = beforeMention.length + pieceName.length + 1; // +1 for space
+          textareaRef.current.focus();
+          textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+        }
+      }, 0);
+    },
+    [input, mentionStartIndex, mentionCursorPos],
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle mention popover keyboard navigation
+    if (mentionOpen && filteredPieces.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) =>
+          prev < filteredPieces.length - 1 ? prev + 1 : 0,
+        );
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) =>
+          prev > 0 ? prev - 1 : filteredPieces.length - 1,
+        );
+        return;
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        handlePieceSelect(filteredPieces[mentionSelectedIndex].name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionOpen(false);
+        setMentionSearch('');
+        setMentionStartIndex(null);
+        setMentionCursorPos(null);
+        setMentionSelectedIndex(0);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -479,18 +643,65 @@ export const AIAssistantPage = () => {
       {/* Input */}
       <div className="border-t p-4">
         <div className="mx-auto flex max-w-3xl gap-2">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              mode === 'chat'
-                ? t('Describe the automation you want to build...')
-                : t('Paste a flow JSON or describe the changes you want...')
-            }
-            className="min-h-[60px] resize-none"
-            disabled={isLoading || !selectedProvider || !selectedModel}
-          />
+          <Popover open={mentionOpen} onOpenChange={setMentionOpen}>
+            <PopoverAnchor asChild>
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  mode === 'chat'
+                    ? t('Describe the automation you want to build... (Type @ to mention a piece)')
+                    : t('Paste a flow JSON or describe the changes you want... (Type @ to mention a piece)')
+                }
+                className="min-h-[60px] resize-none"
+                disabled={isLoading || !selectedProvider || !selectedModel}
+              />
+            </PopoverAnchor>
+            <PopoverContent
+              className="w-[300px] p-0"
+              align="start"
+              side="top"
+              sideOffset={5}
+              onOpenAutoFocus={(e) => e.preventDefault()}
+              onInteractOutside={(e) => e.preventDefault()}
+            >
+              <Command shouldFilter={false}>
+                <CommandList>
+                  <CommandEmpty>{t('No pieces found')}</CommandEmpty>
+                  <CommandGroup heading={t('Pieces')}>
+                    {filteredPieces.map((piece, index) => (
+                      <CommandItem
+                        key={piece.name}
+                        value={piece.name}
+                        onSelect={() => handlePieceSelect(piece.name)}
+                        className={cn(
+                          'flex items-center gap-2',
+                          index === mentionSelectedIndex && 'bg-accent',
+                        )}
+                        onMouseEnter={() => setMentionSelectedIndex(index)}
+                      >
+                        {piece.logoUrl && (
+                          <img
+                            src={piece.logoUrl}
+                            alt=""
+                            className="h-5 w-5 rounded"
+                          />
+                        )}
+                        <div className="flex flex-col">
+                          <span className="text-sm">{piece.displayName}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {piece.name}
+                          </span>
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           <Button
             onClick={handleSendMessage}
             disabled={!input.trim() || isLoading || !selectedProvider || !selectedModel}

@@ -111,6 +111,72 @@ export const createLoan = createAction({
 });
 ```
 
+## Critical: Correct package.json Structure
+
+### Issue: "Cannot read properties of undefined (reading 'code')" Error
+
+This error occurs when installing a piece with an incorrectly structured `package.json`. The most common cause is:
+- Missing `"type": "commonjs"`
+- `"main"` pointing to `.ts` file instead of `.js`
+- Missing `"exports"` field
+- Missing `tslib` dependency
+
+### ❌ Incorrect package.json (Causes 500 Error on Install)
+
+```json
+{
+  "name": "@yourscope/piece-name",
+  "version": "0.0.1",
+  "license": "MIT",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@activepieces/pieces-framework": "*",
+    "@activepieces/pieces-common": "*",
+    "@activepieces/shared": "*"
+  },
+  "dependencies": {}
+}
+```
+
+### ✅ Correct package.json (Works Properly)
+
+```json
+{
+  "name": "@yourscope/piece-name",
+  "version": "0.0.1",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "peerDependencies": {
+    "@activepieces/pieces-framework": "*",
+    "@activepieces/pieces-common": "*",
+    "@activepieces/shared": "*"
+  }
+}
+```
+
+### Key Fields Explained
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `"type": "commonjs"` | Yes | Tells Node.js to use CommonJS modules |
+| `"main": "./src/index.js"` | Yes | Entry point - MUST be `.js`, not `.ts` |
+| `"types": "./src/index.d.ts"` | Yes | TypeScript type definitions |
+| `"exports"` | Yes | Module export mapping |
+| `"tslib": "^2.3.0"` | Yes | Required runtime dependency for compiled TypeScript |
+| `"publishConfig.access": "public"` | Yes | Required for scoped packages (@yourscope/) |
+| `peerDependencies` with `"*"` | Yes | Use wildcards, not specific versions |
+
 ## Root Cause Issues
 
 ### Issue 1: Version Mismatch Between Container and npm Packages
@@ -128,60 +194,30 @@ No matching version found for @activepieces/pieces-framework@^0.74.3
 **Root Cause:**
 The version `0.74.3` is the **Activepieces platform version**, not the individual package versions. The packages used internally have different version numbers (0.20.x, 0.22.x).
 
-### Issue 2: Dependency Version Conflicts
+**Solution:** Use `peerDependencies` with `"*"` wildcards.
+
+### Issue 2: 500 Error "Cannot read properties of undefined (reading 'code')"
 
 **Problem:**
-Installing a piece built with specific versions like `^0.74.3` fails when the container uses different internal package versions.
-
-**Solution:**
-Use `peerDependencies` with wildcard versions instead of `dependencies` with specific versions.
-
-## Solution: Correct package.json Structure
-
-### ❌ Incorrect (Causes Installation Failures)
+Installing a piece returns:
 ```json
 {
-  "name": "@yourscope/piece-name",
-  "version": "0.0.1",
-  "dependencies": {
-    "@activepieces/pieces-framework": "^0.74.3",
-    "@activepieces/pieces-common": "^0.74.3",
-    "@activepieces/shared": "^0.74.3"
-  }
+  "statusCode": 500,
+  "error": "Internal Server Error",
+  "message": "Cannot read properties of undefined (reading 'code')"
 }
 ```
 
-### ✅ Correct (Works with Any Container Version)
-```json
-{
-  "name": "@yourscope/piece-name",
-  "version": "0.0.1",
-  "peerDependencies": {
-    "@activepieces/pieces-framework": "*",
-    "@activepieces/pieces-common": "*",
-    "@activepieces/shared": "*"
-  },
-  "dependencies": {}
-}
-```
+**Root Cause:**
+The `package.json` is missing required fields or has incorrect values. Common issues:
+1. `"main"` points to `.ts` instead of `.js`
+2. Missing `"type": "commonjs"`
+3. Missing `"exports"` field
+4. Missing `tslib` dependency
 
-## Key Changes Required
+**Solution:** Use the correct package.json structure shown above.
 
-### 1. Update package.json
-
-Change from `dependencies` to `peerDependencies` with wildcards:
-
-```json
-{
-  "peerDependencies": {
-    "@activepieces/pieces-framework": "*",
-    "@activepieces/pieces-common": "*",
-    "@activepieces/shared": "*"
-  }
-}
-```
-
-### 2. Fix Imports
+## Fix Imports
 
 Use the correct import paths for HTTP client and **do NOT include file extensions for relative imports**:
 
@@ -200,7 +236,7 @@ import { myAction } from './lib/actions/my-action';  // No extension
 
 **Note:** Do NOT include file extensions (`.js` or `.ts`) in relative imports. TypeScript will compile them correctly to CommonJS `require()` statements without extensions.
 
-### 3. Auth Property Access
+## Auth Property Access
 
 For CustomAuth, TypeScript needs explicit casting:
 
@@ -210,35 +246,12 @@ const baseUrl = auth.baseUrl;
 const organizationId = auth.organizationId;
 ```
 
-## Complete Example: Working package.json
+## Building with Nx
 
-**CRITICAL:** Your source `package.json` should point to TypeScript files, but after building with Nx, the published `package.json` will point to compiled JavaScript files.
-
-### Source package.json (before build):
-```json
-{
-  "name": "@vqnguyen1/piece-fiserv-premier",
-  "version": "0.0.10",
-  "license": "MIT",
-  "main": "src/index.ts",
-  "peerDependencies": {
-    "@activepieces/pieces-framework": "*",
-    "@activepieces/pieces-common": "*",
-    "@activepieces/shared": "*"
-  },
-  "dependencies": {}
-}
-```
-
-### Published package.json (after Nx build):
-```j⚠️ CRITICAL: Pieces Must Be Built with Nx
-
-Activepieces requires **compiled JavaScript files**, not TypeScript source. Your package must contain `.js`, `.d.ts`, and `.js.map` files. You **MUST** use the Nx build system.
-
-### Building with Nx (Required)
+Activepieces requires **compiled JavaScript files**, not TypeScript source. Your package must contain `.js`, `.d.ts`, and `.js.map` files.
 
 ```bash
-# Build with Nx (this compiles TypeScript and transforms package.json)
+# Build with Nx
 bunx nx build pieces-your-piece
 
 # The output will be in: dist/packages/pieces/custom/your-piece/
@@ -246,7 +259,7 @@ bunx nx build pieces-your-piece
 # - src/index.js (compiled JavaScript)
 # - src/index.d.ts (TypeScript definitions)
 # - src/lib/actions/*.js (compiled actions)
-# - package.json (transformed to point to .js files)
+# - package.json (copied from source)
 # - README.md, logo files, etc.
 
 # Navigate to built output
@@ -256,55 +269,6 @@ cd dist/packages/pieces/custom/your-piece
 ls -la src/  # Should see .js, .d.ts, .js.map files
 
 # Publish
-npm publish --access public
-```
-
-### What Nx Build Does:
-
-1. ✅ Compiles TypeScript (.ts) to JavaScript (.js)
-2. ✅ Generates type definition files (.d.ts)
-3. ✅ Generates source maps (.js.map)
-4. ✅ Transforms package.json to change:
-   - `"main": "src/index.ts"` → `"main": "./src/index.js"`
-   - Adds `"type": "commonjs"`
-   - Adds `"types": "./src/index.d.ts"`
-   - Adds proper `"exports"` field
-   - Adds `"tslib"` dependency
-5. ✅ Converts ES6 imports to CommonJS require() statements
-6. ✅ Copies README, logo, and other assets
-
-### ❌ Do NOT Ship TypeScript Source
-
-Publishing TypeScript source files will fail with module resolution errors:
-```
-Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../lib/actions/get-party'
-```
-
-Always build with Nx first!
-# Copy compiled files and configs
-cp -r dist/* dist-publish/src/
-cp package.json README.md dist-publish/
-cp -r assets dist-publish/ 2>/dev/null || true  # Copy assets if they exist
-
-# Package from dist-publish
-cd dist-publish
-npm pack
-
-# Publish (optional)
-npm publish --access public
-```
-
-### Option 2: Using Nx (When Workspace is Healthy)
-
-```bash
-# Build with Nx
-bunx nx build pieces-your-piece
-
-# Package
-cd dist/packages/pieces/custom/your-piece
-npm pack
-
-# Publish (optional)
 npm publish --access public
 ```
 
@@ -336,18 +300,24 @@ curl -X POST http://localhost/api/v1/pieces \
 - Import from `@activepieces/pieces-common` not `pieces-framework`
 - Example: `import { httpClient } from '@activepieces/pieces-common';`
 
+### "Cannot read properties of undefined (reading 'code')" (500 Error)
+- Ensure `package.json` has `"type": "commonjs"`
+- Ensure `"main"` points to `.js` file, not `.ts`
+- Ensure `"exports"` field is present
+- Ensure `tslib` is in dependencies
+
 ### Auth property access errors
 - Cast context.auth to `any`: `const auth = context.auth as any;`
 - Then access properties: `auth.baseUrl`, `auth.apiKey`, etc.
 
 ## Summary
 
-The key takeaway: **Activepieces container version (0.74.3) ≠ npm package versions (0.20.x, 0.22.x)**
+The key takeaways:
 
-Always use:
-1. `peerDependencies` with `"*"` wildcards
-2. Import `httpClient` from `@activepieces/pieces-common`
-3. Cast `context.auth` to `any` for property access
-4. Package from source if workspace build fails
+1. **Activepieces container version (0.74.3) ≠ npm package versions (0.20.x, 0.22.x)** - Use `peerDependencies` with `"*"` wildcards
+2. **package.json must be properly structured** - Include `type`, `main`, `types`, `exports`, and `tslib`
+3. **Import `httpClient` from `@activepieces/pieces-common`**
+4. **Cast `context.auth` to `any` for property access**
+5. **Build with Nx before publishing**
 
-This ensures your pieces work across different Activepieces versions without version conflicts.
+This ensures your pieces work across different Activepieces versions without version conflicts or installation errors.

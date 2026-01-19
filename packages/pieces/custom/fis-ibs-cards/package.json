@@ -1,0 +1,22 @@
+{
+  "name": "@vqnguyen1/piece-fis-ibs-cards",
+  "version": "0.0.7",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "peerDependencies": {
+    "@activepieces/pieces-framework": "*",
+    "@activepieces/pieces-common": "*",
+    "@activepieces/shared": "*"
+  }
+}
