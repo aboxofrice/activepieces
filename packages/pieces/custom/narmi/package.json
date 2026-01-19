@@ -1,6 +1,6 @@
 {
   "name": "@vqnguyen1/piece-narmi",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "license": "MIT",
   "type": "commonjs",
   "main": "./src/index.js",
@@ -8,7 +8,11 @@
   "exports": {
     ".": "./src/index.js"
   },
-  "tags": ["narmi", "banking", "account-opening"],
+  "tags": [
+    "narmi",
+    "banking",
+    "account-opening"
+  ],
   "dependencies": {
     "tslib": "^2.3.0"
   },

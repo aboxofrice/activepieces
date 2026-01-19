@@ -31,7 +31,7 @@ export const narmi = createPiece({
   displayName: 'Narmi',
   auth: narmiAuth,
   minimumSupportedRelease: '0.20.0',
-  logoUrl: 'https://i.imgur.com/EpttLjG.png',
+  logoUrl: 'https://cdn.prod.website-files.com/6155dc277c0e691a95412e1f/69679d62d5080aa68d936d0c_Narmi%20Guard_Thumbnail.jpg',
   authors: ['vqnguyen1'],
   categories: [PieceCategory.BUSINESS_INTELLIGENCE],
   actions: [
