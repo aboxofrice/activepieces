@@ -46,7 +46,7 @@ export const kinectivePlaceholder = createPiece({
   displayName: 'Kinective Placeholder',
   auth: kinectivePlaceholderAuth,
   minimumSupportedRelease: '0.20.0',
-  logoUrl: 'https://cdn.activepieces.com/pieces/kinective.png',
+  logoUrl: 'https://www.kinective.io/wp-content/uploads/2024/12/logo-mark.svg',
   authors: ['vqnguyen1'],
   categories: [PieceCategory.BUSINESS_INTELLIGENCE],
   actions: [

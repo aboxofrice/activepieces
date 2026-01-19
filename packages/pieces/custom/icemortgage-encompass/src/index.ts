@@ -18,7 +18,7 @@ export const icemortgageEncompass = createPiece({
   displayName: 'IceMortgage Encompass',
   auth: icemortgageEncompassAuth,
   minimumSupportedRelease: '0.20.0',
-  logoUrl: 'https://media.licdn.com/dms/image/v2/C560BAQENYzaNYtPwTQ/company-logo_200_200/company-logo_200_200/0/1647830587991/icemortgagetechnology_logo?e=1769644800&v=beta&t=sbeBJx6uRlT5Qny-bQGWrUnCB08ezNdqDpXZY-NEtyw',
+  logoUrl: 'https://mortgagetech.ice.com/publicdocs/images/ICE_logo_Rmark_rgb.png',
   authors: ['vqnguyen1'],
   categories: [PieceCategory.BUSINESS_INTELLIGENCE],
   actions: [

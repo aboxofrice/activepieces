@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# Script to build, version, and publish all custom pieces to npm
-# Usage: ./publish-pieces.sh [patch|minor|major]
+# Script to build, version, and publish custom pieces to npm
+# Usage: ./publish-pieces.sh [patch|minor|major] [piece1 piece2 ...]
+# Examples:
+#   ./publish-pieces.sh                      # Publish all pieces with patch bump
+#   ./publish-pieces.sh minor                # Publish all pieces with minor bump
+#   ./publish-pieces.sh patch fis-ibs        # Publish only fis-ibs with patch bump
+#   ./publish-pieces.sh patch fis-ibs narmi  # Publish fis-ibs and narmi with patch bump
 
 set -e  # Exit on error
-
-# Get the version bump type (default to patch)
-VERSION_TYPE="${1:-patch}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -15,18 +17,22 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Root directory
-ROOT_DIR="$(pwd)/../../../.."
-CUSTOM_PIECES_DIR="$(pwd)"
+# Get the version bump type (default to patch)
+VERSION_TYPE="${1:-patch}"
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Custom Pieces Publisher${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo -e "Version bump type: ${YELLOW}${VERSION_TYPE}${NC}"
-echo ""
+# Validate version type
+if [[ ! "$VERSION_TYPE" =~ ^(patch|minor|major)$ ]]; then
+  echo -e "${RED}Error: Invalid version type '$VERSION_TYPE'. Use patch, minor, or major.${NC}"
+  exit 1
+fi
 
-# Array of custom pieces to publish
-PIECES=(
+# Get script directory (works even when called from different locations)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CUSTOM_PIECES_DIR="$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# All available pieces
+ALL_PIECES=(
   "narmi"
   "fiserv-premier"
   "icemortgage-encompass"
@@ -39,13 +45,36 @@ PIECES=(
   "fis-ibs-cards"
 )
 
-# Check if logged in to npm
-echo -e "${BLUE}Checking npm authentication...${NC}"
-if ! npm whoami &> /dev/null; then
-  echo -e "${RED}Error: Not logged in to npm. Please run 'npm login' first.${NC}"
-  exit 1
+# Determine which pieces to publish
+shift  # Remove the version type from arguments
+if [ $# -gt 0 ]; then
+  # Specific pieces provided as arguments
+  PIECES=("$@")
+else
+  # No specific pieces, publish all
+  PIECES=("${ALL_PIECES[@]}")
 fi
-echo -e "${GREEN}✓ Logged in as: $(npm whoami)${NC}"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Custom Pieces Publisher${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "Version bump type: ${YELLOW}${VERSION_TYPE}${NC}"
+echo -e "Pieces to publish: ${YELLOW}${PIECES[*]}${NC}"
+echo ""
+
+# Check if logged in to npm, prompt login if not
+echo -e "${BLUE}Checking npm authentication...${NC}"
+NPM_USER=$(npm whoami 2>/dev/null) || NPM_USER=""
+if [ -z "$NPM_USER" ]; then
+  echo -e "${YELLOW}Not logged in to npm. Starting login...${NC}"
+  if ! npm login; then
+    echo -e "${RED}Error: npm login failed. Please try again.${NC}"
+    exit 1
+  fi
+  echo -e "${GREEN}✓ Login completed${NC}"
+else
+  echo -e "${GREEN}✓ Logged in as: ${NPM_USER}${NC}"
+fi
 echo ""
 
 # Function to publish a piece

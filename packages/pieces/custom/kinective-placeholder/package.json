@@ -1,6 +1,6 @@
 {
   "name": "@vqnguyen1/piece-kinective-placeholder",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "license": "MIT",
   "type": "commonjs",
   "main": "./src/index.js",
@@ -8,7 +8,11 @@
   "exports": {
     ".": "./src/index.js"
   },
-  "tags": ["kinective", "banking", "payments"],
+  "tags": [
+    "kinective",
+    "banking",
+    "payments"
+  ],
   "dependencies": {
     "tslib": "^2.3.0"
   },

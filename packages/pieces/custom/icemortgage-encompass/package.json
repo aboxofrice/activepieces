@@ -1,6 +1,6 @@
 {
   "name": "@vqnguyen1/piece-icemortgage-encompass",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "license": "MIT",
   "type": "commonjs",
   "main": "./src/index.js",
@@ -8,7 +8,11 @@
   "exports": {
     ".": "./src/index.js"
   },
-  "tags": ["ice", "mortgage", "loan-origination"],
+  "tags": [
+    "ice",
+    "mortgage",
+    "loan-origination"
+  ],
   "dependencies": {
     "tslib": "^2.3.0"
   },

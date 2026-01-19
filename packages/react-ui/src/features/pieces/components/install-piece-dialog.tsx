@@ -434,7 +434,7 @@ const InstallPieceDialog = ({
                         {field.value.map((tag) => (
                           <Badge
                             key={tag}
-                            variant="secondary"
+                            variant="outline"
                             className="flex items-center gap-1"
                           >
                             {tag}

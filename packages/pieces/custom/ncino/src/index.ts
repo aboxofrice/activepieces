@@ -39,7 +39,7 @@ export const ncino = createPiece({
   displayName: 'nCino',
   auth: ncinoAuth,
   minimumSupportedRelease: '0.20.0',
-  logoUrl: 'https://www.ncino.com/assets/global/ncino-logo-dark.svg',
+  logoUrl: 'https://images.credly.com/size/200x200/images/31cfc314-20c9-4fc0-b75f-1a209c87ad9f/blob.png',
   authors: ['vqnguyen1'],
   categories: [PieceCategory.BUSINESS_INTELLIGENCE],
   actions: [
