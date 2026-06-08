@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         python3 \
         g++ \
         build-essential \
+        cmake \
         git \
         poppler-utils \
         poppler-data \
@@ -90,7 +91,7 @@ RUN rm -rf packages/pieces/core packages/pieces/custom && \
       ! -name facebook-leads \
       ! -name intercom \
       -exec rm -rf {} + && \
-    rm -f bun.lock && bun install
+    rm -f bun.lock bun.lockb package-lock.json && bun install --save-text-lockfile --ignore-scripts
 
 ### STAGE 2: Run ###
 FROM base AS run
