@@ -15,7 +15,12 @@ services:
     env_file: .env
     volumes:
       - ./cache:/usr/src/app/cache
-      - ./dist/packages/pieces:/usr/src/app/dist/packages/pieces
+      # Dev-pieces delivery: the runtime scans packages/pieces/** for folders with a
+      # built dist/. Under turbo each piece builds to packages/pieces/custom/<name>/dist
+      # (the old nx path dist/packages/pieces is gone). Mount the built custom pieces
+      # where the loader looks. Requires AP_DEV_PIECES=<folder-names> in .env and the
+      # pieces built on the host first (turbo run build --filter='@vqnguyen1/*').
+      - ./packages/pieces/custom:/usr/src/app/packages/pieces/custom
     networks:
       - activepieces
   postgres:
