@@ -1,8 +1,3 @@
-import { createAnthropic } from '@ai-sdk/anthropic'
-import { createAzure } from '@ai-sdk/azure'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAI } from '@ai-sdk/openai'
-import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import {
     AIAssistantChatRequest,
     AIAssistantChatResponse,
@@ -11,10 +6,17 @@ import {
     AIProviderName,
     AzureProviderConfig,
     PlatformId,
+    ProjectId,
 } from '@activepieces/shared'
+import { createAnthropic } from '@ai-sdk/anthropic'
+import { createAzure } from '@ai-sdk/azure'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createOpenAI } from '@ai-sdk/openai'
+import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { generateText, LanguageModel } from 'ai'
 import { FastifyBaseLogger } from 'fastify'
 import { aiProviderService } from '../ai/ai-provider-service'
+import { buildAssistantContext } from './ai-assistant-context'
 
 const SYSTEM_PROMPTS: Record<AIAssistantMode, string> = {
     [AIAssistantMode.CREATE]: `Generate Activepieces flows. PHASE1: Gather requirements (trigger,actions,mapping,branching). Present step table. WAIT for confirmation. PHASE2: Generate JSON.
@@ -70,6 +72,7 @@ Be specific and actionable in your analysis. If you see issues, explain how to f
 export const aiAssistantService = (log: FastifyBaseLogger) => ({
     async chat(
         platformId: PlatformId,
+        projectId: ProjectId,
         request: AIAssistantChatRequest,
     ): Promise<AIAssistantChatResponse> {
         log.info({ provider: request.provider, model: request.model, mode: request.mode }, 'AI Assistant chat request')
@@ -81,7 +84,12 @@ export const aiAssistantService = (log: FastifyBaseLogger) => ({
             const model = createModel(request.provider, request.model, config)
             log.info({ provider: request.provider, model: request.model }, 'Created model')
 
-            const systemPrompt = SYSTEM_PROMPTS[request.mode]
+            const context = await buildAssistantContext(log, {
+                platformId,
+                projectId,
+                messages: request.messages,
+            })
+            const systemPrompt = `${SYSTEM_PROMPTS[request.mode]}\n\n${context}`
 
             const messages = request.messages.map(m => ({
                 role: m.role as 'user' | 'assistant' | 'system',
