@@ -73,3 +73,7 @@ scratch.md
 /blob-report/
 /playwright/.cache/
 /redis-binaries/
+
+# Claude Code runtime scratch (transient, never commit)
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json

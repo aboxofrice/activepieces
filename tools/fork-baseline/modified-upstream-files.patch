@@ -1,0 +1,934 @@
+diff --git a/Dockerfile b/Dockerfile
+index 0587bbdf84..f944b347af 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -69,6 +69,9 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
+ # Copy source code after dependency installation
+ COPY . .
+ 
++# Build shared package first (required by react-ui)
++RUN npx nx build shared --skip-nx-cache
++
+ # Build both projects (already has NX_NO_CLOUD from base stage)
+ RUN npx nx run-many --target=build --projects=react-ui,server-api --configuration production --parallel=2 --skip-nx-cache
+ 
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 74dd604754..10820554fc 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,6 +1,8 @@
+ services:
+   activepieces:
+-    image: ghcr.io/activepieces/activepieces:0.74.3
++    build:
++      context: .
++      dockerfile: Dockerfile
+     container_name: activepieces
+     restart: unless-stopped
+     ## Enable the following line if you already use AP_EXECUTION_MODE with SANDBOX_PROCESS or old activepieces, checking the breaking change documentation for more info.
+@@ -13,12 +15,15 @@ services:
+     env_file: .env
+     volumes:
+       - ./cache:/usr/src/app/cache
++      - ./dist/packages/pieces:/usr/src/app/dist/packages/pieces
+     networks:
+       - activepieces
+   postgres:
+     image: 'postgres:14.4'
+     container_name: postgres
+     restart: unless-stopped
++    ports:
++      - '5432:5432'
+     env_file: .env
+     environment:
+       - 'POSTGRES_DB=${AP_POSTGRES_DATABASE}'
+@@ -32,6 +37,8 @@ services:
+     image: 'redis:7.0.7'
+     container_name: redis
+     restart: unless-stopped
++    ports:
++      - '6379:6379'
+     volumes:
+       - 'redis_data:/data'
+     networks:
+diff --git a/package.json b/package.json
+index ab890e4b69..f66d6e7891 100644
+--- a/package.json
++++ b/package.json
+@@ -4,7 +4,6 @@
+   "rcVersion": "0.74.3-rc.0",
+   "scripts": {
+     "prepare": "husky install",
+-    "prebuild": "node tools/scripts/install-bun.js",
+     "serve:frontend": "nx serve react-ui",
+     "serve:backend": "nx serve server-api",
+     "serve:engine": "nx serve engine",
+diff --git a/packages/ee/shared/src/lib/billing/index.ts b/packages/ee/shared/src/lib/billing/index.ts
+index 09ddb765f3..623e2a52b1 100644
+--- a/packages/ee/shared/src/lib/billing/index.ts
++++ b/packages/ee/shared/src/lib/billing/index.ts
+@@ -75,27 +75,27 @@ export const STANDARD_CLOUD_PLAN: PlatformPlanWithOnlyLimits = {
+     tablesEnabled: true,
+     todosEnabled: true,
+     mcpsEnabled: true,
+-    embeddingEnabled: false,
+-    globalConnectionsEnabled: false,
+-    customRolesEnabled: false,
+-    environmentsEnabled: false,
++    embeddingEnabled: true, // Paywall removed - always enabled
++    globalConnectionsEnabled: true, // Paywall removed - always enabled
++    customRolesEnabled: true, // Paywall removed - always enabled
++    environmentsEnabled: true, // Paywall removed - always enabled
+     analyticsEnabled: true,
+     showPoweredBy: false,
+-    auditLogEnabled: false,
+-    managePiecesEnabled: false,
+-    manageTemplatesEnabled: false,
+-    customAppearanceEnabled: false,
++    auditLogEnabled: true, // Paywall removed - always enabled
++    managePiecesEnabled: true, // Paywall removed - always enabled
++    manageTemplatesEnabled: true, // Paywall removed - always enabled
++    customAppearanceEnabled: true, // Paywall removed - always enabled
+     teamProjectsLimit: TeamProjectsLimit.ONE,
+-    projectRolesEnabled: false,
+-    customDomainsEnabled: false,
+-    apiKeysEnabled: false,
+-    ssoEnabled: false,
++    projectRolesEnabled: true, // Paywall removed - always enabled
++    customDomainsEnabled: true, // Paywall removed - always enabled
++    apiKeysEnabled: true, // Paywall removed - always enabled
++    ssoEnabled: true, // Paywall removed - always enabled
+ }
+ 
+ export const OPEN_SOURCE_PLAN: PlatformPlanWithOnlyLimits = {
+-    embeddingEnabled: false,
+-    globalConnectionsEnabled: false,
+-    customRolesEnabled: false,
++    embeddingEnabled: true, // Paywall removed - always enabled
++    globalConnectionsEnabled: true, // Paywall removed - always enabled
++    customRolesEnabled: true, // Paywall removed - always enabled
+     mcpsEnabled: true,
+     tablesEnabled: true,
+     todosEnabled: true,
+@@ -103,18 +103,18 @@ export const OPEN_SOURCE_PLAN: PlatformPlanWithOnlyLimits = {
+     includedAiCredits: 0,
+     aiCreditsOverageLimit: undefined,
+     aiCreditsOverageState: AiOverageState.NOT_ALLOWED,
+-    environmentsEnabled: false,
++    environmentsEnabled: true, // Paywall removed - always enabled
+     analyticsEnabled: true,
+     showPoweredBy: false,
+-    auditLogEnabled: false,
+-    managePiecesEnabled: false,
+-    manageTemplatesEnabled: false,
+-    customAppearanceEnabled: false,
++    auditLogEnabled: true, // Paywall removed - always enabled
++    managePiecesEnabled: true, // Paywall removed - always enabled
++    manageTemplatesEnabled: true, // Paywall removed - always enabled
++    customAppearanceEnabled: true, // Paywall removed - always enabled
+     teamProjectsLimit: TeamProjectsLimit.NONE,
+-    projectRolesEnabled: false,
+-    customDomainsEnabled: false,
+-    apiKeysEnabled: false,
+-    ssoEnabled: false,
++    projectRolesEnabled: true, // Paywall removed - always enabled
++    customDomainsEnabled: true, // Paywall removed - always enabled
++    apiKeysEnabled: true, // Paywall removed - always enabled
++    ssoEnabled: true, // Paywall removed - always enabled
+     stripeCustomerId: undefined,
+     stripeSubscriptionId: undefined,
+     stripeSubscriptionStatus: undefined,
+diff --git a/packages/react-ui/src/app/builder/pieces-selector/ai-tab-content/ai-actions-list.tsx b/packages/react-ui/src/app/builder/pieces-selector/ai-tab-content/ai-actions-list.tsx
+index 0ed5398b6e..07b4540be1 100644
+--- a/packages/react-ui/src/app/builder/pieces-selector/ai-tab-content/ai-actions-list.tsx
++++ b/packages/react-ui/src/app/builder/pieces-selector/ai-tab-content/ai-actions-list.tsx
+@@ -82,7 +82,7 @@ export const AIPieceActionsList: React.FC<AIPieceActionsListProps> = ({
+                     action: {
+                       label: 'Set Up',
+                       onClick: () => {
+-                        navigate('/platform/setup/ai');
++                        navigate('/admin/setup/ai');
+                       },
+                     },
+                   });
+diff --git a/packages/react-ui/src/app/components/sidebar/platform/index.tsx b/packages/react-ui/src/app/components/sidebar/platform/index.tsx
+index ee4c369235..64667c2e52 100644
+--- a/packages/react-ui/src/app/components/sidebar/platform/index.tsx
++++ b/packages/react-ui/src/app/components/sidebar/platform/index.tsx
+@@ -1,15 +1,13 @@
+ import { t } from 'i18next';
+ import {
+   ArrowLeft,
+-  Palette,
++  Globe,
+   LayoutGrid,
+   LineChart,
+   Server,
+   Users,
+   Bot,
+   Unplug,
+-  Puzzle,
+-  Receipt,
+   SquareDashedBottomCode,
+   LogIn,
+   KeyRound,
+@@ -37,7 +35,6 @@ import { useAuthorization } from '@/hooks/authorization-hooks';
+ import { flagsHooks } from '@/hooks/flags-hooks';
+ import { platformHooks } from '@/hooks/platform-hooks';
+ import { cn, determineDefaultRoute } from '@/lib/utils';
+-import { ApEdition, ApFlagId, TeamProjectsLimit } from '@activepieces/shared';
+ 
+ import { ApSidebarItem } from '../ap-sidebar-item';
+ import { SidebarUser } from '../sidebar-user';
+@@ -45,7 +42,6 @@ import { SidebarUser } from '../sidebar-user';
+ export function PlatformSidebar() {
+   const navigate = useNavigate();
+   const { platform } = platformHooks.useCurrentPlatform();
+-  const { data: edition } = flagsHooks.useFlag<ApEdition>(ApFlagId.EDITION);
+   const { checkAccess } = useAuthorization();
+   const defaultRoute = determineDefaultRoute(checkAccess);
+   const branding = flagsHooks.useWebsiteBranding();
+@@ -63,19 +59,13 @@ export function PlatformSidebar() {
+       label: t('General'),
+       items: [
+         {
+-          to: '/platform/analytics',
++          to: '/admin/analytics',
+           label: t('Overview'),
+           icon: LineChart,
+           locked: !platform.plan.analyticsEnabled,
+         },
+         {
+-          to: '/platform/projects',
+-          label: t('Projects'),
+-          icon: LayoutGrid,
+-          locked: platform.plan.teamProjectsLimit === TeamProjectsLimit.NONE,
+-        },
+-        {
+-          to: '/platform/users',
++          to: '/admin/users',
+           label: t('Users'),
+           icon: Users,
+         },
+@@ -85,71 +75,65 @@ export function PlatformSidebar() {
+       label: t('Setup'),
+       items: [
+         {
+-          to: '/platform/setup/ai',
++          to: '/admin/setup/ai',
+           label: t('AI'),
+           icon: Bot,
+         },
+         {
+-          to: '/platform/setup/branding',
+-          label: t('Branding'),
+-          icon: Palette,
+-          locked: !platform.plan.customAppearanceEnabled,
++          to: '/admin/setup/connections',
++          label: t('Global Connections'),
++          icon: Unplug,
++          locked: !platform.plan.globalConnectionsEnabled,
+         },
+         {
+-          to: '/platform/setup/connections',
+-          label: t('Global Connections'),
++          to: '/admin/setup/connectors',
++          label: t('Connectors'),
+           icon: Unplug,
+           locked: !platform.plan.globalConnectionsEnabled,
+         },
+         {
+-          to: '/platform/setup/pieces',
+-          label: t('Pieces'),
+-          icon: Puzzle,
+-          locked: !platform.plan.managePiecesEnabled,
++          to: '/admin/setup/globalconnections',
++          label: t('Global Connections 2'),
++          icon: Globe,
++          locked: !platform.plan.globalConnectionsEnabled,
+         },
+         {
+-          to: '/platform/setup/templates',
++          to: '/admin/setup/templates',
+           label: t('Templates'),
+           icon: LayoutGrid,
+           locked: !platform.plan.manageTemplatesEnabled,
+         },
+-        {
+-          to: '/platform/setup/billing',
+-          label: t('Billing'),
+-          icon: Receipt,
+-          locked: edition === ApEdition.COMMUNITY,
+-        },
+       ],
+     },
+     {
+       label: t('Security'),
+       items: [
+         {
+-          to: '/platform/security/audit-logs',
++          to: '/admin/security/audit-logs',
+           label: t('Audit Logs'),
+           icon: SquareDashedBottomCode,
+           locked: !platform.plan.auditLogEnabled,
+         },
+         {
+-          to: '/platform/security/sso',
++          to: '/admin/security/sso',
+           label: t('Single Sign On'),
+           icon: LogIn,
+           locked: !platform.plan.ssoEnabled,
+         },
+         {
+-          to: '/platform/security/signing-keys',
++          to: '/admin/security/signing-keys',
+           label: t('Signing Keys'),
+           icon: KeyRound,
+           locked: !platform.plan.embeddingEnabled,
+         },
+         {
+-          to: '/platform/security/project-roles',
++          to: '/admin/security/project-roles',
+           label: t('Project Roles'),
+           icon: Settings2,
+           locked: !platform.plan.projectRolesEnabled,
+         },
+         {
+-          to: '/platform/security/api-keys',
++          to: '/admin/security/api-keys',
+           label: t('API Keys'),
+           icon: FileJson2,
+           locked: !platform.plan.apiKeysEnabled,
+@@ -160,17 +144,17 @@ export function PlatformSidebar() {
+       label: t('Infrastructure'),
+       items: [
+         {
+-          to: '/platform/infrastructure/workers',
++          to: '/admin/infrastructure/workers',
+           label: t('Workers'),
+           icon: Server,
+         },
+         {
+-          to: '/platform/infrastructure/health',
++          to: '/admin/infrastructure/health',
+           label: t('Health'),
+           icon: FileHeart,
+         },
+         {
+-          to: '/platform/infrastructure/triggers',
++          to: '/admin/infrastructure/triggers',
+           label: t('Triggers'),
+           icon: MousePointerClick,
+         },
+@@ -201,7 +185,7 @@ export function PlatformSidebar() {
+             className="py-5 px-2"
+           >
+             <ArrowLeft />
+-            {t('Exit platform admin')}
++            {t('Exit admin')}
+           </SidebarMenuButton>
+         </SidebarMenu>
+       </SidebarHeader>
+diff --git a/packages/react-ui/src/app/components/sidebar/sidebar-user.tsx b/packages/react-ui/src/app/components/sidebar/sidebar-user.tsx
+index 714c3bea75..f208d985e3 100644
+--- a/packages/react-ui/src/app/components/sidebar/sidebar-user.tsx
++++ b/packages/react-ui/src/app/components/sidebar/sidebar-user.tsx
+@@ -57,7 +57,7 @@ export function SidebarUser() {
+   const { reset } = useTelemetry();
+   const { checkAccess } = useAuthorization();
+   const canInviteUsers = checkAccess(Permission.WRITE_INVITATION);
+-  const isInPlatformAdmin = location.pathname.startsWith('/platform');
++  const isInPlatformAdmin = location.pathname.startsWith('/admin');
+   const isCollapsed = state === 'collapsed';
+ 
+   if (!user || embedState.isEmbedded) {
+@@ -184,12 +184,12 @@ function SidebarPlatformAdminButton() {
+   return (
+     <DropdownMenuGroup>
+       <DropdownMenuItem
+-        onClick={() => navigate('/platform')}
++        onClick={() => navigate('/admin')}
+         className="w-full flex items-center justify-center relative"
+       >
+         <div className={`w-full flex items-center gap-2`}>
+           <Shield className="size-4" />
+-          <span className={`text-sm`}>{t('Platform Admin')}</span>
++          <span className={`text-sm`}>{t('Admin')}</span>
+         </div>
+       </DropdownMenuItem>
+     </DropdownMenuGroup>
+diff --git a/packages/react-ui/src/app/guards/index.tsx b/packages/react-ui/src/app/guards/index.tsx
+index 72e2c743e7..d3f95b72dc 100644
+--- a/packages/react-ui/src/app/guards/index.tsx
++++ b/packages/react-ui/src/app/guards/index.tsx
+@@ -14,13 +14,11 @@ import { ApiKeysPage } from '@/app/routes/platform/security/api-keys';
+ import { SigningKeysPage } from '@/app/routes/platform/security/signing-keys';
+ import { SSOPage } from '@/app/routes/platform/security/sso';
+ import AIProvidersPage from '@/app/routes/platform/setup/ai';
+-import { BrandingPage } from '@/app/routes/platform/setup/branding';
+-import { PlatformPiecesPage } from '@/app/routes/platform/setup/pieces';
++import { PlatformConnectorsPage } from '@/app/routes/platform/setup/connectors';
++import { GlobalConnectionsPage } from '@/app/routes/platform/setup/globalconnections';
+ import { RedirectPage } from '@/app/routes/redirect';
+ import { useEmbedding } from '@/components/embed-provider';
+ import { VerifyEmail } from '@/features/authentication/components/verify-email';
+-import { Error } from '@/features/billing/components/error';
+-import { Success } from '@/features/billing/components/success';
+ import { AcceptInvitation } from '@/features/members/component/accept-invitation';
+ import { routesThatRequireProjectId } from '@/lib/utils';
+ import { Permission } from '@activepieces/shared';
+@@ -39,11 +37,9 @@ import { FlowsPage } from '../routes/flows';
+ import { FlowBuilderPage } from '../routes/flows/id';
+ import { ResetPasswordPage } from '../routes/forget-password';
+ import { FormPage } from '../routes/forms';
+-import SettingsBilling from '../routes/platform/billing';
+ import SettingsHealthPage from '../routes/platform/infra/health';
+ import TriggerHealthPage from '../routes/platform/infra/triggers';
+ import SettingsWorkersPage from '../routes/platform/infra/workers';
+-import ProjectsPage from '../routes/platform/projects';
+ import AuditLogsPage from '../routes/platform/security/audit-logs';
+ import { ProjectRolePage } from '../routes/platform/security/project-role';
+ import { ProjectRoleUsersTable } from '../routes/platform/security/project-role/project-role-users-table';
+@@ -320,108 +316,101 @@ const routes = [
+       </PageTitle>
+     ),
+   },
++  // Admin routes - General
+   {
+-    path: '/platform/projects',
++    path: '/admin/analytics',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Projects">
+-          <ProjectsPage />
++        <PageTitle title="Overview">
++          <AnalyticsPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/pieces',
++    path: '/admin',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Pieces">
+-          <PlatformPiecesPage />
++        <PageTitle title="Admin">
++          <Navigate to="/admin/analytics" />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/analytics',
++    path: '/admin/users',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Analytics">
+-          <AnalyticsPage />
++        <PageTitle title="Users">
++          <UsersPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
++  // Admin routes - Setup
+   {
+-    path: '/platform',
++    path: '/admin/setup/ai',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Platform">
+-          <Navigate to="/platform/analytics" />
++        <PageTitle title="AI">
++          <AIProvidersPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/connections',
++    path: '/admin/setup/connections',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Connections">
++        <PageTitle title="Global Connections">
+           <GlobalConnectionsTable />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/templates',
+-    element: (
+-      <PlatformLayout>
+-        <PageTitle title="Templates">
+-          <TemplatesPage />
+-        </PageTitle>
+-      </PlatformLayout>
+-    ),
+-  },
+-  {
+-    path: '/platform/setup/branding',
++    path: '/admin/setup/connectors',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Branding">
+-          <BrandingPage />
++        <PageTitle title="Connectors">
++          <PlatformConnectorsPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/users',
++    path: '/admin/setup/globalconnections',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Users">
+-          <UsersPage />
++        <PageTitle title="Global Connections">
++          <GlobalConnectionsPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/ai',
++    path: '/admin/setup/templates',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="AI">
+-          <AIProvidersPage />
++        <PageTitle title="Templates">
++          <TemplatesPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/security/api-keys',
++    path: '/admin/setup',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="API Keys">
+-          <ApiKeysPage />
++        <PageTitle title="Admin Setup">
++          <Navigate to="/admin/setup/ai" replace />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
++  // Admin routes - Security
+   {
+-    path: '/platform/security/audit-logs',
++    path: '/admin/security/audit-logs',
+     element: (
+       <PlatformLayout>
+         <PageTitle title="Audit Logs">
+@@ -431,134 +420,110 @@ const routes = [
+     ),
+   },
+   {
+-    path: '/platform/infrastructure/workers',
+-    element: (
+-      <PlatformLayout>
+-        <PageTitle title="Workers">
+-          <SettingsWorkersPage />
+-        </PageTitle>
+-      </PlatformLayout>
+-    ),
+-  },
+-  {
+-    path: '/platform/infrastructure/health',
+-    element: (
+-      <PlatformLayout>
+-        <PageTitle title="System Health">
+-          <SettingsHealthPage />
+-        </PageTitle>
+-      </PlatformLayout>
+-    ),
+-  },
+-  {
+-    path: '/platform/infrastructure/triggers',
++    path: '/admin/security/sso',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Trigger Health">
+-          <TriggerHealthPage />
++        <PageTitle title="Single Sign On">
++          <SSOPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/billing',
++    path: '/admin/security/signing-keys',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Billing">
+-          <SettingsBilling />
++        <PageTitle title="Signing Keys">
++          <SigningKeysPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/billing/success',
++    path: '/admin/security/project-roles',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Billing">
+-          <Success />
++        <PageTitle title="Project Roles">
++          <ProjectRolePage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup/billing/error',
++    path: '/admin/security/project-roles/:projectRoleId',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Billing">
+-          <Error />
++        <PageTitle title="Project Role Users">
++          <ProjectRoleUsersTable />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/security/signing-keys',
++    path: '/admin/security/api-keys',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Signing Keys">
+-          <SigningKeysPage />
++        <PageTitle title="API Keys">
++          <ApiKeysPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/security/sso',
++    path: '/admin/security',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="SSO">
+-          <SSOPage />
++        <PageTitle title="Admin Security">
++          <Navigate to="/admin/security/audit-logs" replace />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
++  // Admin routes - Infrastructure
+   {
+-    path: '/platform/security/project-roles',
++    path: '/admin/infrastructure/workers',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Project Roles">
+-          <ProjectRolePage />
++        <PageTitle title="Workers">
++          <SettingsWorkersPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/security/project-roles/:projectRoleId',
++    path: '/admin/infrastructure/health',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Project Role Users">
+-          <ProjectRoleUsersTable />
++        <PageTitle title="System Health">
++          <SettingsHealthPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/setup',
++    path: '/admin/infrastructure/triggers',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Platform Setup">
+-          <Navigate to="/platform/setup/ai" replace />
++        <PageTitle title="Trigger Health">
++          <TriggerHealthPage />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
+   {
+-    path: '/platform/infrastructure',
++    path: '/admin/infrastructure',
+     element: (
+       <PlatformLayout>
+-        <PageTitle title="Platform Infrastructure">
+-          <Navigate to="/platform/infrastructure/workers" replace />
++        <PageTitle title="Admin Infrastructure">
++          <Navigate to="/admin/infrastructure/workers" replace />
+         </PageTitle>
+       </PlatformLayout>
+     ),
+   },
++  // Redirect old /platform routes to /admin
+   {
+-    path: '/platform/security',
+-    element: (
+-      <PlatformLayout>
+-        <PageTitle title="Platform Security">
+-          <Navigate to="/platform/security/audit-logs" replace />
+-        </PageTitle>
+-      </PlatformLayout>
+-    ),
++    path: '/platform/*',
++    element: <Navigate to="/admin" replace />,
+   },
+   {
+     path: '/redirect',
+diff --git a/packages/react-ui/src/app/routes/explore/index.tsx b/packages/react-ui/src/app/routes/explore/index.tsx
+index d8a065a657..d7599eefa1 100644
+--- a/packages/react-ui/src/app/routes/explore/index.tsx
++++ b/packages/react-ui/src/app/routes/explore/index.tsx
+@@ -85,7 +85,7 @@ export const ExplorePage = () => {
+                 {!search && isPlatformAdmin && (
+                   <EmptyContent>
+                     <Button
+-                      onClick={() => navigate('/platform/setup/templates')}
++                      onClick={() => navigate('/admin/setup/templates')}
+                     >
+                       {t('Setup Templates')}
+                     </Button>
+diff --git a/packages/react-ui/src/app/routes/platform/security/project-role/project-role-users-table.tsx b/packages/react-ui/src/app/routes/platform/security/project-role/project-role-users-table.tsx
+index d2f8303146..022c6e3407 100644
+--- a/packages/react-ui/src/app/routes/platform/security/project-role/project-role-users-table.tsx
++++ b/packages/react-ui/src/app/routes/platform/security/project-role/project-role-users-table.tsx
+@@ -124,7 +124,7 @@ export const ProjectRoleUsersTable = () => {
+           <BreadcrumbList>
+             <BreadcrumbItem>
+               <BreadcrumbLink
+-                onClick={() => navigate('/platform/security/project-roles')}
++                onClick={() => navigate('/admin/security/project-roles')}
+                 className="cursor-pointer hover:text-primary hover:underline"
+               >
+                 {t('Roles')}
+diff --git a/packages/react-ui/src/app/routes/platform/security/project-role/project-roles-table.tsx b/packages/react-ui/src/app/routes/platform/security/project-role/project-roles-table.tsx
+index a9e72ef106..26ae23b333 100644
+--- a/packages/react-ui/src/app/routes/platform/security/project-role/project-roles-table.tsx
++++ b/packages/react-ui/src/app/routes/platform/security/project-role/project-roles-table.tsx
+@@ -105,7 +105,7 @@ export const ProjectRolesTable = ({
+                     variant="ghost"
+                     className="size-8 p-0"
+                     onClick={() => {
+-                      navigate(`/platform/security/project-roles/${row.id}`);
++                      navigate(`/admin/security/project-roles/${row.id}`);
+                     }}
+                   >
+                     <Users className="size-4" />
+diff --git a/packages/react-ui/src/app/routes/platform/setup/pieces/index.tsx b/packages/react-ui/src/app/routes/platform/setup/pieces/index.tsx
+index aa36a57fbc..63c0163c59 100644
+--- a/packages/react-ui/src/app/routes/platform/setup/pieces/index.tsx
++++ b/packages/react-ui/src/app/routes/platform/setup/pieces/index.tsx
+@@ -49,7 +49,11 @@ const PlatformPiecesPage = () => {
+         {
+           accessorKey: 'name',
+           header: ({ column }) => (
+-            <DataTableColumnHeader column={column} title={t('App')} />
++            <DataTableColumnHeader
++              column={column}
++              title={t('App')}
++              sortable={true}
++            />
+           ),
+           cell: ({ row }) => {
+             return (
+@@ -69,7 +73,11 @@ const PlatformPiecesPage = () => {
+         {
+           accessorKey: 'displayName',
+           header: ({ column }) => (
+-            <DataTableColumnHeader column={column} title={t('Display Name')} />
++            <DataTableColumnHeader
++              column={column}
++              title={t('Display Name')}
++              sortable={true}
++            />
+           ),
+           cell: ({ row }) => {
+             return <div className="text-left">{row.original.displayName}</div>;
+@@ -78,7 +86,11 @@ const PlatformPiecesPage = () => {
+         {
+           accessorKey: 'packageName',
+           header: ({ column }) => (
+-            <DataTableColumnHeader column={column} title={t('Package Name')} />
++            <DataTableColumnHeader
++              column={column}
++              title={t('Package Name')}
++              sortable={true}
++            />
+           ),
+           cell: ({ row }) => {
+             return <div className="text-left">{row.original.name}</div>;
+@@ -87,7 +99,11 @@ const PlatformPiecesPage = () => {
+         {
+           accessorKey: 'version',
+           header: ({ column }) => (
+-            <DataTableColumnHeader column={column} title={t('Version')} />
++            <DataTableColumnHeader
++              column={column}
++              title={t('Version')}
++              sortable={true}
++            />
+           ),
+           cell: ({ row }) => {
+             return <div className="text-left">{row.original.version}</div>;
+@@ -96,7 +112,11 @@ const PlatformPiecesPage = () => {
+         {
+           accessorKey: 'tags',
+           header: ({ column }) => (
+-            <DataTableColumnHeader column={column} title={t('Tags')} />
++            <DataTableColumnHeader
++              column={column}
++              title={t('Tags')}
++              sortable={false}
++            />
+           ),
+           cell: ({ row }) => {
+             return (
+diff --git a/packages/react-ui/src/components/ui/data-table/data-table-column-header.tsx b/packages/react-ui/src/components/ui/data-table/data-table-column-header.tsx
+index bc31c3856a..7488ee2678 100644
+--- a/packages/react-ui/src/components/ui/data-table/data-table-column-header.tsx
++++ b/packages/react-ui/src/components/ui/data-table/data-table-column-header.tsx
+@@ -1,22 +1,64 @@
+ import { Column } from '@tanstack/react-table';
++import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
++
++import { Button } from '@/components/ui/button';
++import { cn } from '@/lib/utils';
+ 
+ interface DataTableColumnHeaderProps<TData, TValue>
+   extends React.HTMLAttributes<HTMLDivElement> {
+   column: Column<TData, TValue>;
+   title: string;
++  sortable?: boolean;
+ }
+ 
+ export function DataTableColumnHeader<TData, TValue>({
+   title,
++  column,
++  sortable = false,
+   className,
+ }: DataTableColumnHeaderProps<TData, TValue>) {
+-  return (
+-    <div
+-      className={`flex items-center justify-start space-x-2 py-4 ${className}`}
+-    >
+-      <div className="text-sm font-semibold text-black dark:text-white">
+-        {title}
++  if (!sortable) {
++    return (
++      <div
++        className={cn(
++          'flex items-center justify-start space-x-2 py-4',
++          className,
++        )}
++      >
++        <div className="text-sm font-semibold text-black dark:text-white">
++          {title}
++        </div>
+       </div>
++    );
++  }
++
++  const isSorted = column.getIsSorted();
++
++  return (
++    <div className={cn('flex items-center space-x-2', className)}>
++      <Button
++        variant="ghost"
++        size="sm"
++        className="-ml-3 h-8 data-[state=open]:bg-accent"
++        onClick={() => {
++          if (isSorted === 'asc') {
++            column.toggleSorting(true);
++          } else if (isSorted === 'desc') {
++            column.clearSorting();
++          } else {
++            column.toggleSorting(false);
++          }
++        }}
++      >
++        <span className="text-sm font-semibold">{title}</span>
++        {isSorted === 'desc' ? (
++          <ArrowDown className="ml-2 h-4 w-4" />
++        ) : isSorted === 'asc' ? (
++          <ArrowUp className="ml-2 h-4 w-4" />
++        ) : (
++          <ChevronsUpDown className="ml-2 h-4 w-4" />
++        )}
++      </Button>
+     </div>
+   );
+ }
+diff --git a/packages/react-ui/src/components/ui/data-table/index.tsx b/packages/react-ui/src/components/ui/data-table/index.tsx
+index a6147a45f7..6fc9c57379 100644
+--- a/packages/react-ui/src/components/ui/data-table/index.tsx
++++ b/packages/react-ui/src/components/ui/data-table/index.tsx
+@@ -4,6 +4,8 @@ import {
+   ColumnDef as TanstackColumnDef,
+   flexRender,
+   getCoreRowModel,
++  getSortedRowModel,
++  SortingState,
+   useReactTable,
+ } from '@tanstack/react-table';
+ import { t } from 'i18next';
+@@ -204,6 +206,7 @@ export function DataTable<
+   const [tableData, setTableData] = useState<RowDataWithActions<TData>[]>(
+     enrichPageData(page?.data ?? []),
+   );
++  const [sorting, setSorting] = useState<SortingState>([]);
+ 
+   useDeepCompareEffect(() => {
+     setNextPageCursor(page?.next ?? undefined);
+@@ -216,7 +219,12 @@ export function DataTable<
+     columns,
+     manualPagination: true,
+     getCoreRowModel: getCoreRowModel(),
++    getSortedRowModel: getSortedRowModel(),
++    onSortingChange: setSorting,
+     getRowId: () => apId(),
++    state: {
++      sorting,
++    },
+     initialState: {
+       pagination: {
+         pageSize: parseInt(startingLimit),
+diff --git a/packages/server/api/src/app/app.ts b/packages/server/api/src/app/app.ts
+index a96831bfef..edfa4ffd50 100644
+--- a/packages/server/api/src/app/app.ts
++++ b/packages/server/api/src/app/app.ts
+@@ -322,6 +322,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
+             await app.register(projectModule)
+             await app.register(communityPiecesModule)
+             await app.register(queueMetricsModule)
++            await app.register(globalConnectionModule)
+             break
+     }
+ 
+diff --git a/tools/reset-dev.sh b/tools/reset-dev.sh
+old mode 100644
+new mode 100755
+diff --git a/tools/reset.sh b/tools/reset.sh
+old mode 100644
+new mode 100755

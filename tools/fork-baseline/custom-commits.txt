@@ -1,0 +1,11 @@
+228102ce1a718ca80e765812b95535808f39c8d7 2026-01-11 Merge pull request #4 from aboxofrice/feat/remove-paywall
+5211dd3ec95674105ab2ee4af18cfccf9263a0f5 2026-01-11 feat: remove paywall and refactor admin UI
+7a774be0fd860c7fe84da576af44e13fb35be349 2025-12-25 Merge pull request #3 from aboxofrice/feat/add-plaid-and-ncino-pieces
+b1457a5d6f34e7996565636b10ede0211c662566 2025-12-25 feat: add plaid and ncino pieces
+8202c94c431a575be09a4f536abc4ae82f7a2582 2025-12-25 Merge pull request #2 from aboxofrice/feature/add-backup-flows
+6e1d25dbc97429f9467c12642ee7b27267e20117 2025-12-25 feat: add backup flow tool
+fc41848eaa2a04c1af726ae9708104feb3d80b71 2025-12-25 Merge pull request #1 from aboxofrice/feat/add-sageworks-and-narmi-pieces
+146448d38ed4e174d2a0020819d5ff69b82fcb64 2025-12-25 feat: add Sageworks piece and update existing pieces
+86e93042f970bbbe2aa53a2e82b2f5221e427950 2025-12-24 feat: add Fiserv piece and related shared utilities
+43d5ba4284acb6ef79dd387170aa556fd8dd3588 2025-12-22 feat: update Fiserv Premier piece and add tools - Update Fiserv Premier to v0.0.13 with local logo - Remove get-party-by-tax-id action, merge into get-party - Add icemortgage-encompass custom piece - Add delete-piece.js tool
+0fa605491551892bad79fde8f3f1a9547d921d68 2025-12-20 feat: add Fiserv Premier and Gelato custom pieces
