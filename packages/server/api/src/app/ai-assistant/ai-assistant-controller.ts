@@ -6,7 +6,8 @@ import { aiAssistantService } from './ai-assistant-service'
 export const aiAssistantController: FastifyPluginAsyncTypebox = async (app) => {
     app.post('/chat', ChatRequest, async (request) => {
         const platformId = request.principal.platform.id
-        return aiAssistantService(app.log).chat(platformId, request.body)
+        const projectId = request.principal.projectId
+        return aiAssistantService(app.log).chat(platformId, projectId, request.body)
     })
 }
 
