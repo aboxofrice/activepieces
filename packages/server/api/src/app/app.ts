@@ -10,6 +10,7 @@ import { globalRegistry } from 'zod/v4/core'
 import { agentsModule } from './agents/agents-module'
 import { aiProviderService } from './ai/ai-provider-service'
 import { aiProviderModule } from './ai/ai-provider.module'
+import { aiAssistantModule } from './ai-assistant/ai-assistant.module'
 import { platformAnalyticsModule } from './analytics/platform-analytics.module'
 import { setPlatformOAuthService } from './app-connection/app-connection-service/oauth2'
 import { appConnectionModule } from './app-connection/app-connection.module'
@@ -205,6 +206,7 @@ export const setupApp = async (app: FastifyInstance): Promise<FastifyInstance> =
     await app.register(workerModule)
     await aiProviderService(app.log).setup()
     await app.register(aiProviderModule)
+    await app.register(aiAssistantModule)
     await app.register(licenseKeysModule)
     await app.register(tablesModule)
     await app.register(knowledgeBaseModule)

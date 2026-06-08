@@ -34,6 +34,7 @@ export const CreateNewMenu = ({
   onImportFlow,
   onImportTable,
   onSelectTemplate,
+  onOpenAIAssistant,
   onOpenChange,
 }: CreateNewMenuProps) => {
   const { embedState } = useEmbedding();
@@ -81,6 +82,19 @@ export const CreateNewMenu = ({
             >
               <Sparkles className="h-4 w-4 mr-2" />
               {t('Start from Template')}
+            </DropdownMenuItem>
+          </PermissionNeededTooltip>
+        )}
+
+        {showTemplate && onOpenAIAssistant && (
+          <PermissionNeededTooltip hasPermission={userHasPermissionToWriteFlow}>
+            <DropdownMenuItem
+              disabled={!userHasPermissionToWriteFlow || busy}
+              onSelect={() => onOpenAIAssistant()}
+              className="cursor-pointer"
+            >
+              <Sparkles className="h-4 w-4 mr-2" />
+              {t('From AI')}
             </DropdownMenuItem>
           </PermissionNeededTooltip>
         )}
@@ -179,6 +193,7 @@ type CreateNewMenuProps = {
   onImportFlow: () => void;
   onImportTable: () => void;
   onSelectTemplate?: () => void;
+  onOpenAIAssistant?: () => void;
   onOpenChange?: (open: boolean) => void;
 };
 

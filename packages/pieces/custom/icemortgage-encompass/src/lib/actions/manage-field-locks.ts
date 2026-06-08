@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const manageFieldLocks = createAction({
   name: 'loan_manage_field_locks',
@@ -36,15 +36,14 @@ export const manageFieldLocks = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId, action, fields } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.PATCH,
-      url: `${baseUrl}/encompass/v3/loans/${loanId}/fieldLockData?action=${action}`,
+      url: `${authProps.baseUrl}/encompass/v3/loans/${loanId}/fieldLockData?action=${action}`,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,

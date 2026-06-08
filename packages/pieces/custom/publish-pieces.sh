@@ -33,6 +33,10 @@ PIECES=(
   "gelato"
   "plaid"
   "ncino"
+  "kinective-placeholder"
+  "fis-horizon"
+  "fis-ibs"
+  "fis-ibs-cards"
 )
 
 # Check if logged in to npm

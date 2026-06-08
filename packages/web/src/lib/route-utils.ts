@@ -16,6 +16,7 @@ export const routesThatRequireProjectId = {
   settings: '/settings',
   releases: '/releases',
   singleRelease: '/releases/:releaseId',
+  aiAssistant: '/ai-assistant',
 };
 
 export const determineDefaultRoute = (

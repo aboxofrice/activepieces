@@ -2,6 +2,15 @@
 
 # Claude Code worktrees
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+
+# Nx cache
+.nx/
+
+# Local DB backups and compose overrides
+db-backup/
+docker-compose.override.yml
 
 pieces-cache-db-*.sqlite
 

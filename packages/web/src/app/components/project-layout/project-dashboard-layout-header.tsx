@@ -3,6 +3,7 @@ import { t } from 'i18next';
 import { useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { BotIcon } from '@/components/icons/bot';
 import { BoxIcon } from '@/components/icons/box';
 import { ConnectIcon } from '@/components/icons/connect';
 import { HistoryIcon } from '@/components/icons/history';
@@ -111,6 +112,13 @@ export const ProjectDashboardLayoutHeader = () => {
         checkAccess(Permission.READ_PROJECT_RELEASE) &&
         !isEmbedded,
       show: project.releasesEnabled,
+    },
+    {
+      to: authenticationSession.appendProjectRoutePrefix('/ai-assistant'),
+      icon: BotIcon,
+      label: t('AI Assistant'),
+      hasPermission: checkAccess(Permission.READ_FLOW),
+      show: !isEmbedded,
     },
   ];
 

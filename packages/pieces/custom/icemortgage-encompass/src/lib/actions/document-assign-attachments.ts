@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const assignDocumentAttachments = createAction({
   name: 'document_assign_attachments',
@@ -29,18 +29,17 @@ export const assignDocumentAttachments = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId, documentId, attachments } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const queryParams = new URLSearchParams();
     queryParams.append('action', 'add');
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.PATCH,
-      url: `${baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}/attachments?${queryParams.toString()}`,
+      url: `${authProps.baseUrl}/encompass/v3/loans/${loanId}/documents/${documentId}/attachments?${queryParams.toString()}`,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,

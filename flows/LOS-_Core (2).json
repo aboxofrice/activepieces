@@ -1,0 +1,2019 @@
+﻿{
+  "name": "LOS->Core",
+  "type": "SHARED",
+  "summary": "",
+  "description": "",
+  "tags": [],
+  "author": "",
+  "categories": [],
+  "pieces": [
+    "@activepieces/piece-webhook",
+    "@vqnguyen1/piece-icemortgage-encompass",
+    "@activepieces/piece-store",
+    "@activepieces/piece-math-helper",
+    "@vqnguyen1/piece-fiserv",
+    "@activepieces/piece-ai",
+    "@activepieces/piece-csv",
+    "@activepieces/piece-data-summarizer",
+    "@activepieces/piece-file-helper",
+    "@activepieces/piece-sftp",
+    "@activepieces/piece-graphql",
+    "@activepieces/piece-http",
+    "@activepieces/piece-forms",
+    "@activepieces/piece-tables",
+    "@activepieces/piece-xml",
+    "@activepieces/piece-json"
+  ],
+  "status": "PUBLISHED",
+  "blogUrl": "",
+  "metadata": null,
+  "flows": [
+    {
+      "displayName": "LOS->Core",
+      "trigger": {
+        "name": "trigger",
+        "valid": true,
+        "displayName": "Catch Webhook",
+        "type": "PIECE_TRIGGER",
+        "settings": {
+          "propertySettings": {
+            "authType": {
+              "type": "MANUAL"
+            },
+            "authFields": {
+              "type": "MANUAL",
+              "schema": {}
+            },
+            "liveMarkdown": {
+              "type": "MANUAL"
+            },
+            "syncMarkdown": {
+              "type": "MANUAL"
+            },
+            "testMarkdown": {
+              "type": "MANUAL"
+            }
+          },
+          "pieceName": "@activepieces/piece-webhook",
+          "pieceVersion": "~0.1.25",
+          "input": {
+            "authType": "none",
+            "authFields": {}
+          },
+          "sampleData": {},
+          "triggerName": "catch_webhook"
+        },
+        "nextAction": {
+          "name": "step_17",
+          "skip": false,
+          "type": "PIECE",
+          "valid": true,
+          "settings": {
+            "input": {
+              "auth": "{{connections['ohlzGanNEaFQHVxzvX5Ap']}}",
+              "loanId": "{{trigger['body']['payload']['loanGuid']}}"
+            },
+            "pieceName": "@vqnguyen1/piece-icemortgage-encompass",
+            "actionName": "loan_retrieve",
+            "sampleData": {},
+            "pieceVersion": "~0.0.7",
+            "propertySettings": {
+              "loanId": {
+                "type": "MANUAL"
+              }
+            },
+            "errorHandlingOptions": {
+              "retryOnFailure": {
+                "value": false
+              },
+              "continueOnFailure": {
+                "value": false
+              }
+            }
+          },
+          "nextAction": {
+            "name": "step_19",
+            "skip": false,
+            "type": "PIECE",
+            "valid": true,
+            "settings": {
+              "input": {
+                "key": "loanData",
+                "value": "{{step_17}}",
+                "store_scope": "RUN"
+              },
+              "pieceName": "@activepieces/piece-store",
+              "actionName": "put",
+              "sampleData": {},
+              "pieceVersion": "~0.6.10",
+              "propertySettings": {
+                "key": {
+                  "type": "MANUAL"
+                },
+                "value": {
+                  "type": "MANUAL"
+                },
+                "store_scope": {
+                  "type": "MANUAL"
+                }
+              },
+              "errorHandlingOptions": {
+                "retryOnFailure": {
+                  "value": false
+                },
+                "continueOnFailure": {
+                  "value": false
+                }
+              }
+            },
+            "nextAction": {
+              "name": "step_20",
+              "skip": false,
+              "type": "CODE",
+              "valid": true,
+              "settings": {
+                "input": {
+                  "step1": "{{step_17}}"
+                },
+                "sampleData": {},
+                "sourceCode": {
+                  "code": "export const code = async (inputs) => {\n  // Accessing the mapped item\n  const itemsFromStep1 = inputs.step1;\n\n  // Example: If it's an array and you want to process it\n  console.log(\"Received items:\", itemsFromStep1);\n\n  return itemsFromStep1; \n};",
+                  "packageJson": "{}"
+                },
+                "errorHandlingOptions": {
+                  "retryOnFailure": {
+                    "value": false
+                  },
+                  "continueOnFailure": {
+                    "value": false
+                  }
+                }
+              },
+              "nextAction": {
+                "name": "step_18",
+                "skip": false,
+                "type": "PIECE",
+                "valid": true,
+                "settings": {
+                  "input": {
+                    "key": "loopCounter",
+                    "value": "1",
+                    "store_scope": "FLOW"
+                  },
+                  "pieceName": "@activepieces/piece-store",
+                  "actionName": "put",
+                  "sampleData": {},
+                  "pieceVersion": "~0.6.10",
+                  "propertySettings": {
+                    "key": {
+                      "type": "MANUAL"
+                    },
+                    "value": {
+                      "type": "MANUAL"
+                    },
+                    "store_scope": {
+                      "type": "MANUAL"
+                    }
+                  },
+                  "errorHandlingOptions": {
+                    "retryOnFailure": {
+                      "value": false
+                    },
+                    "continueOnFailure": {
+                      "value": false
+                    }
+                  }
+                },
+                "nextAction": {
+                  "name": "step_4",
+                  "skip": false,
+                  "type": "LOOP_ON_ITEMS",
+                  "valid": false,
+                  "settings": {
+                    "items": "",
+                    "sampleData": {}
+                  },
+                  "nextAction": {
+                    "name": "step_10",
+                    "skip": false,
+                    "type": "PIECE",
+                    "valid": false,
+                    "settings": {
+                      "input": {
+                        "accountType": "LOAN",
+                        "customFields": {}
+                      },
+                      "pieceName": "@vqnguyen1/piece-fiserv",
+                      "actionName": "account_create",
+                      "sampleData": {},
+                      "pieceVersion": "~0.0.2",
+                      "propertySettings": {
+                        "partyId": {
+                          "type": "MANUAL"
+                        },
+                        "branchId": {
+                          "type": "MANUAL"
+                        },
+                        "loanRate": {
+                          "type": "MANUAL"
+                        },
+                        "loanTerm": {
+                          "type": "MANUAL"
+                        },
+                        "loanAmount": {
+                          "type": "MANUAL"
+                        },
+                        "accountType": {
+                          "type": "MANUAL"
+                        },
+                        "productCode": {
+                          "type": "MANUAL"
+                        },
+                        "customFields": {
+                          "type": "MANUAL"
+                        },
+                        "interestRate": {
+                          "type": "MANUAL"
+                        },
+                        "openingBalance": {
+                          "type": "MANUAL"
+                        }
+                      },
+                      "errorHandlingOptions": {
+                        "retryOnFailure": {
+                          "value": false
+                        },
+                        "continueOnFailure": {
+                          "value": false
+                        }
+                      }
+                    },
+                    "nextAction": {
+                      "name": "step_11",
+                      "skip": false,
+                      "type": "LOOP_ON_ITEMS",
+                      "valid": false,
+                      "settings": {
+                        "items": "",
+                        "sampleData": {}
+                      },
+                      "nextAction": {
+                        "name": "step_13",
+                        "skip": false,
+                        "type": "LOOP_ON_ITEMS",
+                        "valid": false,
+                        "settings": {
+                          "items": "",
+                          "sampleData": {}
+                        },
+                        "nextAction": {
+                          "name": "step_1",
+                          "skip": false,
+                          "type": "PIECE",
+                          "valid": false,
+                          "settings": {
+                            "input": {
+                              "model": "gpt-4o",
+                              "provider": null,
+                              "webSearch": false,
+                              "creativity": 100,
+                              "maxOutputTokens": 2000,
+                              "webSearchOptions": {}
+                            },
+                            "pieceName": "@activepieces/piece-ai",
+                            "actionName": "askAi",
+                            "sampleData": {},
+                            "pieceVersion": "~0.0.2",
+                            "propertySettings": {
+                              "model": {
+                                "type": "MANUAL"
+                              },
+                              "prompt": {
+                                "type": "MANUAL"
+                              },
+                              "provider": {
+                                "type": "MANUAL"
+                              },
+                              "webSearch": {
+                                "type": "MANUAL"
+                              },
+                              "creativity": {
+                                "type": "MANUAL"
+                              },
+                              "conversationKey": {
+                                "type": "MANUAL"
+                              },
+                              "maxOutputTokens": {
+                                "type": "MANUAL"
+                              },
+                              "webSearchOptions": {
+                                "type": "MANUAL",
+                                "schema": {}
+                              }
+                            },
+                            "errorHandlingOptions": {
+                              "retryOnFailure": {
+                                "value": false
+                              },
+                              "continueOnFailure": {
+                                "value": false
+                              }
+                            }
+                          },
+                          "nextAction": {
+                            "name": "step_21",
+                            "skip": false,
+                            "type": "PIECE",
+                            "valid": false,
+                            "settings": {
+                              "input": {
+                                "has_headers": false
+                              },
+                              "pieceName": "@activepieces/piece-csv",
+                              "actionName": "convert_csv_to_json",
+                              "sampleData": {},
+                              "pieceVersion": "~0.4.9",
+                              "propertySettings": {
+                                "csv_text": {
+                                  "type": "MANUAL"
+                                },
+                                "has_headers": {
+                                  "type": "MANUAL"
+                                },
+                                "delimiter_type": {
+                                  "type": "MANUAL"
+                                }
+                              },
+                              "errorHandlingOptions": {
+                                "retryOnFailure": {
+                                  "value": false
+                                },
+                                "continueOnFailure": {
+                                  "value": false
+                                }
+                              }
+                            },
+                            "nextAction": {
+                              "name": "step_22",
+                              "skip": false,
+                              "type": "PIECE",
+                              "valid": true,
+                              "settings": {
+                                "input": {
+                                  "json_array": [
+                                    {
+                                      "age": 30,
+                                      "name": "John",
+                                      "address": {
+                                        "city": "Los Angeles",
+                                        "street": "123 Main St"
+                                      }
+                                    },
+                                    {
+                                      "age": 25,
+                                      "name": "Jane",
+                                      "address": {
+                                        "city": "Los Angeles",
+                                        "street": "123 Main St"
+                                      }
+                                    }
+                                  ],
+                                  "delimiter_type": ","
+                                },
+                                "pieceName": "@activepieces/piece-csv",
+                                "actionName": "convert_json_to_csv",
+                                "sampleData": {},
+                                "pieceVersion": "~0.4.9",
+                                "propertySettings": {
+                                  "markdown": {
+                                    "type": "MANUAL"
+                                  },
+                                  "json_array": {
+                                    "type": "MANUAL"
+                                  },
+                                  "delimiter_type": {
+                                    "type": "MANUAL"
+                                  }
+                                },
+                                "errorHandlingOptions": {
+                                  "retryOnFailure": {
+                                    "value": false
+                                  },
+                                  "continueOnFailure": {
+                                    "value": false
+                                  }
+                                }
+                              },
+                              "nextAction": {
+                                "name": "step_23",
+                                "skip": false,
+                                "type": "PIECE",
+                                "valid": false,
+                                "settings": {
+                                  "input": {
+                                    "values": []
+                                  },
+                                  "pieceName": "@activepieces/piece-data-summarizer",
+                                  "actionName": "calculateAverage",
+                                  "sampleData": {},
+                                  "pieceVersion": "~0.0.7",
+                                  "propertySettings": {
+                                    "note": {
+                                      "type": "MANUAL"
+                                    },
+                                    "values": {
+                                      "type": "MANUAL"
+                                    }
+                                  },
+                                  "errorHandlingOptions": {
+                                    "retryOnFailure": {
+                                      "value": false
+                                    },
+                                    "continueOnFailure": {
+                                      "value": false
+                                    }
+                                  }
+                                },
+                                "nextAction": {
+                                  "name": "step_24",
+                                  "skip": false,
+                                  "type": "PIECE",
+                                  "valid": false,
+                                  "settings": {
+                                    "input": {
+                                      "readOptions": null
+                                    },
+                                    "pieceName": "@activepieces/piece-file-helper",
+                                    "actionName": "read_file",
+                                    "sampleData": {},
+                                    "pieceVersion": "~0.1.14",
+                                    "propertySettings": {
+                                      "file": {
+                                        "type": "MANUAL"
+                                      },
+                                      "readOptions": {
+                                        "type": "MANUAL"
+                                      }
+                                    },
+                                    "errorHandlingOptions": {
+                                      "retryOnFailure": {
+                                        "value": false
+                                      },
+                                      "continueOnFailure": {
+                                        "value": false
+                                      }
+                                    }
+                                  },
+                                  "nextAction": {
+                                    "name": "step_25",
+                                    "skip": false,
+                                    "type": "PIECE",
+                                    "valid": false,
+                                    "settings": {
+                                      "input": {
+                                        "encoding": "utf8"
+                                      },
+                                      "pieceName": "@activepieces/piece-file-helper",
+                                      "actionName": "createFile",
+                                      "sampleData": {},
+                                      "pieceVersion": "~0.1.14",
+                                      "propertySettings": {
+                                        "content": {
+                                          "type": "MANUAL"
+                                        },
+                                        "encoding": {
+                                          "type": "MANUAL"
+                                        },
+                                        "fileName": {
+                                          "type": "MANUAL"
+                                        }
+                                      },
+                                      "errorHandlingOptions": {
+                                        "retryOnFailure": {
+                                          "value": false
+                                        },
+                                        "continueOnFailure": {
+                                          "value": false
+                                        }
+                                      }
+                                    },
+                                    "nextAction": {
+                                      "name": "step_26",
+                                      "skip": false,
+                                      "type": "PIECE",
+                                      "valid": false,
+                                      "settings": {
+                                        "input": {
+                                          "mimeTypes": null
+                                        },
+                                        "pieceName": "@activepieces/piece-file-helper",
+                                        "actionName": "checkFileType",
+                                        "sampleData": {},
+                                        "pieceVersion": "~0.1.14",
+                                        "propertySettings": {
+                                          "file": {
+                                            "type": "MANUAL"
+                                          },
+                                          "mimeTypes": {
+                                            "type": "MANUAL"
+                                          }
+                                        },
+                                        "errorHandlingOptions": {
+                                          "retryOnFailure": {
+                                            "value": false
+                                          },
+                                          "continueOnFailure": {
+                                            "value": false
+                                          }
+                                        }
+                                      },
+                                      "nextAction": {
+                                        "name": "step_27",
+                                        "skip": false,
+                                        "type": "PIECE",
+                                        "valid": false,
+                                        "settings": {
+                                          "input": {
+                                            "mimeTypes": null
+                                          },
+                                          "pieceName": "@activepieces/piece-file-helper",
+                                          "actionName": "checkFileType",
+                                          "sampleData": {},
+                                          "pieceVersion": "~0.1.14",
+                                          "propertySettings": {
+                                            "file": {
+                                              "type": "MANUAL"
+                                            },
+                                            "mimeTypes": {
+                                              "type": "MANUAL"
+                                            }
+                                          },
+                                          "errorHandlingOptions": {
+                                            "retryOnFailure": {
+                                              "value": false
+                                            },
+                                            "continueOnFailure": {
+                                              "value": false
+                                            }
+                                          }
+                                        },
+                                        "nextAction": {
+                                          "name": "step_28",
+                                          "skip": false,
+                                          "type": "PIECE",
+                                          "valid": false,
+                                          "settings": {
+                                            "input": {
+                                              "files": []
+                                            },
+                                            "pieceName": "@activepieces/piece-file-helper",
+                                            "actionName": "zipFiles",
+                                            "sampleData": {},
+                                            "pieceVersion": "~0.1.14",
+                                            "propertySettings": {
+                                              "files": {
+                                                "type": "MANUAL"
+                                              },
+                                              "outputFileName": {
+                                                "type": "MANUAL"
+                                              }
+                                            },
+                                            "errorHandlingOptions": {
+                                              "retryOnFailure": {
+                                                "value": false
+                                              },
+                                              "continueOnFailure": {
+                                                "value": false
+                                              }
+                                            }
+                                          },
+                                          "nextAction": {
+                                            "name": "step_29",
+                                            "skip": false,
+                                            "type": "PIECE",
+                                            "valid": false,
+                                            "settings": {
+                                              "input": {
+                                                "maxResults": 0
+                                              },
+                                              "pieceName": "@activepieces/piece-file-helper",
+                                              "actionName": "unzipFile",
+                                              "sampleData": {},
+                                              "pieceVersion": "~0.1.14",
+                                              "propertySettings": {
+                                                "file": {
+                                                  "type": "MANUAL"
+                                                },
+                                                "maxResults": {
+                                                  "type": "MANUAL"
+                                                }
+                                              },
+                                              "errorHandlingOptions": {
+                                                "retryOnFailure": {
+                                                  "value": false
+                                                },
+                                                "continueOnFailure": {
+                                                  "value": false
+                                                }
+                                              }
+                                            },
+                                            "nextAction": {
+                                              "name": "step_30",
+                                              "skip": false,
+                                              "type": "PIECE",
+                                              "valid": false,
+                                              "settings": {
+                                                "input": {},
+                                                "pieceName": "@activepieces/piece-sftp",
+                                                "actionName": "create_file",
+                                                "sampleData": {},
+                                                "pieceVersion": "~0.4.4",
+                                                "propertySettings": {
+                                                  "fileName": {
+                                                    "type": "MANUAL"
+                                                  },
+                                                  "fileContent": {
+                                                    "type": "MANUAL"
+                                                  }
+                                                },
+                                                "errorHandlingOptions": {
+                                                  "retryOnFailure": {
+                                                    "value": false
+                                                  },
+                                                  "continueOnFailure": {
+                                                    "value": false
+                                                  }
+                                                }
+                                              },
+                                              "nextAction": {
+                                                "name": "step_31",
+                                                "skip": false,
+                                                "type": "PIECE",
+                                                "valid": false,
+                                                "settings": {
+                                                  "input": {},
+                                                  "pieceName": "@activepieces/piece-sftp",
+                                                  "actionName": "read_file_content",
+                                                  "sampleData": {},
+                                                  "pieceVersion": "~0.4.4",
+                                                  "propertySettings": {
+                                                    "filePath": {
+                                                      "type": "MANUAL"
+                                                    }
+                                                  },
+                                                  "errorHandlingOptions": {
+                                                    "retryOnFailure": {
+                                                      "value": false
+                                                    },
+                                                    "continueOnFailure": {
+                                                      "value": false
+                                                    }
+                                                  }
+                                                },
+                                                "nextAction": {
+                                                  "name": "step_32",
+                                                  "skip": false,
+                                                  "type": "PIECE",
+                                                  "valid": false,
+                                                  "settings": {
+                                                    "input": {
+                                                      "recursive": false
+                                                    },
+                                                    "pieceName": "@activepieces/piece-sftp",
+                                                    "actionName": "createFolder",
+                                                    "sampleData": {},
+                                                    "pieceVersion": "~0.4.4",
+                                                    "propertySettings": {
+                                                      "recursive": {
+                                                        "type": "MANUAL"
+                                                      },
+                                                      "folderPath": {
+                                                        "type": "MANUAL"
+                                                      }
+                                                    },
+                                                    "errorHandlingOptions": {
+                                                      "retryOnFailure": {
+                                                        "value": false
+                                                      },
+                                                      "continueOnFailure": {
+                                                        "value": false
+                                                      }
+                                                    }
+                                                  },
+                                                  "nextAction": {
+                                                    "name": "step_33",
+                                                    "skip": false,
+                                                    "type": "PIECE",
+                                                    "valid": false,
+                                                    "settings": {
+                                                      "input": {
+                                                        "recursive": false
+                                                      },
+                                                      "pieceName": "@activepieces/piece-sftp",
+                                                      "actionName": "deleteFolder",
+                                                      "sampleData": {},
+                                                      "pieceVersion": "~0.4.4",
+                                                      "propertySettings": {
+                                                        "recursive": {
+                                                          "type": "MANUAL"
+                                                        },
+                                                        "folderPath": {
+                                                          "type": "MANUAL"
+                                                        }
+                                                      },
+                                                      "errorHandlingOptions": {
+                                                        "retryOnFailure": {
+                                                          "value": false
+                                                        },
+                                                        "continueOnFailure": {
+                                                          "value": false
+                                                        }
+                                                      }
+                                                    },
+                                                    "nextAction": {
+                                                      "name": "step_34",
+                                                      "skip": false,
+                                                      "type": "PIECE",
+                                                      "valid": false,
+                                                      "settings": {
+                                                        "input": {},
+                                                        "pieceName": "@activepieces/piece-sftp",
+                                                        "actionName": "listFolderContents",
+                                                        "sampleData": {},
+                                                        "pieceVersion": "~0.4.4",
+                                                        "propertySettings": {
+                                                          "directoryPath": {
+                                                            "type": "MANUAL"
+                                                          }
+                                                        },
+                                                        "errorHandlingOptions": {
+                                                          "retryOnFailure": {
+                                                            "value": false
+                                                          },
+                                                          "continueOnFailure": {
+                                                            "value": false
+                                                          }
+                                                        }
+                                                      },
+                                                      "nextAction": {
+                                                        "name": "step_35",
+                                                        "skip": false,
+                                                        "type": "PIECE",
+                                                        "valid": false,
+                                                        "settings": {
+                                                          "input": {},
+                                                          "pieceName": "@activepieces/piece-sftp",
+                                                          "actionName": "listFolderContents",
+                                                          "sampleData": {},
+                                                          "pieceVersion": "~0.4.4",
+                                                          "propertySettings": {
+                                                            "directoryPath": {
+                                                              "type": "MANUAL"
+                                                            }
+                                                          },
+                                                          "errorHandlingOptions": {
+                                                            "retryOnFailure": {
+                                                              "value": false
+                                                            },
+                                                            "continueOnFailure": {
+                                                              "value": false
+                                                            }
+                                                          }
+                                                        },
+                                                        "nextAction": {
+                                                          "name": "step_36",
+                                                          "skip": false,
+                                                          "type": "PIECE",
+                                                          "valid": false,
+                                                          "settings": {
+                                                            "input": {},
+                                                            "pieceName": "@activepieces/piece-sftp",
+                                                            "actionName": "renameFileOrFolder",
+                                                            "sampleData": {},
+                                                            "pieceVersion": "~0.4.4",
+                                                            "propertySettings": {
+                                                              "newPath": {
+                                                                "type": "MANUAL"
+                                                              },
+                                                              "oldPath": {
+                                                                "type": "MANUAL"
+                                                              },
+                                                              "information": {
+                                                                "type": "MANUAL"
+                                                              }
+                                                            },
+                                                            "errorHandlingOptions": {
+                                                              "retryOnFailure": {
+                                                                "value": false
+                                                              },
+                                                              "continueOnFailure": {
+                                                                "value": false
+                                                              }
+                                                            }
+                                                          },
+                                                          "nextAction": {
+                                                            "name": "step_37",
+                                                            "skip": false,
+                                                            "type": "PIECE",
+                                                            "valid": false,
+                                                            "settings": {
+                                                              "input": {
+                                                                "method": "POST",
+                                                                "headers": {},
+                                                                "failsafe": false,
+                                                                "use_proxy": false,
+                                                                "variables": {},
+                                                                "queryParams": {},
+                                                                "proxy_settings": {}
+                                                              },
+                                                              "pieceName": "@activepieces/piece-graphql",
+                                                              "actionName": "send_request",
+                                                              "sampleData": {},
+                                                              "pieceVersion": "~0.0.7",
+                                                              "propertySettings": {
+                                                                "url": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "query": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "method": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "headers": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "timeout": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "failsafe": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "use_proxy": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "variables": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "queryParams": {
+                                                                  "type": "MANUAL"
+                                                                },
+                                                                "proxy_settings": {
+                                                                  "type": "MANUAL",
+                                                                  "schema": {}
+                                                                }
+                                                              },
+                                                              "errorHandlingOptions": {
+                                                                "retryOnFailure": {
+                                                                  "value": false
+                                                                },
+                                                                "continueOnFailure": {
+                                                                  "value": false
+                                                                }
+                                                              }
+                                                            },
+                                                            "nextAction": {
+                                                              "name": "step_38",
+                                                              "skip": false,
+                                                              "type": "PIECE",
+                                                              "valid": false,
+                                                              "settings": {
+                                                                "input": {
+                                                                  "body": {},
+                                                                  "method": null,
+                                                                  "headers": {},
+                                                                  "authType": "NONE",
+                                                                  "stopFlow": false,
+                                                                  "body_type": "none",
+                                                                  "use_proxy": false,
+                                                                  "authFields": {},
+                                                                  "failureMode": "continue_none",
+                                                                  "queryParams": {},
+                                                                  "proxy_settings": {},
+                                                                  "response_is_binary": false
+                                                                },
+                                                                "pieceName": "@activepieces/piece-http",
+                                                                "actionName": "send_request",
+                                                                "sampleData": {},
+                                                                "pieceVersion": "~0.10.0",
+                                                                "propertySettings": {
+                                                                  "url": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "body": {
+                                                                    "type": "MANUAL",
+                                                                    "schema": {}
+                                                                  },
+                                                                  "method": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "headers": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "timeout": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "authType": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "stopFlow": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "body_type": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "use_proxy": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "authFields": {
+                                                                    "type": "MANUAL",
+                                                                    "schema": {}
+                                                                  },
+                                                                  "failureMode": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "queryParams": {
+                                                                    "type": "MANUAL"
+                                                                  },
+                                                                  "proxy_settings": {
+                                                                    "type": "MANUAL",
+                                                                    "schema": {}
+                                                                  },
+                                                                  "response_is_binary": {
+                                                                    "type": "MANUAL"
+                                                                  }
+                                                                },
+                                                                "errorHandlingOptions": {
+                                                                  "retryOnFailure": {
+                                                                    "value": false
+                                                                  },
+                                                                  "continueOnFailure": {
+                                                                    "value": false
+                                                                  }
+                                                                }
+                                                              },
+                                                              "nextAction": {
+                                                                "name": "step_39",
+                                                                "skip": false,
+                                                                "type": "PIECE",
+                                                                "valid": true,
+                                                                "settings": {
+                                                                  "input": {},
+                                                                  "pieceName": "@activepieces/piece-forms",
+                                                                  "actionName": "return_response",
+                                                                  "sampleData": {},
+                                                                  "pieceVersion": "~0.4.10",
+                                                                  "propertySettings": {
+                                                                    "file": {
+                                                                      "type": "MANUAL"
+                                                                    },
+                                                                    "markdown": {
+                                                                      "type": "MANUAL"
+                                                                    }
+                                                                  },
+                                                                  "errorHandlingOptions": {
+                                                                    "retryOnFailure": {
+                                                                      "value": false
+                                                                    },
+                                                                    "continueOnFailure": {
+                                                                      "value": false
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "nextAction": {
+                                                                  "name": "step_40",
+                                                                  "skip": false,
+                                                                  "type": "PIECE",
+                                                                  "valid": false,
+                                                                  "settings": {
+                                                                    "input": {
+                                                                      "store_scope": "COLLECTION"
+                                                                    },
+                                                                    "pieceName": "@activepieces/piece-store",
+                                                                    "actionName": "get",
+                                                                    "sampleData": {},
+                                                                    "pieceVersion": "~0.6.10",
+                                                                    "propertySettings": {
+                                                                      "key": {
+                                                                        "type": "MANUAL"
+                                                                      },
+                                                                      "store_scope": {
+                                                                        "type": "MANUAL"
+                                                                      },
+                                                                      "defaultValue": {
+                                                                        "type": "MANUAL"
+                                                                      }
+                                                                    },
+                                                                    "errorHandlingOptions": {
+                                                                      "retryOnFailure": {
+                                                                        "value": false
+                                                                      },
+                                                                      "continueOnFailure": {
+                                                                        "value": false
+                                                                      }
+                                                                    }
+                                                                  },
+                                                                  "nextAction": {
+                                                                    "name": "step_41",
+                                                                    "skip": false,
+                                                                    "type": "PIECE",
+                                                                    "valid": false,
+                                                                    "settings": {
+                                                                      "input": {
+                                                                        "store_scope": "COLLECTION"
+                                                                      },
+                                                                      "pieceName": "@activepieces/piece-store",
+                                                                      "actionName": "get",
+                                                                      "sampleData": {},
+                                                                      "pieceVersion": "~0.6.10",
+                                                                      "propertySettings": {
+                                                                        "key": {
+                                                                          "type": "MANUAL"
+                                                                        },
+                                                                        "store_scope": {
+                                                                          "type": "MANUAL"
+                                                                        },
+                                                                        "defaultValue": {
+                                                                          "type": "MANUAL"
+                                                                        }
+                                                                      },
+                                                                      "errorHandlingOptions": {
+                                                                        "retryOnFailure": {
+                                                                          "value": false
+                                                                        },
+                                                                        "continueOnFailure": {
+                                                                          "value": false
+                                                                        }
+                                                                      }
+                                                                    },
+                                                                    "nextAction": {
+                                                                      "name": "step_42",
+                                                                      "skip": false,
+                                                                      "type": "PIECE",
+                                                                      "valid": false,
+                                                                      "settings": {
+                                                                        "input": {
+                                                                          "store_scope": "COLLECTION"
+                                                                        },
+                                                                        "pieceName": "@activepieces/piece-store",
+                                                                        "actionName": "remove_value",
+                                                                        "sampleData": {},
+                                                                        "pieceVersion": "~0.6.10",
+                                                                        "propertySettings": {
+                                                                          "key": {
+                                                                            "type": "MANUAL"
+                                                                          },
+                                                                          "store_scope": {
+                                                                            "type": "MANUAL"
+                                                                          }
+                                                                        },
+                                                                        "errorHandlingOptions": {
+                                                                          "retryOnFailure": {
+                                                                            "value": false
+                                                                          },
+                                                                          "continueOnFailure": {
+                                                                            "value": false
+                                                                          }
+                                                                        }
+                                                                      },
+                                                                      "nextAction": {
+                                                                        "name": "step_43",
+                                                                        "skip": false,
+                                                                        "type": "PIECE",
+                                                                        "valid": false,
+                                                                        "settings": {
+                                                                          "input": {
+                                                                            "store_scope": "COLLECTION"
+                                                                          },
+                                                                          "pieceName": "@activepieces/piece-store",
+                                                                          "actionName": "append",
+                                                                          "sampleData": {},
+                                                                          "pieceVersion": "~0.6.10",
+                                                                          "propertySettings": {
+                                                                            "key": {
+                                                                              "type": "MANUAL"
+                                                                            },
+                                                                            "value": {
+                                                                              "type": "MANUAL"
+                                                                            },
+                                                                            "separator": {
+                                                                              "type": "MANUAL"
+                                                                            },
+                                                                            "store_scope": {
+                                                                              "type": "MANUAL"
+                                                                            }
+                                                                          },
+                                                                          "errorHandlingOptions": {
+                                                                            "retryOnFailure": {
+                                                                              "value": false
+                                                                            },
+                                                                            "continueOnFailure": {
+                                                                              "value": false
+                                                                            }
+                                                                          }
+                                                                        },
+                                                                        "nextAction": {
+                                                                          "name": "step_44",
+                                                                          "skip": false,
+                                                                          "type": "PIECE",
+                                                                          "valid": false,
+                                                                          "settings": {
+                                                                            "input": {
+                                                                              "value": [],
+                                                                              "store_scope": "COLLECTION",
+                                                                              "ignore_if_exists": false
+                                                                            },
+                                                                            "pieceName": "@activepieces/piece-store",
+                                                                            "actionName": "add_to_list",
+                                                                            "sampleData": {},
+                                                                            "pieceVersion": "~0.6.10",
+                                                                            "propertySettings": {
+                                                                              "key": {
+                                                                                "type": "MANUAL"
+                                                                              },
+                                                                              "value": {
+                                                                                "type": "MANUAL"
+                                                                              },
+                                                                              "store_scope": {
+                                                                                "type": "MANUAL"
+                                                                              },
+                                                                              "ignore_if_exists": {
+                                                                                "type": "MANUAL"
+                                                                              }
+                                                                            },
+                                                                            "errorHandlingOptions": {
+                                                                              "retryOnFailure": {
+                                                                                "value": false
+                                                                              },
+                                                                              "continueOnFailure": {
+                                                                                "value": false
+                                                                              }
+                                                                            }
+                                                                          },
+                                                                          "nextAction": {
+                                                                            "name": "step_45",
+                                                                            "skip": false,
+                                                                            "type": "PIECE",
+                                                                            "valid": false,
+                                                                            "settings": {
+                                                                              "input": {
+                                                                                "store_scope": "COLLECTION"
+                                                                              },
+                                                                              "pieceName": "@activepieces/piece-store",
+                                                                              "actionName": "remove_from_list",
+                                                                              "sampleData": {},
+                                                                              "pieceVersion": "~0.6.10",
+                                                                              "propertySettings": {
+                                                                                "key": {
+                                                                                  "type": "MANUAL"
+                                                                                },
+                                                                                "value": {
+                                                                                  "type": "MANUAL"
+                                                                                },
+                                                                                "store_scope": {
+                                                                                  "type": "MANUAL"
+                                                                                }
+                                                                              },
+                                                                              "errorHandlingOptions": {
+                                                                                "retryOnFailure": {
+                                                                                  "value": false
+                                                                                },
+                                                                                "continueOnFailure": {
+                                                                                  "value": false
+                                                                                }
+                                                                              }
+                                                                            },
+                                                                            "nextAction": {
+                                                                              "name": "step_46",
+                                                                              "skip": false,
+                                                                              "type": "PIECE",
+                                                                              "valid": false,
+                                                                              "settings": {
+                                                                                "input": {
+                                                                                  "values": {},
+                                                                                  "table_id": null
+                                                                                },
+                                                                                "pieceName": "@activepieces/piece-tables",
+                                                                                "actionName": "tables-create-records",
+                                                                                "sampleData": {},
+                                                                                "pieceVersion": "~0.2.9",
+                                                                                "propertySettings": {
+                                                                                  "values": {
+                                                                                    "type": "MANUAL",
+                                                                                    "schema": {}
+                                                                                  },
+                                                                                  "table_id": {
+                                                                                    "type": "MANUAL"
+                                                                                  }
+                                                                                },
+                                                                                "errorHandlingOptions": {
+                                                                                  "retryOnFailure": {
+                                                                                    "value": false
+                                                                                  },
+                                                                                  "continueOnFailure": {
+                                                                                    "value": false
+                                                                                  }
+                                                                                }
+                                                                              },
+                                                                              "nextAction": {
+                                                                                "name": "step_47",
+                                                                                "skip": false,
+                                                                                "type": "PIECE",
+                                                                                "valid": false,
+                                                                                "settings": {
+                                                                                  "input": {
+                                                                                    "table_id": null,
+                                                                                    "records_ids": []
+                                                                                  },
+                                                                                  "pieceName": "@activepieces/piece-tables",
+                                                                                  "actionName": "tables-delete-record",
+                                                                                  "sampleData": {},
+                                                                                  "pieceVersion": "~0.2.9",
+                                                                                  "propertySettings": {
+                                                                                    "table_id": {
+                                                                                      "type": "MANUAL"
+                                                                                    },
+                                                                                    "records_ids": {
+                                                                                      "type": "MANUAL"
+                                                                                    }
+                                                                                  },
+                                                                                  "errorHandlingOptions": {
+                                                                                    "retryOnFailure": {
+                                                                                      "value": false
+                                                                                    },
+                                                                                    "continueOnFailure": {
+                                                                                      "value": false
+                                                                                    }
+                                                                                  }
+                                                                                },
+                                                                                "nextAction": {
+                                                                                  "name": "step_48",
+                                                                                  "skip": false,
+                                                                                  "type": "PIECE",
+                                                                                  "valid": false,
+                                                                                  "settings": {
+                                                                                    "input": {
+                                                                                      "values": {},
+                                                                                      "table_id": null
+                                                                                    },
+                                                                                    "pieceName": "@activepieces/piece-tables",
+                                                                                    "actionName": "tables-update-record",
+                                                                                    "sampleData": {},
+                                                                                    "pieceVersion": "~0.2.9",
+                                                                                    "propertySettings": {
+                                                                                      "values": {
+                                                                                        "type": "MANUAL",
+                                                                                        "schema": {
+                                                                                          "options": [],
+                                                                                          "disabled": true,
+                                                                                          "placeholder": "Throws an error, reconnect or refresh the page"
+                                                                                        }
+                                                                                      },
+                                                                                      "table_id": {
+                                                                                        "type": "MANUAL"
+                                                                                      },
+                                                                                      "record_id": {
+                                                                                        "type": "MANUAL"
+                                                                                      }
+                                                                                    },
+                                                                                    "errorHandlingOptions": {
+                                                                                      "retryOnFailure": {
+                                                                                        "value": false
+                                                                                      },
+                                                                                      "continueOnFailure": {
+                                                                                        "value": false
+                                                                                      }
+                                                                                    }
+                                                                                  },
+                                                                                  "nextAction": {
+                                                                                    "name": "step_49",
+                                                                                    "skip": false,
+                                                                                    "type": "PIECE",
+                                                                                    "valid": false,
+                                                                                    "settings": {
+                                                                                      "input": {
+                                                                                        "filters": {
+                                                                                          "filters": []
+                                                                                        },
+                                                                                        "table_id": null
+                                                                                      },
+                                                                                      "pieceName": "@activepieces/piece-tables",
+                                                                                      "actionName": "tables-find-records",
+                                                                                      "sampleData": {},
+                                                                                      "pieceVersion": "~0.2.9",
+                                                                                      "propertySettings": {
+                                                                                        "limit": {
+                                                                                          "type": "MANUAL"
+                                                                                        },
+                                                                                        "filters": {
+                                                                                          "type": "MANUAL",
+                                                                                          "schema": {
+                                                                                            "filters": {
+                                                                                              "type": "ARRAY",
+                                                                                              "required": false,
+                                                                                              "properties": {},
+                                                                                              "displayName": "Filters"
+                                                                                            }
+                                                                                          }
+                                                                                        },
+                                                                                        "table_id": {
+                                                                                          "type": "MANUAL"
+                                                                                        }
+                                                                                      },
+                                                                                      "errorHandlingOptions": {
+                                                                                        "retryOnFailure": {
+                                                                                          "value": false
+                                                                                        },
+                                                                                        "continueOnFailure": {
+                                                                                          "value": false
+                                                                                        }
+                                                                                      }
+                                                                                    },
+                                                                                    "nextAction": {
+                                                                                      "name": "step_50",
+                                                                                      "skip": false,
+                                                                                      "type": "PIECE",
+                                                                                      "valid": false,
+                                                                                      "settings": {
+                                                                                        "input": {
+                                                                                          "table_id": null
+                                                                                        },
+                                                                                        "pieceName": "@activepieces/piece-tables",
+                                                                                        "actionName": "tables-get-record",
+                                                                                        "sampleData": {},
+                                                                                        "pieceVersion": "~0.2.9",
+                                                                                        "propertySettings": {
+                                                                                          "table_id": {
+                                                                                            "type": "MANUAL"
+                                                                                          },
+                                                                                          "record_id": {
+                                                                                            "type": "MANUAL"
+                                                                                          }
+                                                                                        },
+                                                                                        "errorHandlingOptions": {
+                                                                                          "retryOnFailure": {
+                                                                                            "value": false
+                                                                                          },
+                                                                                          "continueOnFailure": {
+                                                                                            "value": false
+                                                                                          }
+                                                                                        }
+                                                                                      },
+                                                                                      "nextAction": {
+                                                                                        "name": "step_51",
+                                                                                        "skip": false,
+                                                                                        "type": "PIECE",
+                                                                                        "valid": false,
+                                                                                        "settings": {
+                                                                                          "input": {
+                                                                                            "table_id": null
+                                                                                          },
+                                                                                          "pieceName": "@activepieces/piece-tables",
+                                                                                          "actionName": "tables-clear-table",
+                                                                                          "sampleData": {},
+                                                                                          "pieceVersion": "~0.2.9",
+                                                                                          "propertySettings": {
+                                                                                            "table_id": {
+                                                                                              "type": "MANUAL"
+                                                                                            }
+                                                                                          },
+                                                                                          "errorHandlingOptions": {
+                                                                                            "retryOnFailure": {
+                                                                                              "value": false
+                                                                                            },
+                                                                                            "continueOnFailure": {
+                                                                                              "value": false
+                                                                                            }
+                                                                                          }
+                                                                                        },
+                                                                                        "nextAction": {
+                                                                                          "name": "step_52",
+                                                                                          "skip": false,
+                                                                                          "type": "PIECE",
+                                                                                          "valid": true,
+                                                                                          "settings": {
+                                                                                            "input": {
+                                                                                              "json": {},
+                                                                                              "header": false
+                                                                                            },
+                                                                                            "pieceName": "@activepieces/piece-xml",
+                                                                                            "actionName": "convert-json-to-xml",
+                                                                                            "sampleData": {},
+                                                                                            "pieceVersion": "~0.1.10",
+                                                                                            "propertySettings": {
+                                                                                              "json": {
+                                                                                                "type": "MANUAL"
+                                                                                              },
+                                                                                              "header": {
+                                                                                                "type": "MANUAL"
+                                                                                              },
+                                                                                              "attributes_key": {
+                                                                                                "type": "MANUAL"
+                                                                                              }
+                                                                                            },
+                                                                                            "errorHandlingOptions": {
+                                                                                              "retryOnFailure": {
+                                                                                                "value": false
+                                                                                              },
+                                                                                              "continueOnFailure": {
+                                                                                                "value": false
+                                                                                              }
+                                                                                            }
+                                                                                          },
+                                                                                          "nextAction": {
+                                                                                            "name": "step_53",
+                                                                                            "skip": false,
+                                                                                            "type": "PIECE",
+                                                                                            "valid": false,
+                                                                                            "settings": {
+                                                                                              "input": {},
+                                                                                              "pieceName": "@activepieces/piece-json",
+                                                                                              "actionName": "convert_text_to_json",
+                                                                                              "sampleData": {},
+                                                                                              "pieceVersion": "~0.1.0",
+                                                                                              "propertySettings": {
+                                                                                                "text": {
+                                                                                                  "type": "MANUAL"
+                                                                                                }
+                                                                                              },
+                                                                                              "errorHandlingOptions": {
+                                                                                                "retryOnFailure": {
+                                                                                                  "value": false
+                                                                                                },
+                                                                                                "continueOnFailure": {
+                                                                                                  "value": false
+                                                                                                }
+                                                                                              }
+                                                                                            },
+                                                                                            "nextAction": {
+                                                                                              "name": "step_54",
+                                                                                              "skip": false,
+                                                                                              "type": "PIECE",
+                                                                                              "valid": true,
+                                                                                              "settings": {
+                                                                                                "input": {
+                                                                                                  "json": {}
+                                                                                                },
+                                                                                                "pieceName": "@activepieces/piece-json",
+                                                                                                "actionName": "convert_json_to_text",
+                                                                                                "sampleData": {},
+                                                                                                "pieceVersion": "~0.1.0",
+                                                                                                "propertySettings": {
+                                                                                                  "json": {
+                                                                                                    "type": "MANUAL"
+                                                                                                  }
+                                                                                                },
+                                                                                                "errorHandlingOptions": {
+                                                                                                  "retryOnFailure": {
+                                                                                                    "value": false
+                                                                                                  },
+                                                                                                  "continueOnFailure": {
+                                                                                                    "value": false
+                                                                                                  }
+                                                                                                }
+                                                                                              },
+                                                                                              "displayName": "Convert Json to Text"
+                                                                                            },
+                                                                                            "displayName": "Convert Text to Json"
+                                                                                          },
+                                                                                          "displayName": "Convert JSON to XML"
+                                                                                        },
+                                                                                        "displayName": "Clear Table"
+                                                                                      },
+                                                                                      "displayName": "Get Record"
+                                                                                    },
+                                                                                    "displayName": "Find Records"
+                                                                                  },
+                                                                                  "displayName": "Update Record"
+                                                                                },
+                                                                                "displayName": "Delete Record(s)"
+                                                                              },
+                                                                              "displayName": "Create Record(s)"
+                                                                            },
+                                                                            "displayName": "Remove from List"
+                                                                          },
+                                                                          "displayName": "Add To List"
+                                                                        },
+                                                                        "displayName": "Append"
+                                                                      },
+                                                                      "displayName": "Remove"
+                                                                    },
+                                                                    "displayName": "Get"
+                                                                  },
+                                                                  "displayName": "Get"
+                                                                },
+                                                                "displayName": "Respond on UI"
+                                                              },
+                                                              "displayName": "Send HTTP request"
+                                                            },
+                                                            "displayName": "Send Request"
+                                                          },
+                                                          "displayName": "Rename File or Folder"
+                                                        },
+                                                        "displayName": "List Folder Contents"
+                                                      },
+                                                      "displayName": "List Folder Contents"
+                                                    },
+                                                    "displayName": "Delete Folder"
+                                                  },
+                                                  "displayName": "Create Folder"
+                                                },
+                                                "displayName": "Read File Content"
+                                              },
+                                              "displayName": "Create File from Text"
+                                            },
+                                            "displayName": "Unzip File"
+                                          },
+                                          "displayName": "Zip Files"
+                                        },
+                                        "displayName": "Check file type"
+                                      },
+                                      "displayName": "Check file type"
+                                    },
+                                    "displayName": "Create file"
+                                  },
+                                  "displayName": "Read File"
+                                },
+                                "displayName": "Calculate Average"
+                              },
+                              "displayName": "Convert JSON to CSV"
+                            },
+                            "displayName": "Convert CSV to JSON"
+                          },
+                          "displayName": "Ask AI"
+                        },
+                        "displayName": "Loop on Items",
+                        "firstLoopAction": {
+                          "name": "step_16",
+                          "skip": false,
+                          "type": "ROUTER",
+                          "valid": false,
+                          "children": [
+                            {
+                              "name": "step_15",
+                              "skip": false,
+                              "type": "PIECE",
+                              "valid": false,
+                              "settings": {
+                                "input": {
+                                  "status": null
+                                },
+                                "pieceName": "@vqnguyen1/piece-fiserv",
+                                "actionName": "collateral_update",
+                                "sampleData": {},
+                                "pieceVersion": "~0.0.2",
+                                "propertySettings": {
+                                  "status": {
+                                    "type": "MANUAL"
+                                  },
+                                  "description": {
+                                    "type": "MANUAL"
+                                  },
+                                  "collateralId": {
+                                    "type": "MANUAL"
+                                  },
+                                  "estimatedValue": {
+                                    "type": "MANUAL"
+                                  }
+                                },
+                                "errorHandlingOptions": {
+                                  "retryOnFailure": {
+                                    "value": false
+                                  },
+                                  "continueOnFailure": {
+                                    "value": false
+                                  }
+                                }
+                              },
+                              "displayName": "Collateral - Update"
+                            },
+                            {
+                              "name": "step_14",
+                              "skip": false,
+                              "type": "PIECE",
+                              "valid": false,
+                              "settings": {
+                                "input": {
+                                  "collateralType": null
+                                },
+                                "pieceName": "@vqnguyen1/piece-fiserv",
+                                "actionName": "collateral_add",
+                                "sampleData": {},
+                                "pieceVersion": "~0.0.2",
+                                "propertySettings": {
+                                  "loanId": {
+                                    "type": "MANUAL"
+                                  },
+                                  "vinNumber": {
+                                    "type": "MANUAL"
+                                  },
+                                  "description": {
+                                    "type": "MANUAL"
+                                  },
+                                  "collateralType": {
+                                    "type": "MANUAL"
+                                  },
+                                  "estimatedValue": {
+                                    "type": "MANUAL"
+                                  },
+                                  "propertyAddress": {
+                                    "type": "MANUAL"
+                                  }
+                                },
+                                "errorHandlingOptions": {
+                                  "retryOnFailure": {
+                                    "value": false
+                                  },
+                                  "continueOnFailure": {
+                                    "value": false
+                                  }
+                                }
+                              },
+                              "displayName": "Collateral - Add"
+                            }
+                          ],
+                          "settings": {
+                            "branches": [
+                              {
+                                "branchName": "Branch 1",
+                                "branchType": "CONDITION",
+                                "conditions": [
+                                  [
+                                    {
+                                      "operator": "TEXT_EXACTLY_MATCHES",
+                                      "firstValue": "",
+                                      "secondValue": "",
+                                      "caseSensitive": false
+                                    }
+                                  ]
+                                ]
+                              },
+                              {
+                                "branchName": "Otherwise",
+                                "branchType": "FALLBACK"
+                              }
+                            ],
+                            "sampleData": {},
+                            "executionType": "EXECUTE_FIRST_MATCH"
+                          },
+                          "displayName": "Router"
+                        }
+                      },
+                      "displayName": "Loop on Items",
+                      "firstLoopAction": {
+                        "name": "step_12",
+                        "skip": false,
+                        "type": "PIECE",
+                        "valid": false,
+                        "settings": {
+                          "input": {
+                            "escrowType": null,
+                            "currentBalance": 0
+                          },
+                          "pieceName": "@vqnguyen1/piece-fiserv",
+                          "actionName": "escrow_add",
+                          "sampleData": {},
+                          "pieceVersion": "~0.0.2",
+                          "propertySettings": {
+                            "payee": {
+                              "type": "MANUAL"
+                            },
+                            "loanId": {
+                              "type": "MANUAL"
+                            },
+                            "escrowType": {
+                              "type": "MANUAL"
+                            },
+                            "accountNumber": {
+                              "type": "MANUAL"
+                            },
+                            "targetBalance": {
+                              "type": "MANUAL"
+                            },
+                            "currentBalance": {
+                              "type": "MANUAL"
+                            },
+                            "monthlyPayment": {
+                              "type": "MANUAL"
+                            }
+                          },
+                          "errorHandlingOptions": {
+                            "retryOnFailure": {
+                              "value": false
+                            },
+                            "continueOnFailure": {
+                              "value": false
+                            }
+                          }
+                        },
+                        "displayName": "Escrow - Add"
+                      }
+                    },
+                    "displayName": "Account - Create"
+                  },
+                  "displayName": "Loop on Items",
+                  "firstLoopAction": {
+                    "name": "step_7",
+                    "skip": false,
+                    "type": "PIECE",
+                    "valid": true,
+                    "settings": {
+                      "input": {
+                        "first_number": "loopCounter",
+                        "second_number": "1"
+                      },
+                      "pieceName": "@activepieces/piece-math-helper",
+                      "actionName": "addition_math",
+                      "sampleData": {},
+                      "pieceVersion": "~0.0.17",
+                      "propertySettings": {
+                        "first_number": {
+                          "type": "MANUAL"
+                        },
+                        "second_number": {
+                          "type": "MANUAL"
+                        }
+                      },
+                      "errorHandlingOptions": {
+                        "retryOnFailure": {
+                          "value": false
+                        },
+                        "continueOnFailure": {
+                          "value": false
+                        }
+                      }
+                    },
+                    "nextAction": {
+                      "name": "step_2",
+                      "skip": false,
+                      "type": "PIECE",
+                      "valid": false,
+                      "settings": {
+                        "input": {
+                          "maxRecords": 25,
+                          "searchType": "partyId",
+                          "includeFullDetails": false
+                        },
+                        "pieceName": "@vqnguyen1/piece-fiserv",
+                        "actionName": "party_get",
+                        "sampleData": {},
+                        "pieceVersion": "~0.0.2",
+                        "propertySettings": {
+                          "taxId": {
+                            "type": "MANUAL"
+                          },
+                          "partyId": {
+                            "type": "MANUAL"
+                          },
+                          "maxRecords": {
+                            "type": "MANUAL"
+                          },
+                          "searchType": {
+                            "type": "MANUAL"
+                          },
+                          "includeFullDetails": {
+                            "type": "MANUAL"
+                          }
+                        },
+                        "errorHandlingOptions": {
+                          "retryOnFailure": {
+                            "value": false
+                          },
+                          "continueOnFailure": {
+                            "value": false
+                          }
+                        }
+                      },
+                      "nextAction": {
+                        "name": "step_3",
+                        "skip": false,
+                        "type": "ROUTER",
+                        "valid": false,
+                        "children": [
+                          {
+                            "name": "step_5",
+                            "skip": false,
+                            "type": "PIECE",
+                            "valid": false,
+                            "settings": {
+                              "input": {},
+                              "pieceName": "@vqnguyen1/piece-fiserv",
+                              "actionName": "party_update",
+                              "sampleData": {},
+                              "pieceVersion": "~0.0.2",
+                              "propertySettings": {
+                                "email": {
+                                  "type": "MANUAL"
+                                },
+                                "partyId": {
+                                  "type": "MANUAL"
+                                },
+                                "lastName": {
+                                  "type": "MANUAL"
+                                },
+                                "firstName": {
+                                  "type": "MANUAL"
+                                },
+                                "middleName": {
+                                  "type": "MANUAL"
+                                },
+                                "phoneNumber": {
+                                  "type": "MANUAL"
+                                },
+                                "organizationName": {
+                                  "type": "MANUAL"
+                                }
+                              },
+                              "errorHandlingOptions": {
+                                "retryOnFailure": {
+                                  "value": false
+                                },
+                                "continueOnFailure": {
+                                  "value": false
+                                }
+                              }
+                            },
+                            "nextAction": {
+                              "name": "step_8",
+                              "skip": false,
+                              "type": "PIECE",
+                              "valid": false,
+                              "settings": {
+                                "input": {
+                                  "value": [],
+                                  "store_scope": "COLLECTION",
+                                  "ignore_if_exists": false
+                                },
+                                "pieceName": "@activepieces/piece-store",
+                                "actionName": "add_to_list",
+                                "sampleData": {},
+                                "pieceVersion": "~0.6.10",
+                                "propertySettings": {
+                                  "key": {
+                                    "type": "MANUAL"
+                                  },
+                                  "value": {
+                                    "type": "MANUAL"
+                                  },
+                                  "store_scope": {
+                                    "type": "MANUAL"
+                                  },
+                                  "ignore_if_exists": {
+                                    "type": "MANUAL"
+                                  }
+                                },
+                                "errorHandlingOptions": {
+                                  "retryOnFailure": {
+                                    "value": false
+                                  },
+                                  "continueOnFailure": {
+                                    "value": false
+                                  }
+                                }
+                              },
+                              "displayName": "Add To List"
+                            },
+                            "displayName": "Party - Update"
+                          },
+                          {
+                            "name": "step_6",
+                            "skip": false,
+                            "type": "PIECE",
+                            "valid": false,
+                            "settings": {
+                              "input": {
+                                "partyType": null
+                              },
+                              "pieceName": "@vqnguyen1/piece-fiserv",
+                              "actionName": "party_create",
+                              "sampleData": {},
+                              "pieceVersion": "~0.0.2",
+                              "propertySettings": {
+                                "email": {
+                                  "type": "MANUAL"
+                                },
+                                "taxId": {
+                                  "type": "MANUAL"
+                                },
+                                "lastName": {
+                                  "type": "MANUAL"
+                                },
+                                "birthDate": {
+                                  "type": "MANUAL"
+                                },
+                                "firstName": {
+                                  "type": "MANUAL"
+                                },
+                                "partyType": {
+                                  "type": "MANUAL"
+                                },
+                                "middleName": {
+                                  "type": "MANUAL"
+                                },
+                                "phoneNumber": {
+                                  "type": "MANUAL"
+                                },
+                                "establishedDate": {
+                                  "type": "MANUAL"
+                                },
+                                "organizationName": {
+                                  "type": "MANUAL"
+                                }
+                              },
+                              "errorHandlingOptions": {
+                                "retryOnFailure": {
+                                  "value": false
+                                },
+                                "continueOnFailure": {
+                                  "value": false
+                                }
+                              }
+                            },
+                            "nextAction": {
+                              "name": "step_9",
+                              "skip": false,
+                              "type": "PIECE",
+                              "valid": false,
+                              "settings": {
+                                "input": {
+                                  "value": [],
+                                  "store_scope": "COLLECTION",
+                                  "ignore_if_exists": false
+                                },
+                                "pieceName": "@activepieces/piece-store",
+                                "actionName": "add_to_list",
+                                "sampleData": {},
+                                "pieceVersion": "~0.6.10",
+                                "propertySettings": {
+                                  "key": {
+                                    "type": "MANUAL"
+                                  },
+                                  "value": {
+                                    "type": "MANUAL"
+                                  },
+                                  "store_scope": {
+                                    "type": "MANUAL"
+                                  },
+                                  "ignore_if_exists": {
+                                    "type": "MANUAL"
+                                  }
+                                },
+                                "errorHandlingOptions": {
+                                  "retryOnFailure": {
+                                    "value": false
+                                  },
+                                  "continueOnFailure": {
+                                    "value": false
+                                  }
+                                }
+                              },
+                              "displayName": "Add To List Copy"
+                            },
+                            "displayName": "Party - Create"
+                          }
+                        ],
+                        "settings": {
+                          "branches": [
+                            {
+                              "branchName": "Branch 1",
+                              "branchType": "CONDITION",
+                              "conditions": [
+                                [
+                                  {
+                                    "operator": "TEXT_EXACTLY_MATCHES",
+                                    "firstValue": "",
+                                    "secondValue": "",
+                                    "caseSensitive": false
+                                  }
+                                ]
+                              ]
+                            },
+                            {
+                              "branchName": "Otherwise",
+                              "branchType": "FALLBACK"
+                            }
+                          ],
+                          "sampleData": {},
+                          "executionType": "EXECUTE_FIRST_MATCH"
+                        },
+                        "displayName": "Router"
+                      },
+                      "displayName": "Party - Get"
+                    },
+                    "displayName": "Addition"
+                  }
+                },
+                "displayName": "Put"
+              },
+              "displayName": "Mapping Code"
+            },
+            "displayName": "Put"
+          },
+          "displayName": "Loan - Retrieve"
+        }
+      },
+      "valid": false,
+      "schemaVersion": "10"
+    }
+  ]
+}

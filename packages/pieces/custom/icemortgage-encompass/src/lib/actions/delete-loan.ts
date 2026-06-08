@@ -4,7 +4,7 @@ import {
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { icemortgageEncompassAuth } from '../common/auth';
-import { getAccessToken } from '../common/helpers';
+import { getAccessToken, getAuthProps } from '../common/helpers';
 
 export const deleteLoan = createAction({
   name: 'loan_delete',
@@ -19,15 +19,14 @@ export const deleteLoan = createAction({
     }),
   },
   async run(context) {
-    const auth = context.auth as any;
-    const baseUrl = auth.baseUrl;
+    const authProps = getAuthProps(context.auth);
     const { loanId } = context.propsValue;
 
-    const accessToken = await getAccessToken(auth);
+    const accessToken = await getAccessToken(authProps);
 
     const response = await httpClient.sendRequest({
       method: HttpMethod.DELETE,
-      url: `${baseUrl}/encompass/v3/loans/${loanId}`,
+      url: `${authProps.baseUrl}/encompass/v3/loans/${loanId}`,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`,

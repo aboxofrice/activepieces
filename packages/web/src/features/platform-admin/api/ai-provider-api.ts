@@ -14,6 +14,10 @@ export const aiProviderApi = {
   listModelsForProvider(provider: string) {
     return api.get<AIProviderModel[]>(`/v1/ai-providers/${provider}/models`);
   },
+  // Alias used by the AI-assistant UI (ported from the fork's react-ui)
+  listModels(providerId: string) {
+    return api.get<AIProviderModel[]>(`/v1/ai-providers/${providerId}/models`);
+  },
   upsert(request: CreateAIProviderRequest): Promise<void> {
     return api.post('/v1/ai-providers', request);
   },

@@ -15,6 +15,9 @@ import { RoutePermissionGuard } from '../guards/permission-guard';
 import { ProjectRouterWrapper } from '../guards/project-route-wrapper';
 
 import { AutomationsPage } from './automations';
+const AIAssistantPage = React.lazy(() =>
+  import('./ai-assistant').then((m) => ({ default: m.AIAssistantPage })),
+);
 const FlowBuilderPage = React.lazy(() =>
   import('./flows/id').then((m) => ({ default: m.FlowBuilderPage })),
 );
@@ -216,6 +219,20 @@ export const projectRoutes = [
     element: (
       <ProjectDashboardLayout>
         <SettingsRerouter></SettingsRerouter>
+      </ProjectDashboardLayout>
+    ),
+  }),
+  ...ProjectRouterWrapper({
+    path: routesThatRequireProjectId.aiAssistant,
+    element: (
+      <ProjectDashboardLayout>
+        <RoutePermissionGuard requiredPermissions={Permission.READ_FLOW}>
+          <PageTitle title="AI Assistant">
+            <SuspenseWrapper>
+              <AIAssistantPage />
+            </SuspenseWrapper>
+          </PageTitle>
+        </RoutePermissionGuard>
       </ProjectDashboardLayout>
     ),
   }),
