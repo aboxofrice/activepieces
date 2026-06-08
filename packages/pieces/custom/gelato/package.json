@@ -10,11 +10,17 @@
   },
   "dependencies": {
     "dayjs": "^1.11.7",
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "@activepieces/pieces-framework": "workspace:*",
+    "@activepieces/shared": "workspace:*"
   },
   "peerDependencies": {
     "@activepieces/pieces-framework": "*",
     "@activepieces/pieces-common": "*",
     "@activepieces/shared": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.lib.json && cp package.json dist/",
+    "lint": "eslint 'src/**/*.ts'"
   }
 }

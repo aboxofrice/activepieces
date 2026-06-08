@@ -1,14 +1,19 @@
-import { AIProvider, AIProviderName, Platform } from '@activepieces/shared'
-import { Static, Type } from '@sinclair/typebox'
+import { AIProviderConfig, AIProviderName, BaseModelSchema, Platform } from '@activepieces/shared'
 import { EntitySchema } from 'typeorm'
+import { z } from 'zod'
 import { ApIdSchema, BaseColumnSchemaPart } from '../database/database-common'
 import { EncryptedObject } from '../helper/encryption'
 
-const AIProviderEncrypted = Type.Composite([Type.Omit(AIProvider, ['config']), Type.Object({
-    config: EncryptedObject,
-})])
-
-type AIProviderEncrypted = Static<typeof AIProviderEncrypted>
+const AIProviderEncrypted = z.object({
+    ...BaseModelSchema,
+    displayName: z.string().min(1),
+    platformId: z.string(),
+    provider: z.nativeEnum(AIProviderName),
+    auth: EncryptedObject,
+    config: AIProviderConfig,
+    enabledForChat: z.boolean().default(false),
+})
+type AIProviderEncrypted = z.infer<typeof AIProviderEncrypted>
 
 export type AIProviderSchema = AIProviderEncrypted & {
     platform: Platform
@@ -23,6 +28,10 @@ export const AIProviderEntity = new EntitySchema<AIProviderSchema>({
             type: 'json',
             nullable: false,
         },
+        auth: {
+            type: 'json',
+            nullable: false,
+        },
         provider: {
             type: String,
             nullable: false,
@@ -30,6 +39,15 @@ export const AIProviderEntity = new EntitySchema<AIProviderSchema>({
         platformId: {
             ...ApIdSchema,
             nullable: false,
+        },
+        displayName: {
+            type: String,
+            nullable: false,
+        },
+        enabledForChat: {
+            type: Boolean,
+            nullable: false,
+            default: false,
         },
     },
     indices: [

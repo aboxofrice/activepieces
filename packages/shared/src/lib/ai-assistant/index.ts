@@ -1,5 +1,5 @@
 import { Static, Type } from '@sinclair/typebox'
-import { AIProviderName } from '../ai-providers'
+import { AIProviderName } from '../management/ai-providers'
 
 export enum AIAssistantMode {
     CREATE = 'create',
@@ -13,6 +13,7 @@ export const AIAssistantMessage = Type.Object({
 export type AIAssistantMessage = Static<typeof AIAssistantMessage>
 
 export const AIAssistantChatRequest = Type.Object({
+    projectId: Type.String(),
     provider: Type.Enum(AIProviderName),
     model: Type.String(),
     mode: Type.Enum(AIAssistantMode),
