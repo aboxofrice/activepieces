@@ -397,6 +397,7 @@ ${wizardData.additionalDetails ? `**Additional:** ${wizardData.additionalDetails
 Generate complete, import-ready JSON with field mappings.`;
 
     generateMutation.mutate({
+      projectId: authenticationSession.getProjectId()!,
       provider,
       model,
       mode: AIAssistantMode.CREATE,

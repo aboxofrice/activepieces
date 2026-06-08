@@ -2,9 +2,11 @@ import {
     AIAssistantChatRequest,
     AIAssistantChatResponse,
     AIAssistantMode,
-    AIProviderConfig,
     AIProviderName,
+    AzureProviderAuthConfig,
     AzureProviderConfig,
+    BaseAIProviderAuthConfig,
+    GetProviderConfigResponse,
     PlatformId,
     ProjectId,
 } from '@activepieces/shared'
@@ -78,10 +80,10 @@ export const aiAssistantService = (log: FastifyBaseLogger) => ({
         log.info({ provider: request.provider, model: request.model, mode: request.mode }, 'AI Assistant chat request')
 
         try {
-            const config = await aiProviderService(log).getConfig(platformId, request.provider)
+            const config = await aiProviderService(log).getConfigOrThrow({ platformId, provider: request.provider })
             log.info({ provider: request.provider }, 'Got provider config')
 
-            const model = createModel(request.provider, request.model, config)
+            const model = createModel(request.provider, request.model, config.auth as BaseAIProviderAuthConfig, config.config)
             log.info({ provider: request.provider, model: request.model }, 'Created model')
 
             const context = await buildAssistantContext(log, {
@@ -123,29 +125,31 @@ export const aiAssistantService = (log: FastifyBaseLogger) => ({
 function createModel(
     providerId: AIProviderName,
     modelId: string,
-    config: AIProviderConfig,
+    auth: BaseAIProviderAuthConfig,
+    providerConfig: GetProviderConfigResponse['config'],
 ): LanguageModel {
     switch (providerId) {
         case AIProviderName.OPENAI: {
-            const provider = createOpenAI({ apiKey: config.apiKey })
+            const provider = createOpenAI({ apiKey: auth.apiKey })
             return provider.chat(modelId)
         }
         case AIProviderName.ANTHROPIC: {
-            const provider = createAnthropic({ apiKey: config.apiKey })
+            const provider = createAnthropic({ apiKey: auth.apiKey })
             return provider(modelId)
         }
         case AIProviderName.GOOGLE: {
-            const provider = createGoogleGenerativeAI({ apiKey: config.apiKey })
+            const provider = createGoogleGenerativeAI({ apiKey: auth.apiKey })
             return provider(modelId)
         }
         case AIProviderName.AZURE: {
-            const { apiKey, resourceName } = config as AzureProviderConfig
-            const provider = createAzure({ resourceName, apiKey })
+            const azureAuth = auth as AzureProviderAuthConfig
+            const azureConfig = providerConfig as AzureProviderConfig
+            const provider = createAzure({ resourceName: azureConfig.resourceName, apiKey: azureAuth.apiKey })
             return provider.chat(modelId)
         }
         case AIProviderName.ACTIVEPIECES:
         case AIProviderName.OPENROUTER: {
-            const provider = createOpenRouter({ apiKey: config.apiKey })
+            const provider = createOpenRouter({ apiKey: auth.apiKey })
             return provider.chat(modelId)
         }
         default:

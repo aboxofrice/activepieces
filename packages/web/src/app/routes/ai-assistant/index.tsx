@@ -31,6 +31,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { aiAssistantApi } from '@/features/ai-assistant/lib/ai-assistant-api';
 import { piecesApi } from '@/features/pieces/api/pieces-api';
 import { aiProviderApi } from '@/features/platform-admin/api/ai-provider-api';
+import { authenticationSession } from '@/lib/authentication-session';
 import { cn } from '@/lib/utils';
 import {
   AIAssistantMode,
@@ -365,6 +366,7 @@ export const AIAssistantPage = () => {
 
     try {
       await chatMutation.mutateAsync({
+        projectId: authenticationSession.getProjectId()!,
         provider: selectedProvider as AIProviderName,
         model: selectedModel,
         mode: mode === 'chat' ? AIAssistantMode.CREATE : AIAssistantMode.REVIEW,

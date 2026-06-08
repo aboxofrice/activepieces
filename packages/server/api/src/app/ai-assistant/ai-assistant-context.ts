@@ -1,5 +1,4 @@
 import { ActionBase, PieceMetadataModel, PiecePropertyMap, TriggerBase } from '@activepieces/pieces-framework'
-import { apVersionUtil } from '@activepieces/server-shared'
 import {
     AIAssistantMessage,
     flowStructureUtil,
@@ -10,7 +9,6 @@ import {
 } from '@activepieces/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { flowService } from '../flows/flow/flow.service'
-import { system } from '../helper/system/system'
 import { pieceMetadataService } from '../pieces/metadata/piece-metadata-service'
 
 const CATALOG_TTL_MS = 5 * 60 * 1000
@@ -64,29 +62,27 @@ async function getPieceCatalog(
         return { catalog: cached.catalog, pieceNames: cached.pieceNames }
     }
 
-    const release = await apVersionUtil.getCurrentRelease()
-    const edition = system.getEdition()
-
     // Filtered list (respects platform/project allow-lists) for names + versions.
     const summaries = await pieceMetadataService(log).list({
-        release,
-        edition,
         includeHidden: false,
         platformId,
         projectId,
     })
 
-    // Full metadata (actions/triggers) for each piece, fetched once.
-    const fullMetadata = await pieceMetadataService(log).getAllUnfiltered(platformId)
-
     const truncated = summaries.length > MAX_CATALOG_PIECES
     const visible = truncated ? summaries.slice(0, MAX_CATALOG_PIECES) : summaries
 
+    // Fetch full metadata (actions/triggers) for each visible piece.
+    const fullMetadataList = await Promise.all(
+        visible.map((s) => pieceMetadataService(log).get({ name: s.name, platformId, projectId })),
+    )
+
     const lines: string[] = []
     const pieceNames: string[] = []
-    for (const summary of visible) {
+    for (let i = 0; i < visible.length; i++) {
+        const summary = visible[i]
         pieceNames.push(summary.name)
-        const meta = fullMetadata.get(summary.name)
+        const meta = fullMetadataList[i]
         const triggerNames = meta ? renderMemberList(meta.triggers) : ''
         const actionNames = meta ? renderMemberList(meta.actions) : ''
         const description = (summary.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
