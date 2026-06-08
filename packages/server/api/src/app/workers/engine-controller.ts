@@ -1,12 +1,13 @@
 
-import {  FlowVersion, GetFlowVersionForWorkerRequest, ListFlowsRequest, PrincipalType } from '@activepieces/shared'
-import { FastifyPluginAsyncTypebox, Type } from '@fastify/type-provider-typebox'
+import { FlowVersion, GetFlowVersionForWorkerRequest, ListFlowsRequest } from '@activepieces/shared'
+import { FastifyPluginAsyncZod } from 'fastify-type-provider-zod'
 import { StatusCodes } from 'http-status-codes'
 import { entitiesMustBeOwnedByCurrentProject } from '../authentication/authorization'
+import { securityAccess } from '../core/security/authorization/fastify-security'
 import { flowService } from '../flows/flow/flow.service'
 import { flowVersionService } from '../flows/flow-version/flow-version.service'
 
-export const flowEngineWorker: FastifyPluginAsyncTypebox = async (app) => {
+export const flowEngineWorker: FastifyPluginAsyncZod = async (app) => {
 
     app.addHook('preSerialization', entitiesMustBeOwnedByCurrentProject)
 
@@ -31,28 +32,24 @@ export const flowEngineWorker: FastifyPluginAsyncTypebox = async (app) => {
             id: flowVersion.flowId,
             projectId: request.principal.projectId,
         })
-        return flowVersionService(request.log).lockPieceVersions({
-            flowVersion,
-            projectId: request.principal.projectId,
-        })
+        return flowVersion
     })
-
 
 }
 
 
 const GetAllFlowsByProjectParams = {
     config: {
-        allowedPrincipals: [PrincipalType.ENGINE] as const,
+        security: securityAccess.engine(),
     },
     schema: {
-        querystring: Type.Omit(ListFlowsRequest, ['projectId']),
+        querystring: ListFlowsRequest.omit({ projectId: true }),
     },
 }
 
 const GetLockedVersionRequest = {
     config: {
-        allowedPrincipals: [PrincipalType.ENGINE] as const,
+        security: securityAccess.engine(),
     },
     schema: {
         querystring: GetFlowVersionForWorkerRequest,

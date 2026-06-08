@@ -1,16 +1,20 @@
 
+import { setupTestEnvironment, teardownTestEnvironment } from '../../../helpers/test-setup'
 import {
+    Permission,
     PlatformRole,
     PrincipalType,
+    RoleType,
+    UserIdentityProvider,
     UserStatus,
 } from '@activepieces/shared'
 import { FastifyInstance } from 'fastify'
 import { StatusCodes } from 'http-status-codes'
-import { initializeDatabase } from '../../../../src/app/database'
 import { databaseConnection } from '../../../../src/app/database/database-connection'
-import { setupServer } from '../../../../src/app/server'
 import { generateMockToken } from '../../../helpers/auth'
 import {
+    createMockProjectMember,
+    createMockProjectRole,
     mockAndSaveBasicSetup,
     mockAndSaveBasicSetupWithApiKey,
     mockBasicUser,
@@ -19,15 +23,12 @@ import {
 let app: FastifyInstance | null = null
 
 beforeAll(async () => {
-    await initializeDatabase({ runMigrations: false })
-    app = await setupServer()
+    app = await setupTestEnvironment()
 })
 
 afterAll(async () => {
-    await databaseConnection().destroy()
-    await app?.close()
+    await teardownTestEnvironment()
 })
-
 describe('Enterprise User API', () => {
     describe('List users endpoint', () => {
 
@@ -38,7 +39,7 @@ describe('Enterprise User API', () => {
             // act
             const response = await app?.inject({
                 method: 'GET',
-                url: '/v1/users',
+                url: '/api/v1/users',
                 query: {
                     platformId: mockPlatform.id,
                 },
@@ -56,13 +57,164 @@ describe('Enterprise User API', () => {
             expect(responseBody.data[0].id).toBe(mockOwner.id)
         })
 
+        it('Allows non-embed users with invite permission to list platform users', async () => {
+            // arrange
+            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const { mockUser } = await mockBasicUser({
+                userIdentity: {
+                    provider: UserIdentityProvider.EMAIL,
+                },
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+
+            const projectRole = createMockProjectRole({
+                platformId: mockPlatform.id,
+                type: RoleType.CUSTOM,
+                permissions: [Permission.WRITE_INVITATION],
+            })
+            await databaseConnection().getRepository('project_role').save(projectRole)
+
+            const projectMember = createMockProjectMember({
+                userId: mockUser.id,
+                platformId: mockPlatform.id,
+                projectId: mockProject.id,
+                projectRoleId: projectRole.id,
+            })
+            await databaseConnection().getRepository('project_member').save(projectMember)
+
+            const mockUserToken = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users',
+                headers: {
+                    authorization: `Bearer ${mockUserToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+            const responseBody = response?.json()
+            expect(responseBody.data.length).toBeGreaterThanOrEqual(1)
+        })
+
+        it('Rejects non-embed users without invite permission', async () => {
+            // arrange
+            const { mockPlatform } = await mockAndSaveBasicSetup()
+            const { mockUser } = await mockBasicUser({
+                userIdentity: {
+                    provider: UserIdentityProvider.EMAIL,
+                },
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+
+            const mockUserToken = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users',
+                headers: {
+                    authorization: `Bearer ${mockUserToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('Rejects embed users from listing platform users', async () => {
+            // arrange
+            const { mockPlatform } = await mockAndSaveBasicSetup()
+            const { mockUser } = await mockBasicUser({
+                userIdentity: {
+                    provider: UserIdentityProvider.JWT,
+                },
+                user: {
+                    platformId: mockPlatform.id,
+                    platformRole: PlatformRole.MEMBER,
+                    status: UserStatus.ACTIVE,
+                },
+            })
+
+            const mockUserToken = await generateMockToken({
+                id: mockUser.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users',
+                headers: {
+                    authorization: `Bearer ${mockUserToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.FORBIDDEN)
+        })
+
+        it('Allows admin embed users to list platform users', async () => {
+            // arrange
+            const { mockOwner, mockPlatform } = await mockAndSaveBasicSetup({
+                userIdentity: {
+                    provider: UserIdentityProvider.JWT,
+                },
+            })
+
+            const mockOwnerToken = await generateMockToken({
+                id: mockOwner.id,
+                type: PrincipalType.USER,
+                platform: {
+                    id: mockPlatform.id,
+                },
+            })
+
+            // act
+            const response = await app?.inject({
+                method: 'GET',
+                url: '/api/v1/users',
+                headers: {
+                    authorization: `Bearer ${mockOwnerToken}`,
+                },
+            })
+
+            // assert
+            expect(response?.statusCode).toBe(StatusCodes.OK)
+        })
+
     })
 
     describe('Update user endpoint', () => {
 
         it('Failed if own other platform', async () => {
             // arrange
-            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const { mockPlatform } = await mockAndSaveBasicSetup()
             const { mockOwner: mockOwner2, mockPlatform: mockPlatform2 } = await mockAndSaveBasicSetup()
             const { mockUser } = await mockBasicUser({
                 user: {
@@ -75,7 +227,7 @@ describe('Enterprise User API', () => {
             const mockUserToken = await generateMockToken({
                 id: mockOwner2.id,
                 type: PrincipalType.USER,
-                projectId: mockProject.id,
+                
                 platform: {
                     id: mockPlatform2.id,
                 },
@@ -83,7 +235,7 @@ describe('Enterprise User API', () => {
 
             const response = await app?.inject({
                 method: 'POST',
-                url: `/v1/users/${mockUser.id}`,
+                url: `/api/v1/users/${mockUser.id}`,
                 headers: {
                     authorization: `Bearer ${mockUserToken}`,
                 },
@@ -98,7 +250,7 @@ describe('Enterprise User API', () => {
 
         it('Fail if not admin', async () => {
             // arrange
-            const { mockPlatform, mockProject } = await mockAndSaveBasicSetup()
+            const { mockPlatform } = await mockAndSaveBasicSetup()
             const { mockUser } = await mockBasicUser({
                 user: {
                     platformId: mockPlatform.id,
@@ -110,7 +262,7 @@ describe('Enterprise User API', () => {
             const mockUserToken = await generateMockToken({
                 id: mockUser.id,
                 type: PrincipalType.USER,
-                projectId: mockProject.id,
+                
                 platform: {
                     id: mockPlatform.id,
                 },
@@ -118,7 +270,7 @@ describe('Enterprise User API', () => {
             // act
             const response = await app?.inject({
                 method: 'POST',
-                url: `/v1/users/${mockUser.id}`,
+                url: `/api/v1/users/${mockUser.id}`,
                 headers: {
                     authorization: `Bearer ${mockUserToken}`,
                 },
@@ -144,7 +296,7 @@ describe('Enterprise User API', () => {
             // act
             const response = await app?.inject({
                 method: 'POST',
-                url: `/v1/users/${mockUser.id}`,
+                url: `/api/v1/users/${mockUser.id}`,
                 headers: {
                     authorization: `Bearer ${mockApiKey.value}`,
                 },
@@ -169,7 +321,7 @@ describe('Enterprise User API', () => {
 
         it('Fails if user is not platform owner', async () => {
             // arrange
-            const { mockPlatform, mockProject } = await mockAndSaveBasicSetupWithApiKey()
+            const { mockPlatform } = await mockAndSaveBasicSetupWithApiKey()
             const { mockUser } = await mockBasicUser({
                 user: {
                     platformId: mockPlatform.id,
@@ -180,7 +332,7 @@ describe('Enterprise User API', () => {
             const mockUserToken = await generateMockToken({
                 id: mockUser.id,
                 type: PrincipalType.USER,
-                projectId: mockProject.id,
+                
                 platform: {
                     id: mockPlatform.id,
                 },
@@ -189,7 +341,7 @@ describe('Enterprise User API', () => {
             // act
             const response = await app?.inject({
                 method: 'DELETE',
-                url: `/v1/users/${mockUser.id}`,
+                url: `/api/v1/users/${mockUser.id}`,
                 headers: {
                     authorization: `Bearer ${mockUserToken}`,
                 },
@@ -201,7 +353,7 @@ describe('Enterprise User API', () => {
 
         it('Allows platform owner to delete user', async () => {
             // arrange
-            const { mockOwner, mockPlatform, mockProject } = await mockAndSaveBasicSetupWithApiKey()
+            const { mockOwner, mockPlatform } = await mockAndSaveBasicSetupWithApiKey()
             const { mockUser } = await mockBasicUser({
                 user: {
                     platformId: mockPlatform.id,
@@ -212,7 +364,7 @@ describe('Enterprise User API', () => {
             const mockOwnerToken = await generateMockToken({
                 id: mockOwner.id,
                 type: PrincipalType.USER,
-                projectId: mockProject.id,
+                
                 platform: {
                     id: mockPlatform.id,
                 },
@@ -221,7 +373,7 @@ describe('Enterprise User API', () => {
             // act
             const response = await app?.inject({
                 method: 'DELETE',
-                url: `/v1/users/${mockUser.id}`,
+                url: `/api/v1/users/${mockUser.id}`,
                 headers: {
                     authorization: `Bearer ${mockOwnerToken}`,
                 },

@@ -41,14 +41,13 @@ export const piecesAnalyticsService = (log: FastifyBaseLogger) => ({
                         version: clonedStep.settings.pieceVersion,
                     }
                 })
-                const platformId = await projectService.getPlatformId(flow.projectId)
+                const platformId = await projectService(log).getPlatformId(flow.projectId)
 
                 for (const piece of pieces) {
                     try {   
                         const pieceMetadata = await pieceMetadataService(log).getOrThrow({
                             name: piece.name,
                             version: piece.version,
-                            projectId: flow.projectId,
                             platformId,
                         })
                         const pieceId = pieceMetadata.id!
@@ -75,6 +74,7 @@ export const piecesAnalyticsService = (log: FastifyBaseLogger) => ({
             job: {
                 name: SystemJobName.PIECES_ANALYTICS,
                 data: {},
+                jobId: SystemJobName.PIECES_ANALYTICS,
             },
             schedule: {
                 type: 'repeated',
