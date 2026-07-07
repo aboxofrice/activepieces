@@ -72,7 +72,14 @@ const getRequestHost = (req: FastifyRequest): string => {
 const getRequestBaseUrl = (req: FastifyRequest): string => {
     const forwardedProto = req.headers['x-forwarded-proto'] as string | undefined
     const protocol = forwardedProto?.split(',')[0]?.trim() ?? req.protocol
-    return `${protocol}://${getRequestHost(req)}`
+    return `${protocol}://${getRequestHostWithPort(req)}`
+}
+
+// req.host keeps the port (req.hostname strips it in Fastify 5), which base URLs need on non-standard-port deployments
+const getRequestHostWithPort = (req: FastifyRequest): string => {
+    const xfh = req.headers['x-forwarded-host']
+    const forwardedHost = (Array.isArray(xfh) ? xfh[0] : xfh)?.split(',')[0]?.trim()
+    return forwardedHost ?? req.host
 }
 
 export const networkUtils = {
