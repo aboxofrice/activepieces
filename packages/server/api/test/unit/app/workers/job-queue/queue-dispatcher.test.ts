@@ -22,9 +22,10 @@ function createFakeJob(id: string): ConsumeJobRequest {
     return {
         jobId: id,
         jobData: {} as ConsumeJobRequest['jobData'],
-        timeoutInSeconds: 600,
         attempsStarted: 0,
         engineToken: 'token',
+        token: 'lock-token',
+        queueName: 'test-queue',
     }
 }
 
@@ -152,9 +153,10 @@ describe('QueueDispatcher', () => {
 
         await vi.advanceTimersByTimeAsync(0)
 
-        // First dequeue returns null (queue empty, drainDelay expired)
+        // First dequeue returns null (queue empty)
         pendingDequeues[0].resolve(null)
-        await vi.advanceTimersByTimeAsync(0)
+        // The loop paces empty-queue retries with IDLE_POLL_DELAY_MS before dequeuing again
+        await vi.advanceTimersByTimeAsync(50)
 
         // Should have called dequeue again
         expect(dequeueCallCount).toBe(2)
@@ -249,7 +251,7 @@ describe('QueueDispatcher', () => {
         pendingDequeues[0].resolve(orphanedJob)
         await vi.advanceTimersByTimeAsync(0)
 
-        expect(onOrphanedJobMock).toHaveBeenCalledWith('orphaned-job', mockLog)
+        expect(onOrphanedJobMock).toHaveBeenCalledWith('orphaned-job', 'lock-token', 'test-queue', mockLog)
     })
 
     it('should not spawn a second concurrent loop after close() while dequeue is in-flight', async () => {
@@ -271,9 +273,10 @@ describe('QueueDispatcher', () => {
         expect(pendingDequeues).toHaveLength(1)
 
         // The in-flight dequeue resolves — the existing loop finds the new waiter
-        // and continues (single loop, no concurrency). It makes dequeue call #2.
+        // and continues (single loop, no concurrency). After the idle pacing delay,
+        // it makes dequeue call #2.
         pendingDequeues[0].resolve(null)
-        await vi.advanceTimersByTimeAsync(0)
+        await vi.advanceTimersByTimeAsync(50)
 
         expect(dequeueCallCount).toBe(2)
 

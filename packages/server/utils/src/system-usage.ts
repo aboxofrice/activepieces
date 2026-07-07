@@ -133,6 +133,16 @@ export const systemUsage = {
     },
 
     async getProcessTreeMemoryBytes(pid: number): Promise<number> {
+        const memoryByPid = await systemUsage.getProcessTreesMemoryBytes([pid])
+        return memoryByPid.get(pid) ?? 0
+    },
+
+    // One process-table scan for all requested pids — si.processes() spawns
+    // ps and walks /proc, so calling it per pid on a hot path is a CPU storm
+    async getProcessTreesMemoryBytes(pids: number[]): Promise<Map<number, number>> {
+        const empty = new Map<number, number>(pids.map((pid) => [pid, 0]))
+        if (pids.length === 0) return empty
+
         const { data, error } = await tryCatch(async () => {
             const { list } = await si.processes()
             const childrenByParent = new Map<number, number[]>()
@@ -144,19 +154,23 @@ export const systemUsage = {
                 childrenByParent.set(proc.parentPid, siblings)
             }
 
-            let total = 0
-            const queue = [pid]
-            const visited = new Set<number>()
-            while (queue.length > 0) {
-                const current = queue.shift()!
-                if (visited.has(current)) continue
-                visited.add(current)
-                total += rssBytesByPid.get(current) ?? 0
-                queue.push(...(childrenByParent.get(current) ?? []))
+            const result = new Map<number, number>()
+            for (const pid of pids) {
+                let total = 0
+                const queue = [pid]
+                const visited = new Set<number>()
+                while (queue.length > 0) {
+                    const current = queue.shift()!
+                    if (visited.has(current)) continue
+                    visited.add(current)
+                    total += rssBytesByPid.get(current) ?? 0
+                    queue.push(...(childrenByParent.get(current) ?? []))
+                }
+                result.set(pid, total)
             }
-            return total
+            return result
         })
-        if (error) return 0
+        if (error) return empty
         return data
     },
 }

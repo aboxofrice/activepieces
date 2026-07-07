@@ -18,6 +18,7 @@ vi.mock('../src/file-system-utils', () => ({
 vi.mock('systeminformation', () => ({
     default: {
         mem: vi.fn(),
+        processes: vi.fn(),
     },
 }))
 
@@ -33,6 +34,7 @@ import { fileSystemUtils } from '../src/file-system-utils'
 const mockFileExists = vi.mocked(fileSystemUtils.fileExists)
 const mockReadFile = vi.mocked(fs.promises.readFile)
 const mockMem = vi.mocked(si.mem)
+const mockProcesses = vi.mocked(si.processes)
 const mockCheckDiskSpace = vi.mocked(checkDiskSpace)
 
 function mockCgroupFile(path: string, content: string) {
@@ -210,5 +212,48 @@ describe('getCpuUsage', () => {
         const result = systemUsage.getCpuUsage()
         expect(result).toBeGreaterThanOrEqual(0)
         expect(result).toBeLessThanOrEqual(100)
+    })
+})
+
+describe('getProcessTreesMemoryBytes', () => {
+    it('computes each tree total from a single process scan', async () => {
+        mockProcesses.mockResolvedValue({
+            list: [
+                { pid: 100, parentPid: 1, memRss: 10 },
+                { pid: 101, parentPid: 100, memRss: 5 },
+                { pid: 102, parentPid: 101, memRss: 2 },
+                { pid: 200, parentPid: 1, memRss: 7 },
+            ],
+        } as never)
+
+        const result = await systemUsage.getProcessTreesMemoryBytes([100, 200])
+        expect(result.get(100)).toBe((10 + 5 + 2) * 1024)
+        expect(result.get(200)).toBe(7 * 1024)
+        expect(mockProcesses).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns zeros for all pids when the scan fails', async () => {
+        mockProcesses.mockRejectedValue(new Error('ps failed'))
+        const result = await systemUsage.getProcessTreesMemoryBytes([100, 200])
+        expect(result.get(100)).toBe(0)
+        expect(result.get(200)).toBe(0)
+    })
+
+    it('returns an empty map without scanning when no pids are given', async () => {
+        const result = await systemUsage.getProcessTreesMemoryBytes([])
+        expect(result.size).toBe(0)
+        expect(mockProcesses).not.toHaveBeenCalled()
+    })
+
+    it('keeps single-pid lookups working through the batch path', async () => {
+        mockProcesses.mockResolvedValue({
+            list: [
+                { pid: 300, parentPid: 1, memRss: 4 },
+                { pid: 301, parentPid: 300, memRss: 6 },
+            ],
+        } as never)
+
+        const total = await systemUsage.getProcessTreeMemoryBytes(300)
+        expect(total).toBe((4 + 6) * 1024)
     })
 })
