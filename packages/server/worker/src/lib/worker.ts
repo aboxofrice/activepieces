@@ -303,7 +303,31 @@ function getWorkerProps(): WorkerProps {
     }
 }
 
+// Every poller calls this before every poll; recomputing per job spawns a ps/proc
+// scan storm under load (pollers x sandboxes) that starves the event loop
+const MACHINE_INFO_CACHE_TTL_MS = 2000
+let machineInfoCache: { value: WorkerMachineHealthcheckRequest, builtAt: number } | null = null
+let machineInfoInFlight: Promise<WorkerMachineHealthcheckRequest> | null = null
+
 async function buildMachineInfo(): Promise<WorkerMachineHealthcheckRequest> {
+    if (machineInfoCache && Date.now() - machineInfoCache.builtAt < MACHINE_INFO_CACHE_TTL_MS) {
+        return machineInfoCache.value
+    }
+    if (machineInfoInFlight) {
+        return machineInfoInFlight
+    }
+    machineInfoInFlight = buildMachineInfoUncached()
+        .then((value) => {
+            machineInfoCache = { value, builtAt: Date.now() }
+            return value
+        })
+        .finally(() => {
+            machineInfoInFlight = null
+        })
+    return machineInfoInFlight
+}
+
+async function buildMachineInfoUncached(): Promise<WorkerMachineHealthcheckRequest> {
     const memInfo = await systemUsage.getContainerMemoryUsage()
     const diskInfo = await systemUsage.getDiskInfo()
     const cpuCores = await systemUsage.getCpuCores()
@@ -325,12 +349,13 @@ async function buildSandboxInfo(): Promise<SandboxInformation[]> {
         .map((sandboxManager) => sandboxManager.getActiveSandbox())
         .filter((sandbox): sandbox is ActiveSandboxInfo => !isNil(sandbox))
 
-    return Promise.all(activeSandboxes.map(async (sandbox) => ({
+    const memoryByPid = await systemUsage.getProcessTreesMemoryBytes(activeSandboxes.map((sandbox) => sandbox.pid))
+    return activeSandboxes.map((sandbox) => ({
         sandboxId: sandbox.sandboxId,
         boxId: sandbox.boxId,
         busy: sandbox.busy,
-        memoryUsageBytes: await systemUsage.getProcessTreeMemoryBytes(sandbox.pid),
-    })))
+        memoryUsageBytes: memoryByPid.get(sandbox.pid) ?? 0,
+    }))
 }
 
 async function warmupPiecesOnStartup(apiClient: WorkerToApiContract): Promise<void> {
