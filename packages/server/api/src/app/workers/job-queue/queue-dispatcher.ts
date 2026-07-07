@@ -4,6 +4,7 @@ import { FastifyBaseLogger } from 'fastify'
 
 const WAITER_TIMEOUT_MS = 50_000
 const ERROR_RETRY_DELAY_MS = 5_000
+const IDLE_POLL_DELAY_MS = 50
 
 function createQueueDispatcher(params: {
     queueName: string
@@ -49,6 +50,8 @@ function createQueueDispatcher(params: {
 
             if (isNil(job)) {
                 if (waiters.length === 0) break
+                // dequeue is non-blocking, so pace empty-queue retries here
+                await sleep(IDLE_POLL_DELAY_MS)
                 continue
             }
 

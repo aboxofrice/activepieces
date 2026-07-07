@@ -85,9 +85,13 @@ function ensureDispatcher(queueName: string, worker: BullMQWorker, log: FastifyB
 
 async function tryDequeue(worker: BullMQWorker, queueName: string, log: FastifyBaseLogger): Promise<ConsumeJobRequest | null> {
     const token = `token-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const job = await worker.getNextJob(token)
+    // block: false goes straight to moveToActive, skipping BullMQ's marker-based blocking
+    // wait — that state machine stalls the shared dispatcher for drainDelay seconds when a
+    // popped marker carries a future timestamp (delayed jobs) even while prioritized jobs
+    // pile up. The dispatcher loop paces empty-queue retries instead (IDLE_POLL_DELAY_MS).
+    const job = await worker.getNextJob(token, { block: false })
     if (isNil(job)) {
-        return null  // waiting list empty — drainDelay provided backpressure
+        return null  // queue empty — the dispatcher loop paces the next attempt
     }
 
     if (job.deferredFailure) {
