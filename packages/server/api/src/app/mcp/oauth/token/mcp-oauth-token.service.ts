@@ -96,10 +96,20 @@ export const mcpOAuthTokenService = {
             scopes: record.scopes ?? [],
         })
 
+        // OAuth 2.1 refresh-token rotation: invalidate the presented token and hand back a
+        // fresh one, so a leaked refresh token stops working after its first legitimate use
+        const rotatedRefreshToken = generateRefreshToken()
+        await repo().update({ id: record.id }, {
+            refreshToken: hashRefreshToken(rotatedRefreshToken),
+            expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_30_DAYS_MS).toISOString(),
+            updated: new Date().toISOString(),
+        })
+
         return {
             access_token: accessToken,
             token_type: 'Bearer',
             expires_in: ACCESS_TOKEN_TTL_15_MINUTES_SECONDS,
+            refresh_token: rotatedRefreshToken,
         }
     },
 

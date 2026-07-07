@@ -132,7 +132,9 @@ export const returnResponse = createAction({
         break;
     }
     
-    switch(respond){
+    // API/MCP-built flows omit the prop (only the UI materializes the dropdown default),
+    // and silently skipping the response leaves the webhook caller hanging until timeout
+    switch(respond ?? FlowExecution.STOP){
       case FlowExecution.STOP:
         {
           context.run.stop({
@@ -147,8 +149,6 @@ export const returnResponse = createAction({
           });
           break;
         }
-        case undefined:
-          break;
     }
  
 
