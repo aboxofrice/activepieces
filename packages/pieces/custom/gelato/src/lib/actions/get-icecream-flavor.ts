@@ -1,7 +1,5 @@
 import {
   createAction,
-  Property,
-  PieceAuth,
 } from '@activepieces/pieces-framework';
 import { httpClient, HttpMethod } from '@activepieces/pieces-common';
 import { gelatoAuth } from '../..';

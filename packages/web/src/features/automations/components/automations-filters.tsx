@@ -34,8 +34,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { useOwnerOptions } from '@/features/automations/hooks/use-owner-options';
 import { TemplatesBrowseDialog } from '@/features/templates';
-import { formatUtils } from '@/lib/format-utils';
 import { authenticationSession } from '@/lib/authentication-session';
+import { formatUtils } from '@/lib/format-utils';
 import { cn, DASHBOARD_CONTENT_PADDING_X } from '@/lib/utils';
 
 import { CreateNewMenu } from './create-new-menu';
@@ -315,7 +315,9 @@ export const AutomationsFilters = ({
               }}
               onOpenAIAssistant={() => {
                 navigate(
-                  authenticationSession.appendProjectRoutePrefix('/ai-assistant'),
+                  authenticationSession.appendProjectRoutePrefix(
+                    '/ai-assistant',
+                  ),
                 );
               }}
             >

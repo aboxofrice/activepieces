@@ -258,7 +258,13 @@ export function FlowChat({
       ) : (
         <>
           {showWelcomeMessage && (
-            <ChatIntro chatUI={chatUI} botName={botName} />
+            <ChatIntro
+              chatUI={chatUI}
+              botName={botName}
+              onSuggestionClick={(suggestion) =>
+                handleSendMessage({ textContent: suggestion, files: [] })
+              }
+            />
           )}
           <div className="w-full px-4 max-w-3xl absolute bottom-6">
             <ChatInput

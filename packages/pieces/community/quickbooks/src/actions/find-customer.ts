@@ -23,7 +23,7 @@ export const findCustomerAction = createAction({
 			throw new Error('Realm ID not found in authentication data. Please reconnect your account.');
 		}
 
-		const apiUrl = quickbooksCommon.getApiUrl(companyId as string);
+		const apiUrl = quickbooksCommon.getApiUrl({ companyId: companyId as string, environment: context.auth.props?.['environment'] as string | undefined });
 		const query = `SELECT * FROM Customer WHERE DisplayName = '${search_term.replace(
 			/'/g,
 			"\\'",

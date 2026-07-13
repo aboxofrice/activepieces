@@ -69,7 +69,7 @@ async function installPieces(rootWorkspace: string, pieces: PiecePackage[], incl
     await memoryLock.runExclusive({
         key: `install-pieces-${rootWorkspace}`,
         fn: async () => {
-            const { piecesToInstall } = await partitionPiecesToInstall(rootWorkspace, pieces)
+            const { piecesToInstall } = await partitionPiecesToInstall(rootWorkspace, nonDevPieces)
             if (isEmpty(piecesToInstall)) {
                 log.info({ rootWorkspace }, '[pieceInstaller] No new pieces to install in lock (already installed)')
                 return

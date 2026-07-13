@@ -1,8 +1,9 @@
-import { api } from '@/lib/api';
 import {
   AIAssistantChatRequest,
   AIAssistantChatResponse,
 } from '@activepieces/shared';
+
+import { api } from '@/lib/api';
 
 export const aiAssistantApi = {
   chat(request: AIAssistantChatRequest): Promise<AIAssistantChatResponse> {

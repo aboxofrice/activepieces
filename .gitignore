@@ -98,3 +98,6 @@ deploy/terraform/**/.terraform.lock.hcl
 deploy/terraform/**/terraform.tfvars
 deploy/terraform/**/terraform-*.tfvars
 benchmark_results/
+.claude/todo/*
+private-npmrc
+dist-publish

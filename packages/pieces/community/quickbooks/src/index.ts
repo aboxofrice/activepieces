@@ -9,6 +9,7 @@ import { newExpense } from "./triggers/new-expense";
 import { newCustomer } from "./triggers/new-customer";
 import { newDeposit } from "./triggers/new-deposit";
 import { newTransfer } from "./triggers/new-transfer";
+import { newPayment } from "./triggers/new-payment";
 import { createCustomApiCallAction } from "@activepieces/pieces-common";
 import { quickbooksCommon } from "./lib/common";
 import { quickbooksAuth } from './lib/auth';
@@ -33,7 +34,7 @@ export const quickbooks = createPiece({
 			const authValue = auth as PiecePropValueSchema<typeof quickbooksAuth>;
 			 const companyId = authValue.props?.['companyId'];
 			
-				const apiUrl = quickbooksCommon.getApiUrl(companyId);
+				const apiUrl = quickbooksCommon.getApiUrl({ companyId: companyId, environment: authValue.props?.['environment'] as string | undefined });
 				return apiUrl
 
 		},
@@ -46,6 +47,7 @@ export const quickbooks = createPiece({
   ],
   triggers: [
     newInvoice,
+    newPayment,
     newExpense,
     newCustomer,
     newDeposit,
