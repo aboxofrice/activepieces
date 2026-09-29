@@ -2025,7 +2025,7 @@
     },
     "packages/pieces/community/cufx": {
       "name": "@activepieces/piece-cufx",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -2418,6 +2418,16 @@
         "@activepieces/pieces-framework": "workspace:*",
         "@activepieces/shared": "workspace:*",
         "tslib": "^2.3.0",
+      },
+    },
+    "packages/pieces/community/ebay": {
+      "name": "@activepieces/piece-ebay",
+      "version": "0.0.1",
+      "dependencies": {
+        "@activepieces/pieces-common": "workspace:*",
+        "@activepieces/pieces-framework": "workspace:*",
+        "@activepieces/shared": "workspace:*",
+        "tslib": "2.6.2",
       },
     },
     "packages/pieces/community/echowin": {
@@ -6357,6 +6367,16 @@
         "tslib": "2.6.2",
       },
     },
+    "packages/pieces/community/sellercloud": {
+      "name": "@activepieces/piece-sellercloud",
+      "version": "0.0.1",
+      "dependencies": {
+        "@activepieces/pieces-common": "workspace:*",
+        "@activepieces/pieces-framework": "workspace:*",
+        "@activepieces/shared": "workspace:*",
+        "tslib": "2.6.2",
+      },
+    },
     "packages/pieces/community/send-it": {
       "name": "@activepieces/piece-send-it",
       "version": "0.1.1",
@@ -6950,7 +6970,7 @@
     },
     "packages/pieces/community/symxchange": {
       "name": "@activepieces/piece-symxchange",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -9456,6 +9476,8 @@
 
     "@activepieces/piece-easy-peasy-ai": ["@activepieces/piece-easy-peasy-ai@workspace:packages/pieces/community/easy-peasy-ai"],
 
+    "@activepieces/piece-ebay": ["@activepieces/piece-ebay@workspace:packages/pieces/community/ebay"],
+
     "@activepieces/piece-echowin": ["@activepieces/piece-echowin@workspace:packages/pieces/community/echowin"],
 
     "@activepieces/piece-eden-ai": ["@activepieces/piece-eden-ai@workspace:packages/pieces/community/eden-ai"],
@@ -10197,6 +10219,8 @@
     "@activepieces/piece-seek-table": ["@activepieces/piece-seek-table@workspace:packages/pieces/community/seek-table"],
 
     "@activepieces/piece-segment": ["@activepieces/piece-segment@workspace:packages/pieces/community/segment"],
+
+    "@activepieces/piece-sellercloud": ["@activepieces/piece-sellercloud@workspace:packages/pieces/community/sellercloud"],
 
     "@activepieces/piece-send-it": ["@activepieces/piece-send-it@workspace:packages/pieces/community/send-it"],
 
