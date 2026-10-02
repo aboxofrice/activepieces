@@ -1,6 +1,7 @@
 import { createCustomApiCallAction } from '@activepieces/pieces-common';
 import { createPiece } from '@activepieces/pieces-framework';
 import { PieceCategory } from '@activepieces/shared';
+import { generatedActions } from './lib/actions/generated';
 import { getProductInventory } from './lib/actions/get-product-inventory';
 import { getQueuedJob } from './lib/actions/get-queued-job';
 import { importInventoryFromCsv } from './lib/actions/import-inventory-from-csv';
@@ -23,6 +24,7 @@ export const sellercloud = createPiece({
         getQueuedJob,
         getProductInventory,
         listWarehouses,
+        ...generatedActions,
         createCustomApiCallAction({
             auth: sellercloudAuth,
             baseUrl: (auth) => (auth ? sellercloudClient.apiBase({ auth: auth.props }) : ''),
