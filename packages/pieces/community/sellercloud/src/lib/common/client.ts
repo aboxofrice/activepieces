@@ -1,14 +1,69 @@
 import { HttpError, HttpMethod, QueryParams, httpClient } from '@activepieces/pieces-common';
 import { tryCatch } from '@activepieces/shared';
 
+// Tokens last an hour and /token is itself rate limited, so a flow that runs many
+// actions must not log in once per request.
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
 async function getToken({ auth }: { auth: SellercloudAuthProps }): Promise<string> {
-    const response = await httpClient.sendRequest<{ access_token: string }>({
-        method: HttpMethod.POST,
-        url: `${apiBase({ auth })}/token`,
-        headers: { 'Content-Type': 'application/json' },
-        body: { Username: auth.username, Password: auth.password },
+    const cacheKey = `${apiBase({ auth })}|${auth.username}`;
+    const cached = tokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.token;
+    }
+    const response = await sendWithRetry<{ access_token: string }>({
+        request: {
+            method: HttpMethod.POST,
+            url: `${apiBase({ auth })}/token`,
+            headers: { 'Content-Type': 'application/json' },
+            body: { Username: auth.username, Password: auth.password },
+        },
     });
-    return response.body.access_token;
+    const token = response.access_token;
+    tokenCache.set(cacheKey, { token, expiresAt: Date.now() + TOKEN_TTL_MS });
+    return token;
+}
+
+// SellerCloud answers 409 {"Error":"Too many requests.","RateLimitResetTime":"..."} when
+// throttling, so the reset time in the body is what to wait for, not a fixed backoff.
+async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<typeof httpClient.sendRequest>[0]; attempt?: number }): Promise<T> {
+    const { data, error } = await tryCatch(() => httpClient.sendRequest<T>(request));
+    if (!error) {
+        return data.body;
+    }
+    const delay = retryDelayMs({ error, attempt });
+    if (delay === null) {
+        throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return sendWithRetry({ request, attempt: attempt + 1 });
+}
+
+function retryDelayMs({ error, attempt }: { error: Error; attempt: number }): number | null {
+    if (attempt >= MAX_ATTEMPTS || !(error instanceof HttpError)) {
+        return null;
+    }
+    const status = error.response.status;
+    if (status === RATE_LIMITED_STATUS || status === 429) {
+        const wait = rateLimitWaitMs({ body: error.response.body });
+        return wait !== null && wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
+    }
+    if (TRANSIENT_STATUSES.includes(status)) {
+        return BASE_BACKOFF_MS * 2 ** (attempt - 1);
+    }
+    return null;
+}
+
+function rateLimitWaitMs({ body }: { body: unknown }): number | null {
+    const resetTime = (body as { RateLimitResetTime?: string } | null)?.RateLimitResetTime;
+    if (!resetTime) {
+        return BASE_BACKOFF_MS;
+    }
+    const resetAt = Date.parse(resetTime);
+    if (Number.isNaN(resetAt)) {
+        return BASE_BACKOFF_MS;
+    }
+    return Math.max(BASE_BACKOFF_MS, resetAt - Date.now() + RATE_LIMIT_PADDING_MS);
 }
 
 async function tryGetToken({ auth }: { auth: SellercloudAuthProps }): Promise<{ error: string | null }> {
@@ -19,29 +74,42 @@ async function tryGetToken({ auth }: { auth: SellercloudAuthProps }): Promise<{ 
 // Callers that make many requests (catalog paging, job polling) pass `token` so one run logs in once; tokens last an hour.
 async function request<T>({ auth, token, method, path, queryParams, body }: SellercloudRequest): Promise<T> {
     const accessToken = token ?? await getToken({ auth });
-    const { data, error } = await tryCatch(() => httpClient.sendRequest<T>({
-        method,
-        url: `${apiBase({ auth })}${path}`,
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
+    const { data, error } = await tryCatch(() => sendWithRetry<T>({
+        request: {
+            method,
+            url: `${apiBase({ auth })}${path}`,
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+            },
+            queryParams: compactQuery({ queryParams }),
+            body,
         },
-        queryParams: compactQuery({ queryParams }),
-        body,
     }));
     if (error) {
         throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error })}`);
     }
-    return data.body;
+    return data;
 }
 
 async function listWarehouses({ auth, token }: { auth: SellercloudAuthProps; token?: string }): Promise<SellercloudWarehouse[]> {
     return fetchAllPages<SellercloudWarehouse>({ auth, token, path: '/Warehouses' });
 }
 
+// /Catalog pages 50 at a time, so one match pass is ~50 requests against a rate-limited
+// API. Six PDC flows rebuilding the same list would spend most of the budget on it.
+const catalogCache = new Map<string, { ids: string[]; expiresAt: number }>();
+
 async function listCatalogProductIds({ auth, token }: { auth: SellercloudAuthProps; token?: string }): Promise<string[]> {
+    const cacheKey = apiBase({ auth });
+    const cached = catalogCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.ids;
+    }
     const products = await fetchAllPages<{ ID: string }>({ auth, token, path: '/Catalog' });
-    return products.map((product) => product.ID);
+    const ids = products.map((product) => product.ID);
+    catalogCache.set(cacheKey, { ids, expiresAt: Date.now() + CATALOG_TTL_MS });
+    return ids;
 }
 
 // SellerCloud silently caps pageSize (50 on /Catalog), so stop on the running total, not on pageNumber * pageSize.
@@ -73,13 +141,27 @@ function compactQuery({ queryParams }: { queryParams?: Record<string, string | n
 }
 
 function describeError({ error }: { error: Error }): string {
-    if (error instanceof HttpError) {
-        return `${error.response.status} ${JSON.stringify(error.response.body)}`;
+    if (!(error instanceof HttpError)) {
+        return error.message;
     }
-    return error.message;
+    const { status, body } = error.response;
+    if (status === RATE_LIMITED_STATUS) {
+        const resetTime = (body as { RateLimitResetTime?: string } | null)?.RateLimitResetTime;
+        return `rate limited by SellerCloud${resetTime ? `, resets at ${resetTime}` : ''}`;
+    }
+    return `${status} ${JSON.stringify(body)}`;
 }
 
 const MAX_PAGE_SIZE = 500;
+const TOKEN_TTL_MS = 50 * 60 * 1000;
+const CATALOG_TTL_MS = 15 * 60 * 1000;
+const RATE_LIMITED_STATUS = 409;
+const TRANSIENT_STATUSES = [502, 503, 504];
+const MAX_ATTEMPTS = 4;
+const BASE_BACKOFF_MS = 2000;
+const RATE_LIMIT_PADDING_MS = 1000;
+// A flow step has a budget, so a long lockout should fail with the reset time rather than hang.
+const MAX_RATE_LIMIT_WAIT_MS = 120 * 1000;
 
 export const sellercloudClient = {
     getToken,
