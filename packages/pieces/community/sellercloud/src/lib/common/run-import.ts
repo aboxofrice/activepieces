@@ -1,10 +1,24 @@
-import { SellercloudAuthProps, sellercloudClient } from './client';
+import { SellercloudAuthProps, TokenStore, sellercloudClient } from './client';
 import { InventoryRow, JobResult, UpdateType, inventoryImport } from './inventory';
+import { SetOutcome, inventorySetter } from './set-inventory';
 
-async function runImport({ auth, token, warehouseId, rows, updateType, inventoryDate, waitForCompletion, timeoutSeconds }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, updateType, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
         return { warehouse, submitted: false, job: null };
+    }
+    // SellerCloud's import adds; setting an absolute amount needs read + delta instead.
+    if (writeMode === 'SET') {
+        const set = await inventorySetter.setQuantities({
+            auth,
+            token,
+            store,
+            warehouseId,
+            rows,
+            reason: adjustmentReason ?? 'Inventory import',
+            verify: verifyAfterWrite ?? true,
+        });
+        return { warehouse, submitted: true, job: null, set };
     }
     const submitted = await inventoryImport.submitImport({ auth, token, warehouse, rows, updateType, inventoryDate });
     if (!waitForCompletion) {
@@ -35,11 +49,18 @@ export type ImportOutcome = {
     warehouse: { ID: number; Name: string };
     submitted: boolean;
     job: JobResult | { id: number; status: string; message: string | null } | null;
+    set?: SetOutcome;
 };
+
+export type WriteMode = 'SET' | 'ADD';
 
 type RunImportParams = {
     auth: SellercloudAuthProps;
     token: string;
+    store?: TokenStore;
+    writeMode: WriteMode;
+    adjustmentReason?: string;
+    verifyAfterWrite?: boolean;
     warehouseId: number;
     rows: InventoryRow[];
     updateType: UpdateType;

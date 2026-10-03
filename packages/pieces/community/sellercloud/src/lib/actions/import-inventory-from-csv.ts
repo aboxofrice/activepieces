@@ -49,6 +49,9 @@ export const importInventoryFromCsv = createAction({
             description: 'For testing: import only these SellerCloud product IDs from the file. Requires Partial.',
             required: false,
         }),
+        writeMode: sellercloudProps.writeMode,
+        adjustmentReason: sellercloudProps.adjustmentReason,
+        verifyAfterWrite: sellercloudProps.verifyAfterWrite,
         updateType: sellercloudProps.updateType,
         inventoryDate: sellercloudProps.inventoryDate,
         dryRun: Property.Checkbox({
@@ -100,7 +103,11 @@ export const importInventoryFromCsv = createAction({
         const outcome = await importRunner.runImport({
             auth,
             token,
+            store: context.store,
             warehouseId: props.warehouse,
+            writeMode: props.writeMode === 'ADD' ? 'ADD' : 'SET',
+            adjustmentReason: props.adjustmentReason,
+            verifyAfterWrite: props.verifyAfterWrite,
             rows: mapping.rows,
             updateType,
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),

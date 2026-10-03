@@ -25,9 +25,37 @@ const warehouse = Property.Dropdown({
     },
 });
 
+// The API's import is additive; "set" is emulated with read + delta adjustments.
+const writeMode = Property.StaticDropdown({
+    displayName: 'Quantity Handling',
+    description: 'Set to the file amount, or add the file amount on top of what is already there.',
+    required: true,
+    defaultValue: 'SET',
+    options: {
+        options: [
+            { label: 'Set to this amount (read current, adjust by the difference)', value: 'SET' },
+            { label: 'Add to current amount (SellerCloud\'s native import)', value: 'ADD' },
+        ],
+    },
+});
+
+const adjustmentReason = Property.ShortText({
+    displayName: 'Adjustment Reason',
+    description: 'Recorded against each adjustment in SellerCloud. Only used when setting amounts.',
+    required: false,
+    defaultValue: 'PDC inventory import',
+});
+
+const verifyAfterWrite = Property.Checkbox({
+    displayName: 'Verify After Writing',
+    description: 'Adjustments apply asynchronously. When on, this polls until the quantities settle and reports any that did not land.',
+    required: false,
+    defaultValue: true,
+});
+
 const updateType = Property.StaticDropdown({
     displayName: 'Update Type',
-    description: 'Partial only changes the products in the file. Full also sets every other product in this warehouse to 0.',
+    description: 'Only applies when adding to current amounts. Partial changes only the products in the file; Full also sets every other product in this warehouse to 0.',
     required: true,
     defaultValue: 'PARTIAL',
     options: {
@@ -60,6 +88,9 @@ const timeoutSeconds = Property.Number({
 
 export const sellercloudProps = {
     warehouse,
+    writeMode,
+    adjustmentReason,
+    verifyAfterWrite,
     updateType,
     inventoryDate,
     waitForCompletion,
