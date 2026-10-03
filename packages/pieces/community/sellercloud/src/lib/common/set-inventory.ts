@@ -1,5 +1,5 @@
 import { HttpMethod } from '@activepieces/pieces-common';
-import { isNil } from '@activepieces/shared';
+import { isNil, tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, sellercloudClient, TokenStore } from './client';
 import { InventoryRow } from './inventory';
 
@@ -48,7 +48,10 @@ function plan({ row, current }: { row: InventoryRow; current: number | null | un
 async function readQuantities({ auth, token, store, warehouseId, productIds }: ReadQuantitiesParams): Promise<Map<string, number | null>> {
     const entries = new Map<string, number | null>();
     for (const productId of productIds) {
-        entries.set(productId, await readQuantity({ auth, token, store, warehouseId, productId }));
+        // SellerCloud answers 500 for an unknown productID, and one unreadable SKU must
+        // not abandon a part-written batch: record it as unknown and carry on.
+        const { data, error } = await tryCatch(() => readQuantity({ auth, token, store, warehouseId, productId }));
+        entries.set(productId, error ? null : data);
     }
     return entries;
 }
@@ -96,25 +99,29 @@ async function adjust({ auth, token, store, warehouseId, item, reason }: AdjustP
 async function verifyQuantities({ auth, token, store, warehouseId, planned }: VerifyParams): Promise<VerifyResult> {
     const expected = planned.filter((item) => isNil(item.error));
     const deadline = Date.now() + VERIFY_TIMEOUT_MS;
-    let observed = new Map<string, number | null>();
-    let matched = false;
+    const observed = new Map<string, number | null>();
+    // Re-reading every SKU each round is the bulk of a large batch's cost, so each round
+    // only polls what has not landed yet.
+    let outstanding = expected;
 
     // Only an exact match counts as settled. Two identical reads are NOT evidence of
     // completion: a pending adjustment reads as the old value for as long as a minute,
     // so "stopped changing" is indistinguishable from "has not started".
-    while (Date.now() < deadline) {
+    while (outstanding.length > 0 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, VERIFY_POLL_MS));
-        observed = await readQuantities({ auth, token, store, warehouseId, productIds: expected.map((item) => item.productId) });
-        if (expected.every((item) => observed.get(item.productId) === item.to)) {
-            matched = true;
-            break;
+        const round = await readQuantities({ auth, token, store, warehouseId, productIds: outstanding.map((item) => item.productId) });
+        for (const [productId, quantity] of round) {
+            observed.set(productId, quantity);
         }
+        outstanding = outstanding.filter((item) => round.get(item.productId) !== item.to);
     }
 
-    const mismatches = expected
-        .filter((item) => observed.get(item.productId) !== item.to)
-        .map((item) => ({ productId: item.productId, expected: item.to, actual: observed.get(item.productId) ?? null }));
-    return { settled: matched, timedOut: !matched, mismatches };
+    const mismatches = outstanding.map((item) => ({
+        productId: item.productId,
+        expected: item.to,
+        actual: observed.get(item.productId) ?? null,
+    }));
+    return { settled: outstanding.length === 0, timedOut: outstanding.length > 0, mismatches };
 }
 
 export const inventorySetter = { setQuantities, readQuantity };
