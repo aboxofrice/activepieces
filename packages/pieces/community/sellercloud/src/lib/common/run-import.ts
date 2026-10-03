@@ -1,14 +1,14 @@
 import { SellercloudAuthProps, TokenStore, sellercloudClient } from './client';
-import { InventoryRow, JobResult, UpdateType, inventoryImport } from './inventory';
+import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
 
-async function runImport({ auth, token, store, warehouseId, rows, updateType, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
         return { warehouse, submitted: false, job: null };
     }
-    // SellerCloud's import adds; setting an absolute amount needs read + delta instead.
-    if (writeMode === 'SET') {
+    // Only the delta path needs reads; both import modes are a single queued job.
+    if (writeMode === 'SET_LISTED') {
         const set = await inventorySetter.setQuantities({
             auth,
             token,
@@ -17,10 +17,16 @@ async function runImport({ auth, token, store, warehouseId, rows, updateType, in
             rows,
             reason: adjustmentReason ?? 'Inventory import',
             verify: verifyAfterWrite ?? true,
+            useLedger: trustLastWritten ?? false,
+            zeroMissing: zeroMissing ?? false,
         });
         return { warehouse, submitted: true, job: null, set };
     }
-    const submitted = await inventoryImport.submitImport({ auth, token, warehouse, rows, updateType, inventoryDate });
+    // A Full import replaces the warehouse; a Partial one adds to what is already there.
+    const submitted = await inventoryImport.submitImport({
+        auth, token, warehouse, rows, inventoryDate,
+        updateType: writeMode === 'REPLACE_WAREHOUSE' ? 'FULL' : 'PARTIAL',
+    });
     if (!waitForCompletion) {
         return { warehouse, submitted: true, job: { id: submitted.id, status: 'Submitted', message: submitted.message } };
     }
@@ -52,7 +58,7 @@ export type ImportOutcome = {
     set?: SetOutcome;
 };
 
-export type WriteMode = 'SET' | 'ADD';
+export type WriteMode = 'REPLACE_WAREHOUSE' | 'SET_LISTED' | 'ADD';
 
 type RunImportParams = {
     auth: SellercloudAuthProps;
@@ -61,9 +67,10 @@ type RunImportParams = {
     writeMode: WriteMode;
     adjustmentReason?: string;
     verifyAfterWrite?: boolean;
+    trustLastWritten?: boolean;
+    zeroMissing?: boolean;
     warehouseId: number;
     rows: InventoryRow[];
-    updateType: UpdateType;
     inventoryDate: Date;
     waitForCompletion: boolean;
     timeoutSeconds: number;

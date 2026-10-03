@@ -3,7 +3,7 @@ import { sellercloudAuth } from '../auth';
 import { sellercloudClient } from '../common/client';
 import { csvMapping } from '../common/csv-mapping';
 import { sellercloudProps } from '../common/props';
-import { importRunner } from '../common/run-import';
+import { WriteMode, importRunner } from '../common/run-import';
 
 export const importInventoryFromCsv = createAction({
     auth: sellercloudAuth,
@@ -52,7 +52,8 @@ export const importInventoryFromCsv = createAction({
         writeMode: sellercloudProps.writeMode,
         adjustmentReason: sellercloudProps.adjustmentReason,
         verifyAfterWrite: sellercloudProps.verifyAfterWrite,
-        updateType: sellercloudProps.updateType,
+        trustLastWritten: sellercloudProps.trustLastWritten,
+        zeroMissing: sellercloudProps.zeroMissing,
         inventoryDate: sellercloudProps.inventoryDate,
         dryRun: Property.Checkbox({
             displayName: 'Dry Run',
@@ -65,10 +66,10 @@ export const importInventoryFromCsv = createAction({
     },
     async run(context) {
         const props = context.propsValue;
-        const updateType = props.updateType === 'FULL' ? 'FULL' : 'PARTIAL';
         const onlyProductIds = (props.onlyProductIds ?? []).map((id) => String(id).trim()).filter((id) => id !== '');
-        if (updateType === 'FULL' && onlyProductIds.length > 0) {
-            throw new Error('"Only These Products" can\'t be combined with Full: a Full import would set every other product in the warehouse to 0.');
+        const writeMode = writeModeOf({ value: props.writeMode });
+        if (writeMode === 'REPLACE_WAREHOUSE' && onlyProductIds.length > 0) {
+            throw new Error('"Only These Products" can\'t be combined with replacing the warehouse: every product outside the subset would be set to 0. Use "Set only these products" instead.');
         }
         const auth = context.auth.props;
         const token = await sellercloudClient.getToken({ auth, store: context.store });
@@ -94,7 +95,7 @@ export const importInventoryFromCsv = createAction({
             unmatchedSample: mapping.unmatchedSample,
             productsToImport: mapping.rows.length,
             missingFromFile: mapping.missingFromFile,
-            updateType,
+            writeMode,
         };
         if (props.dryRun) {
             const warehouse = await importRunner.findWarehouse({ auth, token, warehouseId: props.warehouse });
@@ -105,11 +106,12 @@ export const importInventoryFromCsv = createAction({
             token,
             store: context.store,
             warehouseId: props.warehouse,
-            writeMode: props.writeMode === 'ADD' ? 'ADD' : 'SET',
+            writeMode,
             adjustmentReason: props.adjustmentReason,
             verifyAfterWrite: props.verifyAfterWrite,
+            trustLastWritten: props.trustLastWritten,
+            zeroMissing: props.zeroMissing,
             rows: mapping.rows,
-            updateType,
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),
             waitForCompletion: props.waitForCompletion ?? true,
             timeoutSeconds: props.timeoutSeconds ?? 300,
@@ -117,3 +119,7 @@ export const importInventoryFromCsv = createAction({
         return { ...summary, dryRun: false, ...outcome };
     },
 });
+
+function writeModeOf({ value }: { value: string }): WriteMode {
+    return value === 'ADD' || value === 'SET_LISTED' ? value : 'REPLACE_WAREHOUSE';
+}

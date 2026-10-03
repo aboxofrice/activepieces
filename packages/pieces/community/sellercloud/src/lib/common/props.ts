@@ -25,25 +25,43 @@ const warehouse = Property.Dropdown({
     },
 });
 
-// The API's import is additive; "set" is emulated with read + delta adjustments.
+// Three real behaviours, named by what they do rather than by the API's UpdateType flag:
+// a Full import replaces the warehouse (verified: a listed product is set to the file
+// value, an unlisted one goes to 0), a Partial import adds, and delta adjustments set
+// only the listed products without touching anything else.
 const writeMode = Property.StaticDropdown({
     displayName: 'Quantity Handling',
-    description: 'Set to the file amount, or add the file amount on top of what is already there.',
+    description: 'How the file quantities are applied to this warehouse.',
     required: true,
-    defaultValue: 'SET',
+    defaultValue: 'SET_LISTED',
     options: {
         options: [
-            { label: 'Set to this amount (read current, adjust by the difference)', value: 'SET' },
-            { label: 'Add to current amount (SellerCloud\'s native import)', value: 'ADD' },
+            { label: 'Set only these products — leave other products untouched', value: 'SET_LISTED' },
+            { label: 'Replace the warehouse — set these products, zero everything else (slow: a full import takes ~1 hour and blocks every other import account-wide)', value: 'REPLACE_WAREHOUSE' },
+            { label: 'Add to current quantities', value: 'ADD' },
         ],
     },
 });
 
 const adjustmentReason = Property.ShortText({
     displayName: 'Adjustment Reason',
-    description: 'Recorded against each adjustment in SellerCloud. Only used when setting amounts.',
+    description: 'Recorded against each adjustment in SellerCloud. Only used when setting only the listed products.',
     required: false,
     defaultValue: 'PDC inventory import',
+});
+
+const trustLastWritten = Property.Checkbox({
+    displayName: 'Trust Last Written Quantities',
+    description: 'When setting only the listed products, reuses what this flow last wrote instead of reading each one back. Much faster, but only safe when nothing else changes inventory in this warehouse.',
+    required: false,
+    defaultValue: false,
+});
+
+const zeroMissing = Property.Checkbox({
+    displayName: 'Zero Products Missing From This Run',
+    description: 'When setting only the listed products, any product this flow wrote previously but that is absent now is set to 0. Gives the same end state as replacing the warehouse, without the hours-long full import. Needs "Trust Last Written Quantities" history to know what was written before.',
+    required: false,
+    defaultValue: false,
 });
 
 const verifyAfterWrite = Property.Checkbox({
@@ -51,19 +69,6 @@ const verifyAfterWrite = Property.Checkbox({
     description: 'Adjustments apply asynchronously. When on, this polls until the quantities settle and reports any that did not land.',
     required: false,
     defaultValue: true,
-});
-
-const updateType = Property.StaticDropdown({
-    displayName: 'Update Type',
-    description: 'Only applies when adding to current amounts. Partial changes only the products in the file; Full also sets every other product in this warehouse to 0.',
-    required: true,
-    defaultValue: 'PARTIAL',
-    options: {
-        options: [
-            { label: 'Partial (only products in the file)', value: 'PARTIAL' },
-            { label: 'Full (products not in the file go to 0)', value: 'FULL' },
-        ],
-    },
 });
 
 const inventoryDate = Property.DateTime({
@@ -91,7 +96,8 @@ export const sellercloudProps = {
     writeMode,
     adjustmentReason,
     verifyAfterWrite,
-    updateType,
+    trustLastWritten,
+    zeroMissing,
     inventoryDate,
     waitForCompletion,
     timeoutSeconds,

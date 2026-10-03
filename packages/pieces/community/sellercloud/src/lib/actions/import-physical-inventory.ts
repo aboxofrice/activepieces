@@ -3,7 +3,7 @@ import { sellercloudAuth } from '../auth';
 import { sellercloudClient } from '../common/client';
 import { InventoryRow } from '../common/inventory';
 import { sellercloudProps } from '../common/props';
-import { importRunner } from '../common/run-import';
+import { WriteMode, importRunner } from '../common/run-import';
 
 export const importPhysicalInventory = createAction({
     auth: sellercloudAuth,
@@ -21,7 +21,8 @@ export const importPhysicalInventory = createAction({
         writeMode: sellercloudProps.writeMode,
         adjustmentReason: sellercloudProps.adjustmentReason,
         verifyAfterWrite: sellercloudProps.verifyAfterWrite,
-        updateType: sellercloudProps.updateType,
+        trustLastWritten: sellercloudProps.trustLastWritten,
+        zeroMissing: sellercloudProps.zeroMissing,
         inventoryDate: sellercloudProps.inventoryDate,
         waitForCompletion: sellercloudProps.waitForCompletion,
         timeoutSeconds: sellercloudProps.timeoutSeconds,
@@ -36,11 +37,12 @@ export const importPhysicalInventory = createAction({
             token,
             store: context.store,
             warehouseId: props.warehouse,
-            writeMode: props.writeMode === 'ADD' ? 'ADD' : 'SET',
+            writeMode: writeModeOf({ value: props.writeMode }),
             adjustmentReason: props.adjustmentReason,
             verifyAfterWrite: props.verifyAfterWrite,
+            trustLastWritten: props.trustLastWritten,
+            zeroMissing: props.zeroMissing,
             rows,
-            updateType: props.updateType === 'FULL' ? 'FULL' : 'PARTIAL',
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),
             waitForCompletion: props.waitForCompletion ?? true,
             timeoutSeconds: props.timeoutSeconds ?? 300,
@@ -64,4 +66,8 @@ function parseItems({ items }: { items: unknown }): InventoryRow[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
+}
+
+function writeModeOf({ value }: { value: string }): WriteMode {
+    return value === 'ADD' || value === 'SET_LISTED' ? value : 'REPLACE_WAREHOUSE';
 }

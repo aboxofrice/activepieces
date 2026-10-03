@@ -2,13 +2,20 @@ import { HttpMethod } from '@activepieces/pieces-common';
 import { isNil, tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, sellercloudClient, TokenStore } from './client';
 import { InventoryRow } from './inventory';
+import { quantityLedger } from './quantity-ledger';
 
 // ImportPhysicalInventory ADDS to the existing quantity, so "set this warehouse to N"
 // has to be expressed as a delta. AdjustPhysicalInventory takes one, and unlike
 // SetPhysicalInventory it is not blocked for shadow SKUs.
-async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, onProgress }: SetQuantitiesParams): Promise<SetOutcome> {
-    const current = await readQuantities({ auth, token, store, warehouseId, productIds: rows.map((row) => row.productId) });
-    const planned = rows.map((row) => plan({ row, current: current.get(row.productId) }));
+async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress }: SetQuantitiesParams): Promise<SetOutcome> {
+    if ((zeroMissing || useLedger) && !verify) {
+        throw new Error('Trusting or extending the last-written history requires "Verify After Writing": without it the history records intent rather than confirmed quantities.');
+    }
+    const targets = zeroMissing
+        ? await withMissingZeroed({ store, warehouseId, rows })
+        : rows;
+    const current = await currentQuantities({ auth, token, store, warehouseId, rows: targets, useLedger });
+    const planned = targets.map((row) => plan({ row, current: current.quantities.get(row.productId) }));
 
     const applied: AppliedAdjustment[] = [];
     for (const [index, item] of planned.entries()) {
@@ -25,15 +32,67 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
     const verified = verify
         ? await verifyQuantities({ auth, token, store, warehouseId, planned })
         : null;
+    // The ledger is a claim about SellerCloud's state, so only verified quantities may
+    // enter it. Recording intent instead let an adjustment that lagged or failed leave a
+    // false baseline, and the next run then computed its delta from a number that was
+    // never true. Without verification nothing is recorded at all.
+    if (!isNil(store) && !isNil(verified)) {
+        const unconfirmed = new Set(verified.mismatches.map((mismatch) => mismatch.productId));
+        const confirmed = Object.fromEntries(
+            applied
+                .filter((item) => isNil(item.error) && !unconfirmed.has(item.productId))
+                .map((item) => [item.productId, item.to] as const),
+        );
+        await quantityLedger.merge({ store, warehouseId, applied: confirmed });
+        // A SKU that did not land must not keep a stale claim either.
+        if (unconfirmed.size > 0) {
+            await quantityLedger.forget({ store, warehouseId, productIds: [...unconfirmed] });
+        }
+    }
     return {
         warehouseId,
-        requested: rows.length,
+        source: current.source,
+        requested: targets.length,
+        zeroedMissing: targets.length - rows.length,
         changed: applied.filter((item) => item.delta !== 0 && isNil(item.error)).length,
         unchanged: applied.filter((item) => item.delta === 0).length,
         failed: applied.filter((item) => !isNil(item.error)).length,
         adjustments: applied,
         verified,
     };
+}
+
+// With the ledger, a SKU this integration has written before needs no read at all; the
+// rest still do, so a first run or a newly added part stays correct.
+// A part that drops out of the file has not gone to zero on its own: replacing the
+// warehouse would zero it, but that import takes hours, so the ledger of what this flow
+// wrote last time stands in for it and those products are set to 0 explicitly.
+async function withMissingZeroed({ store, warehouseId, rows }: { store?: TokenStore; warehouseId: number; rows: InventoryRow[] }): Promise<InventoryRow[]> {
+    if (isNil(store)) {
+        return rows;
+    }
+    const ledger = await quantityLedger.read({ store, warehouseId });
+    const present = new Set(rows.map((row) => row.productId));
+    const missing = Object.keys(ledger)
+        .filter((productId) => !present.has(productId) && ledger[productId] !== 0)
+        .map((productId) => ({ productId, quantity: 0 }));
+    return [...rows, ...missing];
+}
+
+async function currentQuantities({ auth, token, store, warehouseId, rows, useLedger }: CurrentQuantitiesParams): Promise<{ quantities: Map<string, number | null>; source: QuantitySource }> {
+    if (!useLedger || isNil(store)) {
+        return { quantities: await readQuantities({ auth, token, store, warehouseId, productIds: rows.map((row) => row.productId) }), source: 'read' };
+    }
+    const ledger = await quantityLedger.read({ store, warehouseId });
+    const missing = rows.filter((row) => isNil(ledger[row.productId])).map((row) => row.productId);
+    const read = missing.length > 0
+        ? await readQuantities({ auth, token, store, warehouseId, productIds: missing })
+        : new Map<string, number | null>();
+    const quantities = new Map<string, number | null>();
+    for (const row of rows) {
+        quantities.set(row.productId, read.has(row.productId) ? read.get(row.productId) ?? null : ledger[row.productId]);
+    }
+    return { quantities, source: missing.length === rows.length ? 'read' : 'ledger' };
 }
 
 function plan({ row, current }: { row: InventoryRow; current: number | null | undefined }): PlannedAdjustment {
@@ -147,9 +206,13 @@ export type VerifyResult = {
     mismatches: { productId: string; expected: number; actual: number | null }[];
 };
 
+export type QuantitySource = 'read' | 'ledger';
+
 export type SetOutcome = {
     warehouseId: number;
+    source: QuantitySource;
     requested: number;
+    zeroedMissing: number;
     changed: number;
     unchanged: number;
     failed: number;
@@ -167,10 +230,14 @@ type SetQuantitiesParams = {
     rows: InventoryRow[];
     reason: string;
     verify: boolean;
+    useLedger: boolean;
+    zeroMissing: boolean;
     onProgress?: (progress: { done: number; total: number }) => void;
 };
 
-type ReadQuantitiesParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'onProgress'> & { productIds: string[] };
+type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress'>;
+
+type ReadQuantitiesParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { productIds: string[] };
 type ReadQuantityParams = Omit<ReadQuantitiesParams, 'productIds'> & { productId: string };
-type AdjustParams = Omit<SetQuantitiesParams, 'rows' | 'verify' | 'onProgress'> & { item: PlannedAdjustment };
-type VerifyParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'onProgress'> & { planned: PlannedAdjustment[] };
+type AdjustParams = Omit<SetQuantitiesParams, 'rows' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { item: PlannedAdjustment };
+type VerifyParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { planned: PlannedAdjustment[] };

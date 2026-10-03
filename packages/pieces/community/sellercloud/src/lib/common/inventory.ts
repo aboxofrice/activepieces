@@ -1,7 +1,33 @@
-import { HttpMethod } from '@activepieces/pieces-common';
+import { HttpError, HttpMethod } from '@activepieces/pieces-common';
+import { isNil, tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, sellercloudClient } from './client';
 
-async function submitImport({ auth, token, warehouse, rows, updateType, inventoryDate }: SubmitImportParams): Promise<SubmittedJob> {
+// SellerCloud permits one physical-inventory import in flight per account and answers
+// 500 "You are not allowed to import physical inventory because N jobs are already
+// submitted" otherwise. Several PDC warehouses therefore cannot import in parallel; wait
+// for the slot instead of failing the run.
+async function submitImport({ auth, token, warehouse, rows, updateType, inventoryDate, waitForSlotSeconds }: SubmitImportParams): Promise<SubmittedJob> {
+    const deadline = Date.now() + (waitForSlotSeconds ?? DEFAULT_SLOT_WAIT_S) * 1000;
+    for (;;) {
+        const { data, error } = await tryCatch(() => submitOnce({ auth, token, warehouse, rows, updateType, inventoryDate }));
+        if (!error) {
+            return data;
+        }
+        const blockingJob = blockedByJob({ error });
+        if (isNil(blockingJob) || Date.now() > deadline) {
+            throw error;
+        }
+        await waitForJob({ auth, token, jobId: blockingJob, timeoutSeconds: Math.max(1, Math.round((deadline - Date.now()) / 1000)) });
+    }
+}
+
+function blockedByJob({ error }: { error: Error }): number | null {
+    const body = error instanceof HttpError ? String(error.response.body ?? '') : '';
+    const match = /already submitted[\s\S]*?(\d+)/.exec(body);
+    return match ? Number(match[1]) : null;
+}
+
+async function submitOnce({ auth, token, warehouse, rows, updateType, inventoryDate }: SubmitOnceParams): Promise<SubmittedJob> {
     const csv = buildTemplateCsv({ warehouseName: warehouse.Name, rows, inventoryDate });
     const response = await sellercloudClient.request<{ ID: number; QueuedJobLink?: string; Message?: string }>({
         auth,
@@ -110,6 +136,7 @@ function statusName({ raw }: { raw: number | string | undefined }): string {
 
 const TENANT_TIME_ZONE = 'America/New_York';
 const CSV_FORMAT = 1;
+const DEFAULT_SLOT_WAIT_S = 1800;
 const POLL_INTERVAL_MS = 5000;
 const TEMPLATE_HEADER = 'ProductID,Warehouse,PhysicalInventoryQty,InventoryDate,LocationNotes';
 // The documented enum has no 2, so a dense array silently reads Completed (3) as Failed.
@@ -166,7 +193,7 @@ type SubmittedJob = {
     message: string | null;
 };
 
-type SubmitImportParams = {
+type SubmitOnceParams = {
     auth: SellercloudAuthProps;
     token?: string;
     warehouse: { ID: number; Name: string };
@@ -174,6 +201,8 @@ type SubmitImportParams = {
     updateType: UpdateType;
     inventoryDate: Date;
 };
+
+type SubmitImportParams = SubmitOnceParams & { waitForSlotSeconds?: number };
 
 type WaitParams = {
     auth: SellercloudAuthProps;
