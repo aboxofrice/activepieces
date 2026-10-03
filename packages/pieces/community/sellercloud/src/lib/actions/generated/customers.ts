@@ -37,6 +37,7 @@ const customersAddCustomersToGroup = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -99,6 +100,7 @@ const customersCreate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -129,6 +131,7 @@ const customersGet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -338,6 +341,7 @@ const customersGetAll = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -400,6 +404,7 @@ const customersUpdate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -457,6 +462,7 @@ const customersUpdateAddresses = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -500,6 +506,7 @@ const customersUpdateCustomColumns = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -606,6 +613,7 @@ const customersUpdateOrderOptions = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -660,6 +668,7 @@ const customersUpdateShippingPreferences = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,

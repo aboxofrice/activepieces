@@ -27,6 +27,7 @@ const diagnosticsServer = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,

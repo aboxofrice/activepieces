@@ -27,7 +27,7 @@ export const importPhysicalInventory = createAction({
         const props = context.propsValue;
         const rows = parseItems({ items: props.items });
         const auth = context.auth.props;
-        const token = await sellercloudClient.getToken({ auth });
+        const token = await sellercloudClient.getToken({ auth, store: context.store });
         return importRunner.runImport({
             auth,
             token,

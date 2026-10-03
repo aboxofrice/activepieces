@@ -35,6 +35,7 @@ const purchaseOrdersImportsGetPurchaseOrdersFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -73,6 +74,7 @@ const purchaseOrdersImportsGetVendorPricesFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -116,6 +118,7 @@ const purchaseOrdersImportsImportPurchaseOrders = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -157,6 +160,7 @@ const purchaseOrdersImportsImportVendorPrices = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

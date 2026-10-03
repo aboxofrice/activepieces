@@ -43,6 +43,7 @@ const inventoryAddItemsToPallet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -115,6 +116,7 @@ const inventoryAdjustPhysicalInventory = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -261,6 +263,7 @@ const inventoryCreateManualReserve = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -291,6 +294,7 @@ const inventoryCreatePallet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -353,6 +357,7 @@ const inventoryCreateSkuToSkuTransfer = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -384,6 +389,7 @@ const inventoryDelete = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.DELETE,
             path,
             queryParams,
@@ -418,6 +424,7 @@ const inventoryDeleteManualReserve = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -449,6 +456,7 @@ const inventoryDeleteV2 = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.DELETE,
             path,
             queryParams,
@@ -480,6 +488,7 @@ const inventoryGet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -627,6 +636,7 @@ const inventoryGetAll = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -668,6 +678,7 @@ const inventoryGetAllByView = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -699,6 +710,7 @@ const inventoryGetInventoryByProductId = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -735,6 +747,7 @@ const inventoryGetInventoryGet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -773,6 +786,7 @@ const inventoryGetManualReserves = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -831,6 +845,7 @@ const inventoryGetSerialNumbers = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -862,6 +877,7 @@ const inventoryGetSingleInventory = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -898,6 +914,7 @@ const inventoryGetWarehouses = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -971,6 +988,7 @@ const inventoryImportPhysicalInventory = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -1027,6 +1045,7 @@ const inventorySetPhysicalInventory = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -1089,6 +1108,7 @@ const inventoryTransferBinInventory = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -1158,6 +1178,7 @@ const inventoryUpdate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -1183,6 +1204,7 @@ const inventoryViews = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,

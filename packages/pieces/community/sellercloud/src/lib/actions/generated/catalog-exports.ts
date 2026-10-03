@@ -28,6 +28,7 @@ const catalogExportsGetCustomExportTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -59,6 +60,7 @@ const catalogExportsGetCustomExportsMetadata = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -84,6 +86,7 @@ const catalogExportsGetMappingProfileExportMetadata = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -109,6 +112,7 @@ const catalogExportsGetPluginExportMetadata = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -146,6 +150,7 @@ const catalogExportsPerformBasicExport = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -190,6 +195,7 @@ const catalogExportsPerformCustomExport = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -228,6 +234,7 @@ const catalogExportsPerformExportViaMappingProfile = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -266,6 +273,7 @@ const catalogExportsPerformExportViaPlugin = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

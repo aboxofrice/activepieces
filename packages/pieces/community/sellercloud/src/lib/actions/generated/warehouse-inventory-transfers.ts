@@ -40,6 +40,7 @@ const warehouseInventoryTransfersAddProducts = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -90,6 +91,7 @@ const warehouseInventoryTransfersCreate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -121,6 +123,7 @@ const warehouseInventoryTransfersGet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -180,6 +183,7 @@ const warehouseInventoryTransfersGetAll = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -221,6 +225,7 @@ const warehouseInventoryTransfersGetProducts = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -268,6 +273,7 @@ const warehouseInventoryTransfersReceiveShipment = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -298,6 +304,7 @@ const warehouseInventoryTransfersSetRequested = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -328,6 +335,7 @@ const warehouseInventoryTransfersSetShipped = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -371,6 +379,7 @@ const warehouseInventoryTransfersUploadDocument = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

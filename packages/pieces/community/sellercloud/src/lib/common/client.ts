@@ -5,13 +5,20 @@ import { tryCatch } from '@activepieces/shared';
 // actions must not log in once per request.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-async function getToken({ auth }: { auth: SellercloudAuthProps }): Promise<string> {
+// `store` is the flow's key-value store. The engine forks a process per sandbox, so the
+// module cache dies with the run; passing the store keeps one login alive across runs.
+async function getToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<string> {
     const cacheKey = `${apiBase({ auth })}|${auth.username}`;
     const cached = tokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.token;
     }
-    const response = await sendWithRetry<{ access_token: string }>({
+    const stored = store ? await readStoredToken({ store }) : null;
+    if (stored && stored.expiresAt > Date.now()) {
+        tokenCache.set(cacheKey, stored);
+        return stored.token;
+    }
+    const response = await sendWithRetry<CreateTokenResponse>({
         request: {
             method: HttpMethod.POST,
             url: `${apiBase({ auth })}/token`,
@@ -19,9 +26,24 @@ async function getToken({ auth }: { auth: SellercloudAuthProps }): Promise<strin
             body: { Username: auth.username, Password: auth.password },
         },
     });
-    const token = response.access_token;
-    tokenCache.set(cacheKey, { token, expiresAt: Date.now() + TOKEN_TTL_MS });
-    return token;
+    const entry = { token: response.access_token, expiresAt: expiryFrom({ response }) };
+    tokenCache.set(cacheKey, entry);
+    if (store) {
+        await store.put(TOKEN_STORE_KEY, entry);
+    }
+    return entry.token;
+}
+
+// SellerCloud reports expires_in (seconds). This is an optimisation only — a stale token
+// is recovered by the 401 retry in request(), so the arithmetic need not be exact.
+function expiryFrom({ response }: { response: CreateTokenResponse }): number {
+    const lifetimeMs = (response.expires_in ?? DEFAULT_TOKEN_LIFETIME_S) * 1000;
+    return Date.now() + Math.max(MIN_TOKEN_TTL_MS, lifetimeMs - TOKEN_RENEW_EARLY_MS);
+}
+
+async function readStoredToken({ store }: { store: TokenStore }): Promise<{ token: string; expiresAt: number } | null> {
+    const { data } = await tryCatch(() => store.get<{ token: string; expiresAt: number }>(TOKEN_STORE_KEY));
+    return data && typeof data.token === 'string' && typeof data.expiresAt === 'number' ? data : null;
 }
 
 // SellerCloud answers 409 {"Error":"Too many requests.","RateLimitResetTime":"..."} when
@@ -71,10 +93,11 @@ async function tryGetToken({ auth }: { auth: SellercloudAuthProps }): Promise<{ 
     return { error: error ? describeError({ error }) : null };
 }
 
-// Callers that make many requests (catalog paging, job polling) pass `token` so one run logs in once; tokens last an hour.
-async function request<T>({ auth, token, method, path, queryParams, body }: SellercloudRequest): Promise<T> {
-    const accessToken = token ?? await getToken({ auth });
-    const { data, error } = await tryCatch(() => sendWithRetry<T>({
+// Callers that make many requests (catalog paging, job polling) pass `token` so one run
+// logs in once. Expiry is handled by retrying a 401 with a fresh token rather than by
+// trusting the clock, so a cached token going stale mid-run is self-healing.
+async function request<T>({ auth, token, store, method, path, queryParams, body }: SellercloudRequest): Promise<T> {
+    const send = async ({ accessToken }: { accessToken: string }) => sendWithRetry<T>({
         request: {
             method,
             url: `${apiBase({ auth })}${path}`,
@@ -85,11 +108,34 @@ async function request<T>({ auth, token, method, path, queryParams, body }: Sell
             queryParams: compactQuery({ queryParams }),
             body,
         },
-    }));
-    if (error) {
-        throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error })}`);
+    });
+
+    const accessToken = token ?? await getToken({ auth, store });
+    const first = await tryCatch(() => send({ accessToken }));
+    if (!first.error) {
+        return first.data;
     }
-    return data;
+    if (!isUnauthorized({ error: first.error })) {
+        throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error: first.error })}`);
+    }
+    await invalidateToken({ auth, store });
+    const freshToken = await getToken({ auth, store });
+    const retry = await tryCatch(() => send({ accessToken: freshToken }));
+    if (retry.error) {
+        throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error: retry.error })}`);
+    }
+    return retry.data;
+}
+
+function isUnauthorized({ error }: { error: Error }): boolean {
+    return error instanceof HttpError && error.response.status === 401;
+}
+
+async function invalidateToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<void> {
+    tokenCache.delete(`${apiBase({ auth })}|${auth.username}`);
+    if (store) {
+        await tryCatch(() => store.put(TOKEN_STORE_KEY, null));
+    }
 }
 
 async function listWarehouses({ auth, token }: { auth: SellercloudAuthProps; token?: string }): Promise<SellercloudWarehouse[]> {
@@ -153,7 +199,10 @@ function describeError({ error }: { error: Error }): string {
 }
 
 const MAX_PAGE_SIZE = 500;
-const TOKEN_TTL_MS = 50 * 60 * 1000;
+const TOKEN_STORE_KEY = 'sellercloud_token';
+const DEFAULT_TOKEN_LIFETIME_S = 3600;
+const TOKEN_RENEW_EARLY_MS = 5 * 60 * 1000;
+const MIN_TOKEN_TTL_MS = 60 * 1000;
 const CATALOG_TTL_MS = 15 * 60 * 1000;
 const RATE_LIMITED_STATUS = 409;
 const TRANSIENT_STATUSES = [502, 503, 504];
@@ -165,6 +214,7 @@ const MAX_RATE_LIMIT_WAIT_MS = 120 * 1000;
 
 export const sellercloudClient = {
     getToken,
+    invalidateToken,
     tryGetToken,
     request,
     listWarehouses,
@@ -200,9 +250,20 @@ type FetchPagesParams<T> = {
     collected?: T[];
 };
 
+export type TokenStore = {
+    get: <T>(key: string) => Promise<T | null>;
+    put: (key: string, value: unknown) => Promise<unknown>;
+};
+
+type CreateTokenResponse = {
+    access_token: string;
+    expires_in?: number;
+};
+
 type SellercloudRequest = {
     auth: SellercloudAuthProps;
     token?: string;
+    store?: TokenStore;
     method: HttpMethod;
     path: string;
     queryParams?: Record<string, string | number | boolean | undefined | null>;

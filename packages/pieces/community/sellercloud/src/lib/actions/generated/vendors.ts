@@ -47,6 +47,7 @@ const vendorsAddVendorProduct = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -78,6 +79,7 @@ const vendorsGet = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -132,6 +134,7 @@ const vendorsGetAll = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -181,6 +184,7 @@ const vendorsGetVendorProducts = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -237,6 +241,7 @@ const vendorsUpdateVendorProduct = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -300,6 +305,7 @@ const vendorsUpdateVendorProductV2 = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,

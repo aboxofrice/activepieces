@@ -188,6 +188,7 @@ const catalogGetAll = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -229,6 +230,7 @@ const catalogGetAllByView = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -260,6 +262,7 @@ const catalogGetProductPrices = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -291,6 +294,7 @@ const catalogGetProductPricesV2 = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -335,6 +339,7 @@ const catalogGetProductTypes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -373,6 +378,7 @@ const catalogGetVariationDimensions = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -411,6 +417,7 @@ const catalogLoadVariation = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -451,6 +458,7 @@ const catalogUpdateAdvancedInfo = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -537,6 +545,7 @@ const catalogUpdateBasicInfo = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -583,6 +592,7 @@ const catalogUpdateProductPrices = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -625,6 +635,7 @@ const catalogUpdateProductPricesV2 = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.PUT,
             path,
             queryParams,
@@ -650,6 +661,7 @@ const catalogViews = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,

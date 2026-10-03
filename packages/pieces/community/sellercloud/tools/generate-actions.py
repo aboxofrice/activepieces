@@ -142,6 +142,7 @@ def render_action(tag, path, method, op, definitions, action_names):
     lines.append('        });')
     lines.append('        return sellercloudClient.request({')
     lines.append('            auth: context.auth.props,')
+    lines.append('            store: context.store,')
     lines.append(f'            method: HttpMethod.{method},')
     lines.append('            path,')
     lines.append('            queryParams,')

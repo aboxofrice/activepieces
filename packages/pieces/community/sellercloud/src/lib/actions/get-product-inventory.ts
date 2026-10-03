@@ -22,7 +22,7 @@ export const getProductInventory = createAction({
     async run(context) {
         const { productId, onlyNonZero } = context.propsValue;
         const auth = context.auth.props;
-        const token = await sellercloudClient.getToken({ auth });
+        const token = await sellercloudClient.getToken({ auth, store: context.store });
         const [rows, warehouses] = await Promise.all([
             sellercloudClient.request<WarehouseInventory[]>({
                 auth,

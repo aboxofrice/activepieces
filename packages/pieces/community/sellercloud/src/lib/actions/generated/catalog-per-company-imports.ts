@@ -22,6 +22,7 @@ const catalogPerCompanyImportsGetAvailablePerCompanyImportTypes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -115,6 +116,7 @@ const catalogPerCompanyImportsGetFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -220,6 +222,7 @@ const catalogPerCompanyImportsImportInfo = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

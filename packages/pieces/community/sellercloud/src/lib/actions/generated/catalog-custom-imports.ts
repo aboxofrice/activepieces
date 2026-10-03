@@ -27,6 +27,7 @@ const catalogCustomImportsDeleteTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.DELETE,
             path,
             queryParams,
@@ -68,6 +69,7 @@ const catalogCustomImportsDownloadTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -93,6 +95,7 @@ const catalogCustomImportsGetAllCustomTemplates = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -118,6 +121,7 @@ const catalogCustomImportsGetAvailableColumnsForExport = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -148,6 +152,7 @@ const catalogCustomImportsGetCustomTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -191,6 +196,7 @@ const catalogCustomImportsImportData = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -228,6 +234,7 @@ const catalogCustomImportsSaveTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

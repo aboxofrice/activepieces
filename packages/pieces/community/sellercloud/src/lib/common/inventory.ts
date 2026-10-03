@@ -13,7 +13,7 @@ async function submitImport({ auth, token, warehouse, rows, updateType, inventor
             Format: CSV_FORMAT,
             WarehouseID: warehouse.ID,
             UpdateType: updateType === 'FULL' ? 1 : 0,
-            InventoryDate: inventoryDate.toISOString(),
+            InventoryDate: localIsoDate({ date: inventoryDate }),
             MergeDefaultWarehouseInventoryIntoShadowParent: true,
             ...(auth.pinCode ? { PinCode: auth.pinCode } : {}),
         },
@@ -84,7 +84,21 @@ function csvCell(value: string): string {
 
 // Matches the template SellerCloud hands out, e.g. "9/1/2026 10:45:20 PM".
 function formatTemplateDate({ date }: { date: Date }): string {
-    return date.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: true }).replace(',', '');
+    return date.toLocaleString('en-US', { timeZone: TENANT_TIME_ZONE, hour12: true }).replace(',', '');
+}
+
+// SellerCloud reads InventoryDate as tenant-local time and rejects anything ahead of
+// "now" with 500 "Future date is not allowed.", so sending a UTC instant fails for any
+// tenant behind UTC. Send wall-clock time in the tenant's zone, unsuffixed.
+function localIsoDate({ date }: { date: Date }): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TENANT_TIME_ZONE,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+    }).formatToParts(date);
+    const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '00';
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
 function statusName({ raw }: { raw: number | string | undefined }): string {
@@ -94,13 +108,23 @@ function statusName({ raw }: { raw: number | string | undefined }): string {
     return raw ?? 'Unknown';
 }
 
+const TENANT_TIME_ZONE = 'America/New_York';
 const CSV_FORMAT = 1;
 const POLL_INTERVAL_MS = 5000;
 const TEMPLATE_HEADER = 'ProductID,Warehouse,PhysicalInventoryQty,InventoryDate,LocationNotes';
-const JOB_STATUSES = [
-    'Submitted', 'Processing', 'Completed', 'Failed', 'PartialSuccess', 'OnHold',
-    'Cancelled', 'Cancelled_Service_Restarted', 'Aborted_Too_Much_Time_Consumed', 'Cancelled_While_Running',
-];
+// The documented enum has no 2, so a dense array silently reads Completed (3) as Failed.
+const JOB_STATUSES: Record<number, string> = {
+    0: 'Submitted',
+    1: 'Processing',
+    3: 'Completed',
+    4: 'Failed',
+    5: 'PartialSuccess',
+    6: 'OnHold',
+    7: 'Cancelled',
+    8: 'Cancelled_Service_Restarted',
+    9: 'Aborted_Too_Much_Time_Consumed',
+    10: 'Cancelled_While_Running',
+};
 const TERMINAL_STATUSES = ['Completed', 'Failed', 'PartialSuccess', 'Cancelled', 'Cancelled_Service_Restarted', 'Aborted_Too_Much_Time_Consumed', 'Cancelled_While_Running'];
 
 export const inventoryImport = {

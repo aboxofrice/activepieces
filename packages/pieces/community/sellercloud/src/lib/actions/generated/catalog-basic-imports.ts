@@ -22,6 +22,7 @@ const catalogBasicImportsGetAvailableBasicImportTypes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -97,6 +98,7 @@ const catalogBasicImportsGetFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -180,6 +182,7 @@ const catalogBasicImportsImportInfo = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,

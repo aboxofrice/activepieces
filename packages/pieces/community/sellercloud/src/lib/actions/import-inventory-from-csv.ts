@@ -68,7 +68,7 @@ export const importInventoryFromCsv = createAction({
             throw new Error('"Only These Products" can\'t be combined with Full: a Full import would set every other product in the warehouse to 0.');
         }
         const auth = context.auth.props;
-        const token = await sellercloudClient.getToken({ auth });
+        const token = await sellercloudClient.getToken({ auth, store: context.store });
         const catalogIds = await sellercloudClient.listCatalogProductIds({ auth, token });
         const mapping = csvMapping.mapToCatalog({
             text: props.file.data.toString('utf8'),

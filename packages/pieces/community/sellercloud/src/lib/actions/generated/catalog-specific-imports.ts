@@ -35,6 +35,7 @@ const catalogSpecificImportsGetEbaySpecificsFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -73,6 +74,7 @@ const catalogSpecificImportsGetKitsFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -116,6 +118,7 @@ const catalogSpecificImportsGetNeweggBizAttributesFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -159,6 +162,7 @@ const catalogSpecificImportsGetNeweggComAttributesFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -197,6 +201,7 @@ const catalogSpecificImportsGetProductImages = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -235,6 +240,7 @@ const catalogSpecificImportsGetShadowsFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -273,6 +279,7 @@ const catalogSpecificImportsGetVariationImages = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -311,6 +318,7 @@ const catalogSpecificImportsGetVariationsFileTemplate = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -360,6 +368,7 @@ const catalogSpecificImportsGetWalmartMarketplaceAttributesFileTemplate = create
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.GET,
             path,
             queryParams,
@@ -400,6 +409,7 @@ const catalogSpecificImportsImportEbaySpecifics = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -443,6 +453,7 @@ const catalogSpecificImportsImportKits = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -482,6 +493,7 @@ const catalogSpecificImportsImportNeweggBizAttributes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -521,6 +533,7 @@ const catalogSpecificImportsImportNeweggComAttributes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -567,6 +580,7 @@ const catalogSpecificImportsImportProductImages = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -607,6 +621,7 @@ const catalogSpecificImportsImportShadows = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -648,6 +663,7 @@ const catalogSpecificImportsImportVariations = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -694,6 +710,7 @@ const catalogSpecificImportsImportVariationsImages = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
@@ -733,6 +750,7 @@ const catalogSpecificImportsImportWalmartMarketplaceAttributes = createAction({
         });
         return sellercloudClient.request({
             auth: context.auth.props,
+            store: context.store,
             method: HttpMethod.POST,
             path,
             queryParams,
