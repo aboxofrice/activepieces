@@ -9,13 +9,27 @@ import { SellercloudAuthProps, sellercloudClient } from './client';
 async function fetchWarehouseSnapshot({ auth, token, warehouseName, shadowSuffix }: FetchSnapshotParams): Promise<WarehouseSnapshot> {
     const base = auth.serverUrl.trim().replace(/\/+$/, '');
     const bearer = token ?? await sellercloudClient.getToken({ auth });
-    const response = await fetch(`${base}/api/Inventory/Import/DownloadInventoryTemplate?template=2&fileFormat=1`, {
-        headers: { Authorization: `Bearer ${bearer}` },
-    });
-    if (!response.ok || isNil(response.body)) {
-        throw new Error(`SellerCloud refused the inventory template: HTTP ${response.status}`);
+    const url = `${base}/api/Inventory/Import/DownloadInventoryTemplate?template=2&fileFormat=1`;
+    const started = Date.now();
+    const failures: string[] = [];
+
+    // Every run needs this, whatever its write mode, so one bad response used to cost a PDC
+    // its whole day - SellerCloud answered 504 once while generating the report and the run
+    // died with nothing written. Only a quick failure is retried: once the gateway has spent
+    // minutes timing out there is no budget left inside the flow timeout for another try.
+    for (let attempt = 1; attempt <= SNAPSHOT_ATTEMPTS; attempt++) {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
+        if (response.ok && !isNil(response.body)) {
+            return parseTemplate({ body: response.body, warehouseName, shadowSuffix });
+        }
+        await response.body?.cancel();
+        failures.push(`attempt ${attempt}: HTTP ${response.status}`);
+        if (attempt === SNAPSHOT_ATTEMPTS || Date.now() - started > SNAPSHOT_RETRY_BUDGET_MS) {
+            break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, SNAPSHOT_RETRY_DELAY_MS));
     }
-    return parseTemplate({ body: response.body, warehouseName, shadowSuffix });
+    throw new Error(`SellerCloud refused the inventory template (${failures.join(', ')})`);
 }
 
 // The payload is ~350 MB of base64 holding a row per product per warehouse, so it is decoded
@@ -91,6 +105,12 @@ function resolveShadows({ quantities, shadowSuffix }: { quantities: Map<string, 
 export const warehouseSnapshot = {
     fetchWarehouseSnapshot,
 };
+
+const SNAPSHOT_ATTEMPTS = 3;
+// Past this there is not enough of the 600s flow timeout left to download and parse ~350 MB,
+// so a further attempt would only fail later and more expensively.
+const SNAPSHOT_RETRY_BUDGET_MS = 240000;
+const SNAPSHOT_RETRY_DELAY_MS = 15000;
 
 export type WarehouseSnapshot = {
     quantities: Map<string, number>;
