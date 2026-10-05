@@ -146,16 +146,32 @@ async function listWarehouses({ auth, token }: { auth: SellercloudAuthProps; tok
 // API. Six PDC flows rebuilding the same list would spend most of the budget on it.
 const catalogCache = new Map<string, { ids: string[]; expiresAt: number }>();
 
-async function listCatalogProductIds({ auth, token }: { auth: SellercloudAuthProps; token?: string }): Promise<string[]> {
+// The engine forks a process per sandbox, so the module cache above dies with the run and
+// every flow run re-paid the ~53 pages. Keep it in the flow store too.
+async function listCatalogProductIds({ auth, token, store }: { auth: SellercloudAuthProps; token?: string; store?: TokenStore }): Promise<string[]> {
     const cacheKey = apiBase({ auth });
     const cached = catalogCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.ids;
     }
+    const stored = store ? await readStoredCatalog({ store }) : null;
+    if (stored && stored.expiresAt > Date.now()) {
+        catalogCache.set(cacheKey, stored);
+        return stored.ids;
+    }
     const products = await fetchAllPages<{ ID: string }>({ auth, token, path: '/Catalog' });
     const ids = products.map((product) => product.ID);
-    catalogCache.set(cacheKey, { ids, expiresAt: Date.now() + CATALOG_TTL_MS });
+    const entry = { ids, expiresAt: Date.now() + CATALOG_TTL_MS };
+    catalogCache.set(cacheKey, entry);
+    if (store) {
+        await store.put(CATALOG_STORE_KEY, entry);
+    }
     return ids;
+}
+
+async function readStoredCatalog({ store }: { store: TokenStore }): Promise<{ ids: string[]; expiresAt: number } | null> {
+    const { data } = await tryCatch(() => store.get<{ ids: string[]; expiresAt: number }>(CATALOG_STORE_KEY));
+    return data && Array.isArray(data.ids) && typeof data.expiresAt === 'number' ? data : null;
 }
 
 // SellerCloud silently caps pageSize (50 on /Catalog), so stop on the running total, not on pageNumber * pageSize.
@@ -203,7 +219,10 @@ const TOKEN_STORE_KEY = 'sellercloud_token';
 const DEFAULT_TOKEN_LIFETIME_S = 3600;
 const TOKEN_RENEW_EARLY_MS = 5 * 60 * 1000;
 const MIN_TOKEN_TTL_MS = 60 * 1000;
-const CATALOG_TTL_MS = 15 * 60 * 1000;
+// One PDC day runs five workers over several hours, so the list has to outlive a single
+// morning's ticks to be worth caching at all.
+const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+const CATALOG_STORE_KEY = 'sellercloud_catalog_ids';
 const RATE_LIMITED_STATUS = 409;
 const TRANSIENT_STATUSES = [502, 503, 504];
 const MAX_ATTEMPTS = 4;

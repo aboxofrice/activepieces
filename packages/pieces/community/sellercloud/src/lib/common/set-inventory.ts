@@ -3,18 +3,21 @@ import { isNil, tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, sellercloudClient, TokenStore } from './client';
 import { InventoryRow } from './inventory';
 import { quantityLedger } from './quantity-ledger';
+import { WarehouseSnapshot } from './warehouse-snapshot';
 
 // ImportPhysicalInventory ADDS to the existing quantity, so "set this warehouse to N"
 // has to be expressed as a delta. AdjustPhysicalInventory takes one, and unlike
 // SetPhysicalInventory it is not blocked for shadow SKUs.
-async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress }: SetQuantitiesParams): Promise<SetOutcome> {
-    if ((zeroMissing || useLedger) && !verify) {
+async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress, snapshot, shadowSuffix }: SetQuantitiesParams): Promise<SetOutcome> {
+    // A snapshot is a reading of SellerCloud's own state, so zeroing from it needs no
+    // verification; the ledger is a record of intent and still does.
+    if (((zeroMissing && isNil(snapshot)) || useLedger) && !verify) {
         throw new Error('Trusting or extending the last-written history requires "Verify After Writing": without it the history records intent rather than confirmed quantities.');
     }
     const targets = zeroMissing
-        ? await withMissingZeroed({ store, warehouseId, rows })
+        ? await withMissingZeroed({ store, warehouseId, rows, snapshot, shadowSuffix })
         : rows;
-    const current = await currentQuantities({ auth, token, store, warehouseId, rows: targets, useLedger });
+    const current = await currentQuantities({ auth, token, store, warehouseId, rows: targets, useLedger, snapshot });
     const planned = targets.map((row) => plan({ row, current: current.quantities.get(row.productId) }));
 
     const applied: AppliedAdjustment[] = [];
@@ -62,12 +65,32 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
     };
 }
 
+// The snapshot already carries this warehouse's quantities, so when one was taken there is
+// nothing left to read: it replaces a request per SKU (1,505 across the PDCs) with none.
 // With the ledger, a SKU this integration has written before needs no read at all; the
 // rest still do, so a first run or a newly added part stays correct.
 // A part that drops out of the file has not gone to zero on its own: replacing the
 // warehouse would zero it, but that import takes hours, so the ledger of what this flow
 // wrote last time stands in for it and those products are set to 0 explicitly.
-async function withMissingZeroed({ store, warehouseId, rows }: { store?: TokenStore; warehouseId: number; rows: InventoryRow[] }): Promise<InventoryRow[]> {
+// With a snapshot, "missing" is every product actually holding stock in this warehouse that
+// today's file does not mention — the same set a Full import would zero, but reached without
+// making SellerCloud enumerate all 241,029 product/warehouse records (~2 hours). Without one
+// it falls back to the ledger, which only knows what this integration wrote before.
+async function withMissingZeroed({ store, warehouseId, rows, snapshot, shadowSuffix }: WithMissingZeroedParams): Promise<InventoryRow[]> {
+    if (!isNil(snapshot)) {
+        // A shadow and its parent are one holding, so a part listed under either spelling
+        // counts as present; keying on the parent stops the file's shadow row from leaving
+        // the parent to be zeroed.
+        const holding = (productId: string) => holdingKey({ productId, shadowSuffix });
+        const present = new Set(rows.map((row) => holding(row.productId)));
+        const missing: InventoryRow[] = [];
+        for (const [productId, quantity] of snapshot.quantities) {
+            if (quantity !== 0 && !present.has(holding(productId))) {
+                missing.push({ productId, quantity: 0 });
+            }
+        }
+        return [...rows, ...missing];
+    }
     if (isNil(store)) {
         return rows;
     }
@@ -79,7 +102,22 @@ async function withMissingZeroed({ store, warehouseId, rows }: { store?: TokenSt
     return [...rows, ...missing];
 }
 
-async function currentQuantities({ auth, token, store, warehouseId, rows, useLedger }: CurrentQuantitiesParams): Promise<{ quantities: Map<string, number | null>; source: QuantitySource }> {
+function holdingKey({ productId, shadowSuffix }: { productId: string; shadowSuffix?: string }): string {
+    const suffix = shadowSuffix?.trim();
+    return !isNil(suffix) && suffix.length > 0 && productId.endsWith(suffix) && productId.length > suffix.length
+        ? productId.slice(0, -suffix.length)
+        : productId;
+}
+
+async function currentQuantities({ auth, token, store, warehouseId, rows, useLedger, snapshot }: CurrentQuantitiesParams): Promise<{ quantities: Map<string, number | null>; source: QuantitySource }> {
+    if (!isNil(snapshot)) {
+        const quantities = new Map<string, number | null>();
+        for (const row of rows) {
+            const quantity = snapshot.quantities.get(row.productId);
+            quantities.set(row.productId, quantity ?? null);
+        }
+        return { quantities, source: 'snapshot' };
+    }
     if (!useLedger || isNil(store)) {
         return { quantities: await readQuantities({ auth, token, store, warehouseId, productIds: rows.map((row) => row.productId) }), source: 'read' };
     }
@@ -156,7 +194,10 @@ async function adjust({ auth, token, store, warehouseId, item, reason }: AdjustP
 // Adjustments land ~30-60s later, so a read taken straight after a write returns the old
 // value. Acting on one double-applies; wait for the number to stop moving instead.
 async function verifyQuantities({ auth, token, store, warehouseId, planned }: VerifyParams): Promise<VerifyResult> {
-    const expected = planned.filter((item) => isNil(item.error));
+    // A SKU whose delta was 0 was not written, so there is nothing to confirm; including
+    // them made the first poll re-read the whole batch, which on a 466-SKU warehouse is
+    // ~320 wasted calls against an hourly request budget.
+    const expected = planned.filter((item) => isNil(item.error) && item.delta !== 0);
     const deadline = Date.now() + VERIFY_TIMEOUT_MS;
     const observed = new Map<string, number | null>();
     // Re-reading every SKU each round is the bulk of a large batch's cost, so each round
@@ -206,7 +247,7 @@ export type VerifyResult = {
     mismatches: { productId: string; expected: number; actual: number | null }[];
 };
 
-export type QuantitySource = 'read' | 'ledger';
+export type QuantitySource = 'read' | 'ledger' | 'snapshot';
 
 export type SetOutcome = {
     warehouseId: number;
@@ -233,6 +274,16 @@ type SetQuantitiesParams = {
     useLedger: boolean;
     zeroMissing: boolean;
     onProgress?: (progress: { done: number; total: number }) => void;
+    snapshot?: WarehouseSnapshot;
+    shadowSuffix?: string;
+};
+
+type WithMissingZeroedParams = {
+    store?: TokenStore;
+    warehouseId: number;
+    rows: InventoryRow[];
+    snapshot?: WarehouseSnapshot;
+    shadowSuffix?: string;
 };
 
 type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress'>;

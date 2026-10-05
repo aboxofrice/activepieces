@@ -1,8 +1,9 @@
 import { SellercloudAuthProps, TokenStore, sellercloudClient } from './client';
 import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
+import { WarehouseSnapshot } from './warehouse-snapshot';
 
-async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
         return { warehouse, submitted: false, job: null };
@@ -19,6 +20,8 @@ async function runImport({ auth, token, store, warehouseId, rows, inventoryDate,
             verify: verifyAfterWrite ?? true,
             useLedger: trustLastWritten ?? false,
             zeroMissing: zeroMissing ?? false,
+            snapshot,
+            shadowSuffix,
         });
         return { warehouse, submitted: true, job: null, set };
     }
@@ -61,6 +64,8 @@ export type ImportOutcome = {
 export type WriteMode = 'REPLACE_WAREHOUSE' | 'SET_LISTED' | 'ADD';
 
 type RunImportParams = {
+    snapshot?: WarehouseSnapshot;
+    shadowSuffix?: string;
     auth: SellercloudAuthProps;
     token: string;
     store?: TokenStore;
