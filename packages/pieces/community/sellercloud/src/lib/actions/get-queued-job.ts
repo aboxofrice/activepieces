@@ -1,3 +1,4 @@
+import { sellercloudAuthProps } from '../auth';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { sellercloudAuth } from '../auth';
 import { inventoryImport } from '../common/inventory';
@@ -25,7 +26,7 @@ export const getQueuedJob = createAction({
     },
     async run(context) {
         const { jobId, wait, timeoutSeconds } = context.propsValue;
-        const auth = context.auth.props;
+        const auth = sellercloudAuthProps(context.auth);
         if (wait) {
             return inventoryImport.waitForJob({ auth, jobId, timeoutSeconds: timeoutSeconds ?? 300 });
         }

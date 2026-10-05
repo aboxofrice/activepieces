@@ -1,3 +1,4 @@
+import { sellercloudAuthProps } from '../auth';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { sellercloudAuth } from '../auth';
 import { sellercloudClient } from '../common/client';
@@ -30,7 +31,7 @@ export const importPhysicalInventory = createAction({
     async run(context) {
         const props = context.propsValue;
         const rows = parseItems({ items: props.items });
-        const auth = context.auth.props;
+        const auth = sellercloudAuthProps(context.auth);
         const token = await sellercloudClient.getToken({ auth, store: context.store });
         return importRunner.runImport({
             auth,

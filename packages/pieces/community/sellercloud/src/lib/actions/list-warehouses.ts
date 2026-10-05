@@ -1,5 +1,5 @@
 import { createAction } from '@activepieces/pieces-framework';
-import { sellercloudAuth } from '../auth';
+import { sellercloudAuth, sellercloudAuthProps } from '../auth';
 import { sellercloudClient } from '../common/client';
 
 export const listWarehouses = createAction({
@@ -9,7 +9,7 @@ export const listWarehouses = createAction({
     description: 'List all warehouses with their IDs.',
     props: {},
     async run(context) {
-        const warehouses = await sellercloudClient.listWarehouses({ auth: context.auth.props });
+        const warehouses = await sellercloudClient.listWarehouses({ auth: sellercloudAuthProps(context.auth) });
         return {
             total: warehouses.length,
             warehouses: warehouses.map((w) => ({

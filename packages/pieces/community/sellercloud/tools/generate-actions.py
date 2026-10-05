@@ -141,7 +141,9 @@ def render_action(tag, path, method, op, definitions, action_names):
     lines.append('            propsValue: context.propsValue,')
     lines.append('        });')
     lines.append('        return sellercloudClient.request({')
-    lines.append('            auth: context.auth.props,')
+    # Engines below context V1 unwrap CustomAuth to its props, V1+ pass the whole connection
+    # value; sellercloudAuthProps accepts either, so the action works on both.
+    lines.append('            auth: sellercloudAuthProps(context.auth),')
     lines.append('            store: context.store,')
     lines.append(f'            method: HttpMethod.{method},')
     lines.append('            path,')

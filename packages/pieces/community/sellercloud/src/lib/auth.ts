@@ -1,4 +1,5 @@
 import { PieceAuth, Property } from '@activepieces/pieces-framework';
+import { SellercloudAuthProps } from './common/client';
 import { sellercloudClient } from './common/client';
 
 export const sellercloudAuth = PieceAuth.CustomAuth({
@@ -36,3 +37,15 @@ export const sellercloudAuth = PieceAuth.CustomAuth({
         return { valid: true };
     },
 });
+
+// Engines below context V1 unwrap a CustomAuth connection to its props before handing it to
+// the action, so `context.auth` is the props object and `context.auth.props` is undefined;
+// from V1 the whole connection value is passed and `.props` is where the credentials live.
+// A piece published without the framework as a dependency reports no context version and so
+// gets the V0 shape, which is why every action failed with "Cannot read properties of
+// undefined (reading 'serverUrl')". Accept either shape rather than betting on one.
+export function sellercloudAuthProps(auth: SellercloudAuthValue): SellercloudAuthProps {
+    return 'props' in auth ? auth.props : auth;
+}
+
+export type SellercloudAuthValue = SellercloudAuthProps | { props: SellercloudAuthProps };

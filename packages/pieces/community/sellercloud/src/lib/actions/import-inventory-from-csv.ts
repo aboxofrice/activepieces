@@ -1,9 +1,11 @@
+import { sellercloudAuthProps } from '../auth';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { sellercloudAuth } from '../auth';
 import { sellercloudClient } from '../common/client';
 import { csvMapping } from '../common/csv-mapping';
 import { sellercloudProps } from '../common/props';
 import { WriteMode, importRunner } from '../common/run-import';
+import { warehouseSnapshot } from '../common/warehouse-snapshot';
 
 export const importInventoryFromCsv = createAction({
     auth: sellercloudAuth,
@@ -71,9 +73,19 @@ export const importInventoryFromCsv = createAction({
         if (writeMode === 'REPLACE_WAREHOUSE' && onlyProductIds.length > 0) {
             throw new Error('"Only These Products" can\'t be combined with replacing the warehouse: every product outside the subset would be set to 0. Use "Set only these products" instead.');
         }
-        const auth = context.auth.props;
+        const auth = sellercloudAuthProps(context.auth);
         const token = await sellercloudClient.getToken({ auth, store: context.store });
-        const catalogIds = await sellercloudClient.listCatalogProductIds({ auth, token });
+        const warehouse = await importRunner.findWarehouse({ auth, token, warehouseId: props.warehouse });
+        // `/Catalog` lists a fraction of the tenant's products, so matching against it dropped
+        // most of the parts that exist. The warehouse snapshot carries the real universe and
+        // this warehouse's current quantities in a single request.
+        const snapshot = await warehouseSnapshot.fetchWarehouseSnapshot({
+            auth,
+            token,
+            warehouseName: warehouse.Name,
+            shadowSuffix: (props.skuSuffix ?? '').trim() || undefined,
+        });
+        const catalogIds = snapshot.productIds;
         const mapping = csvMapping.mapToCatalog({
             text: props.file.data.toString('utf8'),
             partNumberColumn: props.partNumberColumn,
@@ -98,7 +110,6 @@ export const importInventoryFromCsv = createAction({
             writeMode,
         };
         if (props.dryRun) {
-            const warehouse = await importRunner.findWarehouse({ auth, token, warehouseId: props.warehouse });
             return { ...summary, dryRun: true, warehouse, preview: mapping.rows.slice(0, 50) };
         }
         const outcome = await importRunner.runImport({
@@ -115,6 +126,8 @@ export const importInventoryFromCsv = createAction({
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),
             waitForCompletion: props.waitForCompletion ?? true,
             timeoutSeconds: props.timeoutSeconds ?? 300,
+            snapshot,
+            shadowSuffix: (props.skuSuffix ?? '').trim() || undefined,
         });
         return { ...summary, dryRun: false, ...outcome };
     },

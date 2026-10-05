@@ -1,3 +1,4 @@
+import { sellercloudAuthProps } from '../auth';
 import { HttpMethod } from '@activepieces/pieces-common';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { sellercloudAuth } from '../auth';
@@ -21,7 +22,7 @@ export const getProductInventory = createAction({
     },
     async run(context) {
         const { productId, onlyNonZero } = context.propsValue;
-        const auth = context.auth.props;
+        const auth = sellercloudAuthProps(context.auth);
         const token = await sellercloudClient.getToken({ auth, store: context.store });
         const [rows, warehouses] = await Promise.all([
             sellercloudClient.request<WarehouseInventory[]>({
