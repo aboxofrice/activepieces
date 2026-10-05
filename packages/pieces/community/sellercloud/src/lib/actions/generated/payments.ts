@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const paymentsReceiveCheck = createAction({
     auth: sellercloudAuth,
     name: 'payments_receive_check',
-    displayName: 'Payments: Receiving payment via check',
+    displayName: 'Payments: Receiving Payment via Check',
     description: 'Receiving payment via check. PUT /api/Orders/{orderID}/ReceiveCheck',
     props: {
         orderID: Property.Number({
@@ -52,7 +52,7 @@ const paymentsReceiveCheck = createAction({
 const paymentsReceiveManualPayment = createAction({
     auth: sellercloudAuth,
     name: 'payments_receive_manual_payment',
-    displayName: 'Payments: Receive payment manually',
+    displayName: 'Payments: Receive Payment Manually',
     description: 'Receive payment manually. PUT /api/Orders/{orderID}/ReceiveManualPayment',
     props: {
         orderID: Property.Number({

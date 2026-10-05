@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const inventoryImportDownloadInventoryTemplate = createAction({
     auth: sellercloudAuth,
     name: 'inventory_import_download_inventory_template',
-    displayName: 'InventoryImport: Download Invenotry Template',
+    displayName: 'Inventory Import: Download Invenotry Template',
     description: 'Download Invenotry Template. GET /api/Inventory/Import/DownloadInventoryTemplate',
     props: {
         template: Property.StaticDropdown({
@@ -60,7 +60,7 @@ const inventoryImportDownloadInventoryTemplate = createAction({
 const inventoryImportUploadInventoryTemplate = createAction({
     auth: sellercloudAuth,
     name: 'inventory_import_upload_inventory_template',
-    displayName: 'InventoryImport: Upload Inventory Template',
+    displayName: 'Inventory Import: Upload Inventory Template',
     description: 'POST /api/Inventory/Import/InventoryTemplate/{updateType}',
     props: {
         updateType: Property.StaticDropdown({

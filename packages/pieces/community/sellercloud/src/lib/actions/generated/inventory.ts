@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const inventoryAddItemsToPallet = createAction({
     auth: sellercloudAuth,
     name: 'inventory_add_items_to_pallet',
-    displayName: 'Inventory: Add/update items to existing pallet',
+    displayName: 'Inventory: Add/update Items to Existing Pallet',
     description: 'Add/update items to existing pallet. POST /api/Inventory/Pallets/{palletID}/Items',
     props: {
         palletID: Property.Number({
@@ -55,7 +55,7 @@ const inventoryAddItemsToPallet = createAction({
 const inventoryAdjustPhysicalInventory = createAction({
     auth: sellercloudAuth,
     name: 'inventory_adjust_physical_inventory',
-    displayName: 'Inventory: Adjust physical inventory',
+    displayName: 'Inventory: Adjust Physical Inventory',
     description: 'Adjust physical inventory. PUT /api/Inventory/AdjustPhysicalInventory',
     props: {
         warehouseID: Property.Number({
@@ -128,7 +128,7 @@ const inventoryAdjustPhysicalInventory = createAction({
 const inventoryCreateManualReserve = createAction({
     auth: sellercloudAuth,
     name: 'inventory_create_manual_reserve',
-    displayName: 'Inventory: Create manual reserve for a product',
+    displayName: 'Inventory: Create Manual Reserve for a Product',
     description: 'Create manual reserve for a product. POST /api/Inventory/ManualReserves/Create',
     props: {
         productId: Property.ShortText({
@@ -275,7 +275,7 @@ const inventoryCreateManualReserve = createAction({
 const inventoryCreatePallet = createAction({
     auth: sellercloudAuth,
     name: 'inventory_create_pallet',
-    displayName: 'Inventory: Create pallet',
+    displayName: 'Inventory: Create Pallet',
     description: 'Create pallet. POST /api/Inventory/Pallets',
     props: {
         palletReferenceNumber: Property.ShortText({
@@ -306,7 +306,7 @@ const inventoryCreatePallet = createAction({
 const inventoryCreateSkuToSkuTransfer = createAction({
     auth: sellercloudAuth,
     name: 'inventory_create_sku_to_sku_transfer',
-    displayName: 'Inventory: Create new sku to sku transfer',
+    displayName: 'Inventory: Create New SKU to SKU Transfer',
     description: 'Create new sku to sku transfer. POST /api/Inventory/SkuToSkuTransfers',
     props: {
         fromWarehouseID: Property.Number({
@@ -369,7 +369,7 @@ const inventoryCreateSkuToSkuTransfer = createAction({
 const inventoryDelete = createAction({
     auth: sellercloudAuth,
     name: 'inventory_delete',
-    displayName: 'Inventory: Delete existing inventory [obsolete]',
+    displayName: 'Inventory: Delete Existing Inventory [obsolete]',
     description: 'Delete existing inventory [obsolete]. DELETE /api/Inventory/{id}',
     props: {
         id: Property.ShortText({
@@ -401,7 +401,7 @@ const inventoryDelete = createAction({
 const inventoryDeleteManualReserve = createAction({
     auth: sellercloudAuth,
     name: 'inventory_delete_manual_reserve',
-    displayName: 'Inventory: Delete existing product manual reserve',
+    displayName: 'Inventory: Delete Existing Product Manual Reserve',
     description: 'Delete existing product manual reserve. POST /api/Inventory/ManualReserves/Delete',
     props: {
         productId: Property.ShortText({
@@ -436,7 +436,7 @@ const inventoryDeleteManualReserve = createAction({
 const inventoryDeleteV2 = createAction({
     auth: sellercloudAuth,
     name: 'inventory_delete_v2',
-    displayName: 'Inventory: Delete existing inventory',
+    displayName: 'Inventory: Delete Existing Inventory',
     description: 'Delete existing inventory. DELETE /api/Inventory',
     props: {
         productID: Property.ShortText({
@@ -468,7 +468,7 @@ const inventoryDeleteV2 = createAction({
 const inventoryGet = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get',
-    displayName: 'Inventory: Get metadata of existing inventory [obsolete]',
+    displayName: 'Inventory: Get Metadata of Existing Inventory [obsolete]',
     description: 'Get metadata of existing inventory [obsolete]. GET /api/Inventory/{id}',
     props: {
         id: Property.ShortText({
@@ -500,7 +500,7 @@ const inventoryGet = createAction({
 const inventoryGetAll = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_all',
-    displayName: 'Inventory: Get metadata for existing inventories',
+    displayName: 'Inventory: Get Metadata for Existing Inventories',
     description: 'Get metadata for existing inventories. GET /api/Inventory',
     props: {
         inventoryID: Property.ShortText({
@@ -648,7 +648,7 @@ const inventoryGetAll = createAction({
 const inventoryGetAllByView = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_all_by_view',
-    displayName: 'Inventory: Get inventory by view',
+    displayName: 'Inventory: Get Inventory by View',
     description: 'Get inventory by view. GET /api/Inventory/GetAllByView',
     props: {
         viewID: Property.Number({
@@ -690,7 +690,7 @@ const inventoryGetAllByView = createAction({
 const inventoryGetInventoryByProductId = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_inventory_by_product_id',
-    displayName: 'Inventory: Get inventory information for all warehouses [obsolete]',
+    displayName: 'Inventory: Get Inventory Information for All Warehouses [obsolete]',
     description: 'Get inventory information for all warehouses [obsolete]. GET /api/Inventory/{productID}/Warehouses',
     props: {
         productID: Property.ShortText({
@@ -722,7 +722,7 @@ const inventoryGetInventoryByProductId = createAction({
 const inventoryGetInventoryGet = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_inventory_get',
-    displayName: 'Inventory: Get warehouses inventory information',
+    displayName: 'Inventory: Get Warehouses Inventory Information',
     description: 'Get warehouses inventory information. GET /api/Inventory/Warehouses',
     props: {
         productID: Property.ShortText({
@@ -759,7 +759,7 @@ const inventoryGetInventoryGet = createAction({
 const inventoryGetManualReserves = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_manual_reserves',
-    displayName: 'Inventory: Get product manual reserves',
+    displayName: 'Inventory: Get Product Manual Reserves',
     description: 'Get product manual reserves. POST /api/Inventory/ManualReserves/Get',
     props: {
         productId: Property.ShortText({
@@ -857,7 +857,7 @@ const inventoryGetSerialNumbers = createAction({
 const inventoryGetSingleInventory = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_single_inventory',
-    displayName: 'Inventory: Get metadata of existing inventory',
+    displayName: 'Inventory: Get Metadata of Existing Inventory',
     description: 'Get metadata of existing inventory. GET /api/Inventory/Details',
     props: {
         productID: Property.ShortText({
@@ -889,7 +889,7 @@ const inventoryGetSingleInventory = createAction({
 const inventoryGetWarehouses = createAction({
     auth: sellercloudAuth,
     name: 'inventory_get_warehouses',
-    displayName: 'Inventory: Get inventory warehouse related information [obsolete]',
+    displayName: 'Inventory: Get Inventory Warehouse Related Information [obsolete]',
     description: 'Get inventory warehouse related information [obsolete]. GET /api/Inventory/{productID}/Warehouses/{warehouseID}',
     props: {
         productID: Property.ShortText({
@@ -926,7 +926,7 @@ const inventoryGetWarehouses = createAction({
 const inventoryImportPhysicalInventory = createAction({
     auth: sellercloudAuth,
     name: 'inventory_import_physical_inventory',
-    displayName: 'Inventory: Import physical inventory',
+    displayName: 'Inventory: Import Physical Inventory',
     description: 'Import physical inventory. PUT /api/Inventory/ImportPhysicalInventory',
     props: {
         updateType: Property.StaticDropdown({
@@ -1000,7 +1000,7 @@ const inventoryImportPhysicalInventory = createAction({
 const inventorySetPhysicalInventory = createAction({
     auth: sellercloudAuth,
     name: 'inventory_set_physical_inventory',
-    displayName: 'Inventory: Set physical inventory',
+    displayName: 'Inventory: Set Physical Inventory',
     description: 'Set physical inventory. PUT /api/Inventory/SetPhysicalInventory',
     props: {
         warehouseID: Property.Number({
@@ -1057,7 +1057,7 @@ const inventorySetPhysicalInventory = createAction({
 const inventoryTransferBinInventory = createAction({
     auth: sellercloudAuth,
     name: 'inventory_transfer_bin_inventory',
-    displayName: 'Inventory: Transfer inventory between bins by bin names',
+    displayName: 'Inventory: Transfer Inventory Between Bins by Bin Names',
     description: 'Transfer inventory between bins by bin names. POST /api/Inventory/Transfers/BinToBin',
     props: {
         binNameOriginal: Property.ShortText({
@@ -1120,7 +1120,7 @@ const inventoryTransferBinInventory = createAction({
 const inventoryUpdate = createAction({
     auth: sellercloudAuth,
     name: 'inventory_update',
-    displayName: 'Inventory: Update inventory metadata',
+    displayName: 'Inventory: Update Inventory Metadata',
     description: 'Update inventory metadata. PUT /api/Inventory',
     props: {
         body: Property.Json({
@@ -1190,7 +1190,7 @@ const inventoryUpdate = createAction({
 const inventoryViews = createAction({
     auth: sellercloudAuth,
     name: 'inventory_views',
-    displayName: 'Inventory: Get inventory saved views',
+    displayName: 'Inventory: Get Inventory Saved Views',
     description: 'Get inventory saved views. GET /api/Inventory/Views',
     props: {},
     async run(context) {

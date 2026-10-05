@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const orderCustomColumnsGetCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'order_custom_columns_get_custom_columns',
-    displayName: 'Orders: Get custom columns for specific order',
+    displayName: 'Orders: Get Custom Columns for Specific Order',
     description: 'Get custom columns for specific order. GET /api/Orders/{orderID}/CustomColumns',
     props: {
         orderID: Property.Number({
@@ -40,7 +40,7 @@ const orderCustomColumnsGetCustomColumns = createAction({
 const orderCustomColumnsUpdateCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'order_custom_columns_update_custom_columns',
-    displayName: 'Orders: Update single custom column',
+    displayName: 'Orders: Update Single Custom Column',
     description: 'Update single custom column. PUT /api/Orders/{orderID}/CustomColumns',
     props: {
         orderID: Property.Number({
@@ -80,7 +80,7 @@ const orderCustomColumnsUpdateCustomColumns = createAction({
 const orderCustomColumnsUpdateMultipleCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'order_custom_columns_update_multiple_custom_columns',
-    displayName: 'Orders: Update multiple custom columns',
+    displayName: 'Orders: Update Multiple Custom Columns',
     description: 'Update multiple custom columns. PUT /api/Orders/{orderID}/CustomColumns/Multiple',
     props: {
         orderID: Property.Number({
@@ -122,7 +122,7 @@ const orderCustomColumnsUpdateMultipleCustomColumns = createAction({
 const ordersAddNote = createAction({
     auth: sellercloudAuth,
     name: 'orders_add_note',
-    displayName: 'Orders: Adding note to existing order',
+    displayName: 'Orders: Adding Note to Existing Order',
     description: 'Adding note to existing order. POST /api/Orders/{orderID}/Notes',
     props: {
         orderID: Property.Number({
@@ -174,7 +174,7 @@ const ordersAddNote = createAction({
 const ordersAddOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'orders_add_order_items',
-    displayName: 'Orders: Add items to exisiting order',
+    displayName: 'Orders: Add Items to Exisiting Order',
     description: 'Add items to exisiting order. POST /api/Orders/{orderID}/items',
     props: {
         orderID: Property.Number({
@@ -226,7 +226,7 @@ const ordersAddOrderItems = createAction({
 const ordersCheckSplittedStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_check_splitted_status',
-    displayName: 'Orders: Check if order is splitted parrent or child and related data',
+    displayName: 'Orders: Check If Order Is Splitted Parrent or Child and Related Data',
     description: 'Check if order is splitted parrent or child and related data. GET /api/Orders/CheckSplittedStatus',
     props: {
         orderID: Property.Number({
@@ -258,7 +258,7 @@ const ordersCheckSplittedStatus = createAction({
 const ordersCreate = createAction({
     auth: sellercloudAuth,
     name: 'orders_create',
-    displayName: 'Orders: Create a new sales order',
+    displayName: 'Orders: Create a New Sales Order',
     description: 'Create a new sales order. POST /api/Orders',
     props: {
         body: Property.Json({
@@ -467,7 +467,7 @@ const ordersCreateReplacementOrder = createAction({
 const ordersDelete = createAction({
     auth: sellercloudAuth,
     name: 'orders_delete',
-    displayName: 'Orders: Delete existing order',
+    displayName: 'Orders: Delete Existing Order',
     description: 'Delete existing order. DELETE /api/Orders/{id}',
     props: {
         id: Property.Number({
@@ -499,7 +499,7 @@ const ordersDelete = createAction({
 const ordersDeleteOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'orders_delete_order_items',
-    displayName: 'Orders: Delete items from exisiting order',
+    displayName: 'Orders: Delete Items from Exisiting Order',
     description: 'Delete items from exisiting order. DELETE /api/Orders/{orderID}/items',
     props: {
         orderID: Property.Number({
@@ -539,7 +539,7 @@ const ordersDeleteOrderItems = createAction({
 const ordersDeleteSerialNumber = createAction({
     auth: sellercloudAuth,
     name: 'orders_delete_serial_number',
-    displayName: 'Orders: Delete serial number for product',
+    displayName: 'Orders: Delete Serial Number for Product',
     description: 'Delete serial number for product. DELETE /api/Orders/Serials',
     props: {
         orderID: Property.Number({
@@ -578,7 +578,7 @@ const ordersDeleteSerialNumber = createAction({
 const ordersDownloadDocument = createAction({
     auth: sellercloudAuth,
     name: 'orders_download_document',
-    displayName: 'Orders: Download document',
+    displayName: 'Orders: Download Document',
     description: 'Download document. GET /api/Orders/{id}/Documents/{documentID}',
     props: {
         id: Property.Number({
@@ -615,7 +615,7 @@ const ordersDownloadDocument = createAction({
 const ordersGenerateWayToPayLink = createAction({
     auth: sellercloudAuth,
     name: 'orders_generate_way_to_pay_link',
-    displayName: 'Orders: Generate WayToPay link for an existing order',
+    displayName: 'Orders: Generate WayToPay Link for an Existing Order',
     description: 'Generate WayToPay link for an existing order. GET /api/Orders/WayToPayLink',
     props: {
         id: Property.Number({
@@ -647,7 +647,7 @@ const ordersGenerateWayToPayLink = createAction({
 const ordersGet = createAction({
     auth: sellercloudAuth,
     name: 'orders_get',
-    displayName: 'Orders: Get metadata of existing sales order',
+    displayName: 'Orders: Get Metadata of Existing Sales Order',
     description: 'Get metadata of existing sales order. GET /api/Orders/{id}',
     props: {
         id: Property.Number({
@@ -679,7 +679,7 @@ const ordersGet = createAction({
 const ordersGetAll = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_all',
-    displayName: 'Orders: Get metadata for list of sales orders',
+    displayName: 'Orders: Get Metadata for List of Sales Orders',
     description: 'Get metadata for list of sales orders. GET /api/Orders',
     props: {
         orderIDs: Property.Array({
@@ -1194,7 +1194,7 @@ const ordersGetAll = createAction({
 const ordersGetAllByView = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_all_by_view',
-    displayName: 'Orders: Get orders by view',
+    displayName: 'Orders: Get Orders by View',
     description: 'Get orders by view. GET /api/Orders/GetAllByView',
     props: {
         viewID: Property.Number({
@@ -1236,7 +1236,7 @@ const ordersGetAllByView = createAction({
 const ordersGetCustomColumnsGet = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_custom_columns_get',
-    displayName: 'Orders: Get custom columns for specific order',
+    displayName: 'Orders: Get Custom Columns for Specific Order',
     description: 'Get custom columns for specific order. GET /api/Orders/CustomColumns',
     props: {
         id: Property.Number({
@@ -1268,7 +1268,7 @@ const ordersGetCustomColumnsGet = createAction({
 const ordersGetCustomColumnsPost = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_custom_columns_post',
-    displayName: 'Orders: Get custom columns in bulk for multiple orders',
+    displayName: 'Orders: Get Custom Columns in Bulk for Multiple Orders',
     description: 'Get custom columns in bulk for multiple orders. POST /api/Orders/GetCustomColumns',
     props: {
         body: Property.Json({
@@ -1305,7 +1305,7 @@ const ordersGetCustomColumnsPost = createAction({
 const ordersGetCustomerServiceStatuses = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_customer_service_statuses',
-    displayName: 'Orders: Get customer service status possible values',
+    displayName: 'Orders: Get Customer Service Status Possible Values',
     description: 'Get customer service status possible values. GET /api/Orders/CustomerServiceStatus/Statuses',
     props: {},
     async run(context) {
@@ -1331,7 +1331,7 @@ const ordersGetCustomerServiceStatuses = createAction({
 const ordersGetDocuments = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_documents',
-    displayName: 'Orders: Get order documents information',
+    displayName: 'Orders: Get Order Documents Information',
     description: 'Get order documents information. GET /api/Orders/{id}/Documents',
     props: {
         id: Property.Number({
@@ -1363,7 +1363,7 @@ const ordersGetDocuments = createAction({
 const ordersGetNotes = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_notes',
-    displayName: 'Orders: Get notes for specific order',
+    displayName: 'Orders: Get Notes for Specific Order',
     description: 'Get notes for specific order. GET /api/Orders/Notes',
     props: {
         id: Property.Number({
@@ -1395,7 +1395,7 @@ const ordersGetNotes = createAction({
 const ordersGetOrderSnapshot = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_order_snapshot',
-    displayName: 'Orders: Get order snapshot',
+    displayName: 'Orders: Get Order Snapshot',
     description: 'Get order snapshot. GET /api/Orders/{id}/Snapshot',
     props: {
         id: Property.Number({
@@ -1427,7 +1427,7 @@ const ordersGetOrderSnapshot = createAction({
 const ordersGetPackages = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_packages',
-    displayName: 'Orders: List of order packages',
+    displayName: 'Orders: List of Order Packages',
     description: 'List of order packages. GET /api/Orders/Packages',
     props: {
         id: Property.Number({
@@ -1469,7 +1469,7 @@ const ordersGetPackages = createAction({
 const ordersGetPicklistIds = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_picklist_ids',
-    displayName: 'Orders: Get picklists for a specific order',
+    displayName: 'Orders: Get Picklists for a Specific Order',
     description: 'Get picklists for a specific order. GET /api/Orders/{id}/PicklistIDs',
     props: {
         id: Property.Number({
@@ -1527,7 +1527,7 @@ const ordersGetReplacementOrderReasons = createAction({
 const ordersGetSerialNumbers = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_serial_numbers',
-    displayName: 'Orders: Get serial numbers for order',
+    displayName: 'Orders: Get Serial Numbers for Order',
     description: 'Get serial numbers for order. GET /api/Orders/Serials',
     props: {
         id: Property.Number({
@@ -1559,7 +1559,7 @@ const ordersGetSerialNumbers = createAction({
 const ordersGetShippingLabel = createAction({
     auth: sellercloudAuth,
     name: 'orders_get_shipping_label',
-    displayName: 'Orders: Get shipping label',
+    displayName: 'Orders: Get Shipping Label',
     description: 'Get shipping label. GET /api/Orders/GetShippingLabel',
     props: {
         orderID: Property.Number({
@@ -1590,7 +1590,7 @@ const ordersGetShippingLabel = createAction({
 const ordersLinkToPo = createAction({
     auth: sellercloudAuth,
     name: 'orders_link_to_po',
-    displayName: 'Orders: Link order to new or existing purchase order',
+    displayName: 'Orders: Link Order to New or Existing Purchase Order',
     description: 'Link order to new or existing purchase order. POST /api/Orders/{orderID}/LinkToPo',
     props: {
         orderID: Property.Number({
@@ -1645,7 +1645,7 @@ const ordersLinkToPo = createAction({
 const ordersMarkPickedUp = createAction({
     auth: sellercloudAuth,
     name: 'orders_mark_picked_up',
-    displayName: 'Orders: Update order status code',
+    displayName: 'Orders: Update Order Status Code',
     description: 'Update order status code. PUT /api/Orders/MarkPickedUp',
     props: {
         body: Property.Json({
@@ -1682,7 +1682,7 @@ const ordersMarkPickedUp = createAction({
 const ordersMarkReadyForPickup = createAction({
     auth: sellercloudAuth,
     name: 'orders_mark_ready_for_pickup',
-    displayName: 'Orders: Update order status code',
+    displayName: 'Orders: Update Order Status Code',
     description: 'Update order status code. PUT /api/Orders/MarkReadyForPickup',
     props: {
         body: Property.Json({
@@ -1719,7 +1719,7 @@ const ordersMarkReadyForPickup = createAction({
 const ordersPrintPdfInvoice = createAction({
     auth: sellercloudAuth,
     name: 'orders_print_pdf_invoice',
-    displayName: 'Orders: Prints invoice for multiple orders',
+    displayName: 'Orders: Prints Invoice for Multiple Orders',
     description: 'Prints invoice for multiple orders. POST /api/Orders/PrintPdfInvoice',
     props: {
         body: Property.Json({
@@ -1756,7 +1756,7 @@ const ordersPrintPdfInvoice = createAction({
 const ordersProfitAndLoss = createAction({
     auth: sellercloudAuth,
     name: 'orders_profit_and_loss',
-    displayName: 'Orders: Get profit and loss information',
+    displayName: 'Orders: Get Profit and Loss Information',
     description: 'Get profit and loss information. POST /api/Orders/ProfitAndLoss',
     props: {
         body: Property.Json({
@@ -1876,7 +1876,7 @@ const ordersRecreatePackages = createAction({
 const ordersSetDropshipStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_set_dropship_status',
-    displayName: 'Orders: Update order dropship status',
+    displayName: 'Orders: Update Order Dropship Status',
     description: 'Update order dropship status. PUT /api/Orders/DropshipStatus',
     props: {
         body: Property.Json({
@@ -1914,7 +1914,7 @@ const ordersSetDropshipStatus = createAction({
 const ordersSetExported = createAction({
     auth: sellercloudAuth,
     name: 'orders_set_exported',
-    displayName: 'Orders: Mark orders as exported or not exported',
+    displayName: 'Orders: Mark Orders as Exported or Not Exported',
     description: 'Mark orders as exported or not exported. PUT /api/Orders/SetExported',
     props: {
         body: Property.Json({
@@ -1952,7 +1952,7 @@ const ordersSetExported = createAction({
 const ordersSetQuickBookStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_set_quick_book_status',
-    displayName: 'Orders: Mark Order QuickBook status as exported or unexported',
+    displayName: 'Orders: Mark Order QuickBook Status as Exported or Unexported',
     description: 'Mark Order QuickBook status as exported or unexported. PUT /api/Orders/SetQuickBookStatus',
     props: {
         body: Property.Json({
@@ -1990,7 +1990,7 @@ const ordersSetQuickBookStatus = createAction({
 const ordersSetStatusCode = createAction({
     auth: sellercloudAuth,
     name: 'orders_set_status_code',
-    displayName: 'Orders: Update order status code',
+    displayName: 'Orders: Update Order Status Code',
     description: 'Update order status code. PUT /api/Orders/StatusCode',
     props: {
         body: Property.Json({
@@ -2075,7 +2075,7 @@ const ordersSplitOrder = createAction({
 const ordersUnshipOrders = createAction({
     auth: sellercloudAuth,
     name: 'orders_unship_orders',
-    displayName: 'Orders: Unship orders',
+    displayName: 'Orders: Unship Orders',
     description: 'Unship orders. PUT /api/Orders/SetUnshipped',
     props: {
         body: Property.Json({
@@ -2113,7 +2113,7 @@ const ordersUnshipOrders = createAction({
 const ordersUpdate = createAction({
     auth: sellercloudAuth,
     name: 'orders_update',
-    displayName: 'Orders: Update data of single Order',
+    displayName: 'Orders: Update Data of Single Order',
     description: 'Update data of single Order. PUT /api/Orders/{id}',
     props: {
         id: Property.Number({
@@ -2189,7 +2189,7 @@ const ordersUpdate = createAction({
 const ordersUpdateCustomerServiceStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_customer_service_status',
-    displayName: 'Orders: Update customer service status',
+    displayName: 'Orders: Update Customer Service Status',
     description: 'Update customer service status. PUT /api/Orders/CustomerServiceStatus',
     props: {
         body: Property.Json({
@@ -2227,7 +2227,7 @@ const ordersUpdateCustomerServiceStatus = createAction({
 const ordersUpdateOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_order_items',
-    displayName: 'Orders: Update exisiting order items',
+    displayName: 'Orders: Update Exisiting Order Items',
     description: 'Update exisiting order items. PUT /api/Orders/{orderID}/items',
     props: {
         orderID: Property.Number({
@@ -2277,7 +2277,7 @@ const ordersUpdateOrderItems = createAction({
 const ordersUpdateOrderStatuses = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_order_statuses',
-    displayName: 'Orders: Update an order status for list of orders',
+    displayName: 'Orders: Update an Order Status for List of Orders',
     description: 'Update an order status for list of orders. PUT /api/Orders/Statuses',
     props: {
         body: Property.Json({
@@ -2315,7 +2315,7 @@ const ordersUpdateOrderStatuses = createAction({
 const ordersUpdatePackages = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_packages',
-    displayName: 'Orders: Update order shipping packages',
+    displayName: 'Orders: Update Order Shipping Packages',
     description: 'Update order shipping packages. PUT /api/Orders/{orderID}/Shipping/Packages',
     props: {
         orderID: Property.Number({
@@ -2364,7 +2364,7 @@ const ordersUpdatePackages = createAction({
 const ordersUpdateSerialNumbers = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_serial_numbers',
-    displayName: 'Orders: Update serial numbers for order',
+    displayName: 'Orders: Update Serial Numbers for Order',
     description: 'Update serial numbers for order. PUT /api/Orders/Serials',
     props: {
         body: Property.Json({
@@ -2407,7 +2407,7 @@ const ordersUpdateSerialNumbers = createAction({
 const ordersUpdateShippingDetails = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_shipping_details',
-    displayName: 'Orders: Update shipping details',
+    displayName: 'Orders: Update Shipping Details',
     description: 'Update shipping details. PUT /api/Orders/{orderID}/Shipping/Details',
     props: {
         orderID: Property.Number({
@@ -2475,7 +2475,7 @@ const ordersUpdateShippingDetails = createAction({
 const ordersUpdateShippingStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_shipping_status',
-    displayName: 'Orders: Update shipping status of sales order',
+    displayName: 'Orders: Update Shipping Status of Sales Order',
     description: 'Update shipping status of sales order. PUT /api/Orders/ShippingStatus',
     props: {
         orderID: Property.Number({
@@ -2555,7 +2555,7 @@ const ordersUpdateShippingStatus = createAction({
 const ordersUpdateSinglePackageShippingStatus = createAction({
     auth: sellercloudAuth,
     name: 'orders_update_single_package_shipping_status',
-    displayName: 'Orders: Update shipping status of order for single package',
+    displayName: 'Orders: Update Shipping Status of Order for Single Package',
     description: 'Update shipping status of order for single package. PUT /api/Orders/ShippingStatus/SinglePackage',
     props: {
         orderID: Property.Number({
@@ -2630,7 +2630,7 @@ const ordersUpdateSinglePackageShippingStatus = createAction({
 const ordersUploadDocument = createAction({
     auth: sellercloudAuth,
     name: 'orders_upload_document',
-    displayName: 'Orders: Upload document for order',
+    displayName: 'Orders: Upload Document for Order',
     description: 'Upload document for order. POST /api/Orders/{id}/UploadDocument',
     props: {
         id: Property.Number({
@@ -2670,7 +2670,7 @@ const ordersUploadDocument = createAction({
 const ordersViews = createAction({
     auth: sellercloudAuth,
     name: 'orders_views',
-    displayName: 'Orders: Get order saved views',
+    displayName: 'Orders: Get Order Saved Views',
     description: 'Get order saved views. GET /api/Orders/Views',
     props: {},
     async run(context) {

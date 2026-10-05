@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const picklistsCreatePicklist = createAction({
     auth: sellercloudAuth,
     name: 'picklists_create_picklist',
-    displayName: 'Picklists: Create picklist for list of orders',
+    displayName: 'Picklists: Create Picklist for List of Orders',
     description: 'Create picklist for list of orders. POST /api/Picklists',
     props: {
         body: Property.Json({
@@ -47,7 +47,7 @@ const picklistsCreatePicklist = createAction({
 const picklistsGetAll = createAction({
     auth: sellercloudAuth,
     name: 'picklists_get_all',
-    displayName: 'Picklists: Get data for list of picklists',
+    displayName: 'Picklists: Get Data for List of Picklists',
     description: 'Get data for list of picklists. GET /api/Picklists',
     props: {
         picklistID: Property.Array({
@@ -122,7 +122,7 @@ const picklistsGetAll = createAction({
 const picklistsGetOrderIds = createAction({
     auth: sellercloudAuth,
     name: 'picklists_get_order_ids',
-    displayName: 'Picklists: Get orders for a specific picklist',
+    displayName: 'Picklists: Get Orders for a Specific Picklist',
     description: 'Get orders for a specific picklist. GET /api/Picklists/{id}/OrderIDs',
     props: {
         id: Property.Number({
@@ -154,7 +154,7 @@ const picklistsGetOrderIds = createAction({
 const picklistsGetPicklistProducts = createAction({
     auth: sellercloudAuth,
     name: 'picklists_get_picklist_products',
-    displayName: 'Picklists: Get a list of paginated products for a specific picklist',
+    displayName: 'Picklists: Get a List of Paginated Products for a Specific Picklist',
     description: 'Get a list of paginated products for a specific picklist. GET /api/Picklists/Products',
     props: {
         picklistID: Property.Number({

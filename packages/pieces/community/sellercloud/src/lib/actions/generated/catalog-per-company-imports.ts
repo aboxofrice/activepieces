@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogPerCompanyImportsGetAvailablePerCompanyImportTypes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_per_company_imports_get_available_per_company_import_types',
-    displayName: 'CatalogPerCompanyImports: Get a list of the available per company types of imports',
+    displayName: 'Catalog Per Company Imports: Get a List of the Available per Company Types of Imports',
     description: 'Get a list of the available per company types of imports. GET /api/Catalog/Imports/PerCompany/Types',
     props: {},
     async run(context) {
@@ -34,7 +34,7 @@ const catalogPerCompanyImportsGetAvailablePerCompanyImportTypes = createAction({
 const catalogPerCompanyImportsGetFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_per_company_imports_get_file_template',
-    displayName: 'CatalogPerCompanyImports: Get File Template',
+    displayName: 'Catalog Per Company Imports: Get File Template',
     description: 'GET /api/Catalog/Imports/PerCompany/{typeOfImport}/Template',
     props: {
         typeOfImport: Property.StaticDropdown({
@@ -128,7 +128,7 @@ const catalogPerCompanyImportsGetFileTemplate = createAction({
 const catalogPerCompanyImportsImportInfo = createAction({
     auth: sellercloudAuth,
     name: 'catalog_per_company_imports_import_info',
-    displayName: 'CatalogPerCompanyImports: Import Info',
+    displayName: 'Catalog Per Company Imports: Import Info',
     description: 'POST /api/Catalog/Imports/PerCompany/{companyId}/{typeOfImport}',
     props: {
         companyId: Property.Number({

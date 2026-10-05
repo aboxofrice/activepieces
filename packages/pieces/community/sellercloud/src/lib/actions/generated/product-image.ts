@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const productImageAdd = createAction({
     auth: sellercloudAuth,
     name: 'product_image_add',
-    displayName: 'ProductImage: Adding new product image for a single product',
+    displayName: 'Product Image: Adding New Product Image for a Single Product',
     description: 'Adding new product image for a single product. POST /api/ProductImage',
     props: {
         body: Property.Json({
@@ -54,7 +54,7 @@ const productImageAdd = createAction({
 const productImageDelete = createAction({
     auth: sellercloudAuth,
     name: 'product_image_delete',
-    displayName: 'ProductImage: Delete product image',
+    displayName: 'Product Image: Delete Product Image',
     description: 'Delete product image. DELETE /api/ProductImage/{id}',
     props: {
         id: Property.Number({
@@ -86,7 +86,7 @@ const productImageDelete = createAction({
 const productImageGet = createAction({
     auth: sellercloudAuth,
     name: 'product_image_get',
-    displayName: 'ProductImage: Getting product images for a single product [obsolete]',
+    displayName: 'Product Image: Getting Product Images for a Single Product [obsolete]',
     description: 'Getting product images for a single product [obsolete]. GET /api/ProductImage/{id}',
     props: {
         id: Property.ShortText({
@@ -118,7 +118,7 @@ const productImageGet = createAction({
 const productImageGetProductsImages = createAction({
     auth: sellercloudAuth,
     name: 'product_image_get_products_images',
-    displayName: 'ProductImage: Getting images for multiple products',
+    displayName: 'Product Image: Getting Images for Multiple Products',
     description: 'Getting images for multiple products. POST /api/ProductImage/GetProductsImages',
     props: {
         body: Property.Json({
@@ -155,7 +155,7 @@ const productImageGetProductsImages = createAction({
 const productImageGetV2 = createAction({
     auth: sellercloudAuth,
     name: 'product_image_get_v2',
-    displayName: 'ProductImage: Getting product images for a single product',
+    displayName: 'Product Image: Getting Product Images for a Single Product',
     description: 'Getting product images for a single product. GET /api/ProductImage',
     props: {
         productID: Property.ShortText({

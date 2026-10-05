@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const scheduledTasksExecuteTask = createAction({
     auth: sellercloudAuth,
     name: 'scheduled_tasks_execute_task',
-    displayName: 'ScheduledTasks: Execute scheduled task by ID',
+    displayName: 'Scheduled Tasks: Execute Scheduled Task by ID',
     description: 'Execute scheduled task by ID. POST /api/ScheduledTasks/{id}/ExecuteTask',
     props: {
         id: Property.Number({
@@ -40,7 +40,7 @@ const scheduledTasksExecuteTask = createAction({
 const scheduledTasksExecutionHistory = createAction({
     auth: sellercloudAuth,
     name: 'scheduled_tasks_execution_history',
-    displayName: 'ScheduledTasks: Get execution history of a task',
+    displayName: 'Scheduled Tasks: Get Execution History of a Task',
     description: 'Get execution history of a task. GET /api/ScheduledTasks/{id}/ExecutionHistory',
     props: {
         id: Property.Number({

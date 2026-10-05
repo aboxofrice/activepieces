@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogGetAll = createAction({
     auth: sellercloudAuth,
     name: 'catalog_get_all',
-    displayName: 'Catalog: Get catalog info for multiple products',
+    displayName: 'Catalog: Get Catalog Info for Multiple Products',
     description: 'Get catalog info for multiple products. GET /api/Catalog',
     props: {
         sKU: Property.ShortText({
@@ -200,7 +200,7 @@ const catalogGetAll = createAction({
 const catalogGetAllByView = createAction({
     auth: sellercloudAuth,
     name: 'catalog_get_all_by_view',
-    displayName: 'Catalog: Get products by view',
+    displayName: 'Catalog: Get Products by View',
     description: 'Get products by view. GET /api/Catalog/GetAllByView',
     props: {
         viewID: Property.Number({
@@ -242,7 +242,7 @@ const catalogGetAllByView = createAction({
 const catalogGetProductPrices = createAction({
     auth: sellercloudAuth,
     name: 'catalog_get_product_prices',
-    displayName: 'Catalog: Get product prices [obsolete]',
+    displayName: 'Catalog: Get Product Prices [obsolete]',
     description: 'Get product prices [obsolete]. GET /api/Catalog/{id}/Prices',
     props: {
         id: Property.ShortText({
@@ -274,7 +274,7 @@ const catalogGetProductPrices = createAction({
 const catalogGetProductPricesV2 = createAction({
     auth: sellercloudAuth,
     name: 'catalog_get_product_prices_v2',
-    displayName: 'Catalog: Get product prices',
+    displayName: 'Catalog: Get Product Prices',
     description: 'Get product prices. GET /api/Catalog/Prices',
     props: {
         productID: Property.ShortText({
@@ -306,7 +306,7 @@ const catalogGetProductPricesV2 = createAction({
 const catalogGetProductTypes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_get_product_types',
-    displayName: 'Catalog: Get product types',
+    displayName: 'Catalog: Get Product Types',
     description: 'Get product types. GET /api/Catalog/ProductTypes',
     props: {
         productTypeIds: Property.Array({
@@ -429,7 +429,7 @@ const catalogLoadVariation = createAction({
 const catalogUpdateAdvancedInfo = createAction({
     auth: sellercloudAuth,
     name: 'catalog_update_advanced_info',
-    displayName: 'Catalog: Update advanced catalog info',
+    displayName: 'Catalog: Update Advanced Catalog Info',
     description: 'Update advanced catalog info. PUT /api/Catalog/AdvancedInfo',
     props: {
         body: Property.Json({
@@ -470,7 +470,7 @@ const catalogUpdateAdvancedInfo = createAction({
 const catalogUpdateBasicInfo = createAction({
     auth: sellercloudAuth,
     name: 'catalog_update_basic_info',
-    displayName: 'Catalog: Update basic catalog info',
+    displayName: 'Catalog: Update Basic Catalog Info',
     description: 'Update basic catalog info. PUT /api/Catalog/BasicInfo',
     props: {
         productID: Property.ShortText({
@@ -557,7 +557,7 @@ const catalogUpdateBasicInfo = createAction({
 const catalogUpdateProductPrices = createAction({
     auth: sellercloudAuth,
     name: 'catalog_update_product_prices',
-    displayName: 'Catalog: Update product prices [obsolete]',
+    displayName: 'Catalog: Update Product Prices [obsolete]',
     description: 'Update product prices [obsolete]. PUT /api/Catalog/{id}/Prices',
     props: {
         id: Property.ShortText({
@@ -604,7 +604,7 @@ const catalogUpdateProductPrices = createAction({
 const catalogUpdateProductPricesV2 = createAction({
     auth: sellercloudAuth,
     name: 'catalog_update_product_prices_v2',
-    displayName: 'Catalog: Update product prices',
+    displayName: 'Catalog: Update Product Prices',
     description: 'Update product prices. PUT /api/Catalog/Prices',
     props: {
         body: Property.Json({
@@ -647,7 +647,7 @@ const catalogUpdateProductPricesV2 = createAction({
 const catalogViews = createAction({
     auth: sellercloudAuth,
     name: 'catalog_views',
-    displayName: 'Catalog: Get catalog saved views',
+    displayName: 'Catalog: Get Catalog Saved Views',
     description: 'Get catalog saved views. GET /api/Catalog/Views',
     props: {},
     async run(context) {

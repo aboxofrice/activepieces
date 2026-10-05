@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const clientUserNotificationsCreate = createAction({
     auth: sellercloudAuth,
     name: 'client_user_notifications_create',
-    displayName: 'ClientUserNotifications: Create',
+    displayName: 'Client User Notifications: Create',
     description: 'Create one notification for users of the authenticated client. POST /api/UserNotifications',
     props: {
         body: Property.Json({

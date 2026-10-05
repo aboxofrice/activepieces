@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogSpecificImportsGetEbaySpecificsFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_ebay_specifics_file_template',
-    displayName: 'CatalogSpecificImports: Get template for ebay specific imports',
+    displayName: 'Catalog Specific Imports: Get Template for eBay Specific Imports',
     description: 'Get template for ebay specific imports. GET /api/Catalog/Imports/EbaySpecifics/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -47,7 +47,7 @@ const catalogSpecificImportsGetEbaySpecificsFileTemplate = createAction({
 const catalogSpecificImportsGetKitsFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_kits_file_template',
-    displayName: 'CatalogSpecificImports: Get template for populating kits info',
+    displayName: 'Catalog Specific Imports: Get Template for Populating Kits Info',
     description: 'Get template for populating kits info. GET /api/Catalog/Imports/Kits/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -86,7 +86,7 @@ const catalogSpecificImportsGetKitsFileTemplate = createAction({
 const catalogSpecificImportsGetNeweggBizAttributesFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_newegg_biz_attributes_file_template',
-    displayName: 'CatalogSpecificImports: Get template for NeweggBiz Attributes imports',
+    displayName: 'Catalog Specific Imports: Get Template for NeweggBiz Attributes Imports',
     description: 'Get template for NeweggBiz Attributes imports. GET /api/Catalog/Imports/NeweggBizAttributes/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -130,7 +130,7 @@ const catalogSpecificImportsGetNeweggBizAttributesFileTemplate = createAction({
 const catalogSpecificImportsGetNeweggComAttributesFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_newegg_com_attributes_file_template',
-    displayName: 'CatalogSpecificImports: Get template for NeweggCom Attributes imports',
+    displayName: 'Catalog Specific Imports: Get Template for NeweggCom Attributes Imports',
     description: 'Get template for NeweggCom Attributes imports. GET /api/Catalog/Imports/NeweggComAttributes/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -174,7 +174,7 @@ const catalogSpecificImportsGetNeweggComAttributesFileTemplate = createAction({
 const catalogSpecificImportsGetProductImages = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_product_images',
-    displayName: 'CatalogSpecificImports: Get template for populating product images info',
+    displayName: 'Catalog Specific Imports: Get Template for Populating Product Images Info',
     description: 'Get template for populating product images info. GET /api/Catalog/Imports/Images/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -213,7 +213,7 @@ const catalogSpecificImportsGetProductImages = createAction({
 const catalogSpecificImportsGetShadowsFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_shadows_file_template',
-    displayName: 'CatalogSpecificImports: Get template for populating shadows info',
+    displayName: 'Catalog Specific Imports: Get Template for Populating Shadows Info',
     description: 'Get template for populating shadows info. GET /api/Catalog/Imports/Shadows/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -252,7 +252,7 @@ const catalogSpecificImportsGetShadowsFileTemplate = createAction({
 const catalogSpecificImportsGetVariationImages = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_variation_images',
-    displayName: 'CatalogSpecificImports: Get template for populating variations images info',
+    displayName: 'Catalog Specific Imports: Get Template for Populating Variations Images Info',
     description: 'Get template for populating variations images info. GET /api/Catalog/Imports/Variations/Images/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -291,7 +291,7 @@ const catalogSpecificImportsGetVariationImages = createAction({
 const catalogSpecificImportsGetVariationsFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_variations_file_template',
-    displayName: 'CatalogSpecificImports: Get template for populating variations info',
+    displayName: 'Catalog Specific Imports: Get Template for Populating Variations Info',
     description: 'Get template for populating variations info. GET /api/Catalog/Imports/Variations/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -330,7 +330,7 @@ const catalogSpecificImportsGetVariationsFileTemplate = createAction({
 const catalogSpecificImportsGetWalmartMarketplaceAttributesFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_get_walmart_marketplace_attributes_file_template',
-    displayName: 'CatalogSpecificImports: Get template for Walmart Marketplace Attributes import',
+    displayName: 'Catalog Specific Imports: Get Template for Walmart Marketplace Attributes Import',
     description: 'Get template for Walmart Marketplace Attributes import. GET /api/Catalog/Imports/WalmartMarketplaceAttributes/Template',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -380,7 +380,7 @@ const catalogSpecificImportsGetWalmartMarketplaceAttributesFileTemplate = create
 const catalogSpecificImportsImportEbaySpecifics = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_ebay_specifics',
-    displayName: 'CatalogSpecificImports: Import ebay specifics info',
+    displayName: 'Catalog Specific Imports: Import eBay Specifics Info',
     description: 'Import ebay specifics info. POST /api/Catalog/Imports/EbaySpecifics',
     props: {
         body: Property.Json({
@@ -421,7 +421,7 @@ const catalogSpecificImportsImportEbaySpecifics = createAction({
 const catalogSpecificImportsImportKits = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_kits',
-    displayName: 'CatalogSpecificImports: Import kits info',
+    displayName: 'Catalog Specific Imports: Import Kits Info',
     description: 'Import kits info. POST /api/Catalog/Imports/Kits',
     props: {
         body: Property.Json({
@@ -465,7 +465,7 @@ const catalogSpecificImportsImportKits = createAction({
 const catalogSpecificImportsImportNeweggBizAttributes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_newegg_biz_attributes',
-    displayName: 'CatalogSpecificImports: Import NeweggBiz Attributes info',
+    displayName: 'Catalog Specific Imports: Import NeweggBiz Attributes Info',
     description: 'Import NeweggBiz Attributes info. POST /api/Catalog/Imports/NeweggBizAttributes',
     props: {
         body: Property.Json({
@@ -505,7 +505,7 @@ const catalogSpecificImportsImportNeweggBizAttributes = createAction({
 const catalogSpecificImportsImportNeweggComAttributes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_newegg_com_attributes',
-    displayName: 'CatalogSpecificImports: Import NeweggCom Attributes info',
+    displayName: 'Catalog Specific Imports: Import NeweggCom Attributes Info',
     description: 'Import NeweggCom Attributes info. POST /api/Catalog/Imports/NeweggComAttributes',
     props: {
         body: Property.Json({
@@ -545,7 +545,7 @@ const catalogSpecificImportsImportNeweggComAttributes = createAction({
 const catalogSpecificImportsImportProductImages = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_product_images',
-    displayName: 'CatalogSpecificImports: Importing catalog images',
+    displayName: 'Catalog Specific Imports: Importing Catalog Images',
     description: 'Importing catalog images. POST /api/Catalog/Imports/Images',
     props: {
         fileContents: Property.ShortText({
@@ -592,7 +592,7 @@ const catalogSpecificImportsImportProductImages = createAction({
 const catalogSpecificImportsImportShadows = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_shadows',
-    displayName: 'CatalogSpecificImports: Import shadows info',
+    displayName: 'Catalog Specific Imports: Import Shadows Info',
     description: 'Import shadows info. POST /api/Catalog/Imports/Shadows',
     props: {
         body: Property.Json({
@@ -633,7 +633,7 @@ const catalogSpecificImportsImportShadows = createAction({
 const catalogSpecificImportsImportVariations = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_variations',
-    displayName: 'CatalogSpecificImports: Import variations info',
+    displayName: 'Catalog Specific Imports: Import Variations Info',
     description: 'Import variations info. POST /api/Catalog/Imports/Variations',
     props: {
         body: Property.Json({
@@ -675,7 +675,7 @@ const catalogSpecificImportsImportVariations = createAction({
 const catalogSpecificImportsImportVariationsImages = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_variations_images',
-    displayName: 'CatalogSpecificImports: Import variations images',
+    displayName: 'Catalog Specific Imports: Import Variations Images',
     description: 'Import variations images. POST /api/Catalog/Imports/Variations/Images',
     props: {
         fileContents: Property.ShortText({
@@ -722,7 +722,7 @@ const catalogSpecificImportsImportVariationsImages = createAction({
 const catalogSpecificImportsImportWalmartMarketplaceAttributes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_specific_imports_import_walmart_marketplace_attributes',
-    displayName: 'CatalogSpecificImports: Import Walmart Marketplace Attributes info',
+    displayName: 'Catalog Specific Imports: Import Walmart Marketplace Attributes Info',
     description: 'Import Walmart Marketplace Attributes info. POST /api/Catalog/Imports/WalmartMarketplaceAttributes',
     props: {
         body: Property.Json({

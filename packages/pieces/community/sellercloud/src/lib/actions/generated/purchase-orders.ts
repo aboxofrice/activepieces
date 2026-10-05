@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const purchaseOrdersAddPurchaseOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_add_purchase_order_items',
-    displayName: 'PurchaseOrders: Add purchase order items',
+    displayName: 'Purchase Orders: Add Purchase Order Items',
     description: 'Add purchase order items. POST /api/PurchaseOrders/{id}/items',
     props: {
         id: Property.Number({
@@ -59,7 +59,7 @@ const purchaseOrdersAddPurchaseOrderItems = createAction({
 const purchaseOrdersAddSerialNumbers = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_add_serial_numbers',
-    displayName: 'PurchaseOrders: Add serial numbers for PO',
+    displayName: 'Purchase Orders: Add Serial Numbers for PO',
     description: 'Add serial numbers for PO. POST /api/PurchaseOrders/Serials',
     props: {
         id: Property.Number({
@@ -107,7 +107,7 @@ const purchaseOrdersAddSerialNumbers = createAction({
 const purchaseOrdersCreate = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_create',
-    displayName: 'PurchaseOrders: Create new purchase order',
+    displayName: 'Purchase Orders: Create New Purchase Order',
     description: 'Create new purchase order. POST /api/PurchaseOrders',
     props: {
         body: Property.Json({
@@ -194,7 +194,7 @@ const purchaseOrdersCreate = createAction({
 const purchaseOrdersCreateTrackingNumbers = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_create_tracking_numbers',
-    displayName: 'PurchaseOrders: Create po tracking numbers',
+    displayName: 'Purchase Orders: Create PO Tracking Numbers',
     description: 'Create po tracking numbers. POST /api/PurchaseOrders/{id}/TrackingNumber/Multiple',
     props: {
         id: Property.Number({
@@ -241,7 +241,7 @@ const purchaseOrdersCreateTrackingNumbers = createAction({
 const purchaseOrdersDelete = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_delete',
-    displayName: 'PurchaseOrders: Deleting existing purchase order',
+    displayName: 'Purchase Orders: Deleting Existing Purchase Order',
     description: 'Deleting existing purchase order. DELETE /api/PurchaseOrders/{id}',
     props: {
         id: Property.Number({
@@ -273,7 +273,7 @@ const purchaseOrdersDelete = createAction({
 const purchaseOrdersDeletePurchaseOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_delete_purchase_order_items',
-    displayName: 'PurchaseOrders: Delete purchase order items',
+    displayName: 'Purchase Orders: Delete Purchase Order Items',
     description: 'Delete purchase order items. DELETE /api/PurchaseOrders/{id}/items',
     props: {
         id: Property.Number({
@@ -315,7 +315,7 @@ const purchaseOrdersDeletePurchaseOrderItems = createAction({
 const purchaseOrdersDeleteTrackingNumbers = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_delete_tracking_numbers',
-    displayName: 'PurchaseOrders: Delete po tracking numbers',
+    displayName: 'Purchase Orders: Delete PO Tracking Numbers',
     description: 'Delete po tracking numbers. DELETE /api/PurchaseOrders/{id}/TrackingNumber/Multiple',
     props: {
         id: Property.Number({
@@ -356,7 +356,7 @@ const purchaseOrdersDeleteTrackingNumbers = createAction({
 const purchaseOrdersGet = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get',
-    displayName: 'PurchaseOrders: Get metadata for existing purchase order',
+    displayName: 'Purchase Orders: Get Metadata for Existing Purchase Order',
     description: 'Get metadata for existing purchase order. GET /api/PurchaseOrders/{id}',
     props: {
         id: Property.Number({
@@ -388,7 +388,7 @@ const purchaseOrdersGet = createAction({
 const purchaseOrdersGetAll = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_all',
-    displayName: 'PurchaseOrders: Get metadata for list of purchase orders',
+    displayName: 'Purchase Orders: Get Metadata for List of Purchase Orders',
     description: 'Get metadata for list of purchase orders. GET /api/PurchaseOrders',
     props: {
         pOIds: Property.Array({
@@ -527,7 +527,7 @@ const purchaseOrdersGetAll = createAction({
 const purchaseOrdersGetAllByView = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_all_by_view',
-    displayName: 'PurchaseOrders: Get data for purchase orders by view',
+    displayName: 'Purchase Orders: Get Data for Purchase Orders by View',
     description: 'Get data for purchase orders by view. GET /api/PurchaseOrders/GetAllByView',
     props: {
         viewID: Property.Number({
@@ -569,7 +569,7 @@ const purchaseOrdersGetAllByView = createAction({
 const purchaseOrdersGetCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_custom_columns',
-    displayName: 'PurchaseOrders: Get custom columns for specific purchase order',
+    displayName: 'Purchase Orders: Get Custom Columns for Specific Purchase Order',
     description: 'Get custom columns for specific purchase order. GET /api/PurchaseOrders/{id}/CustomColumns',
     props: {
         id: Property.Number({
@@ -601,7 +601,7 @@ const purchaseOrdersGetCustomColumns = createAction({
 const purchaseOrdersGetPurchaseOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_purchase_order_items',
-    displayName: 'PurchaseOrders: Get purchase order items',
+    displayName: 'Purchase Orders: Get Purchase Order Items',
     description: 'Get purchase order items. GET /api/PurchaseOrders/{id}/Items',
     props: {
         id: Property.Number({
@@ -633,7 +633,7 @@ const purchaseOrdersGetPurchaseOrderItems = createAction({
 const purchaseOrdersGetSerialNumbers = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_serial_numbers',
-    displayName: 'PurchaseOrders: Get serial numbers for PO',
+    displayName: 'Purchase Orders: Get Serial Numbers for PO',
     description: 'Get serial numbers for PO. GET /api/PurchaseOrders/Serials',
     props: {
         id: Property.Number({
@@ -665,7 +665,7 @@ const purchaseOrdersGetSerialNumbers = createAction({
 const purchaseOrdersGetTrackingNumbers = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_get_tracking_numbers',
-    displayName: 'PurchaseOrders: Get po tracking numbers',
+    displayName: 'Purchase Orders: Get PO Tracking Numbers',
     description: 'Get po tracking numbers. GET /api/PurchaseOrders/{id}/TrackingNumber/Multiple',
     props: {
         id: Property.Number({
@@ -696,7 +696,7 @@ const purchaseOrdersGetTrackingNumbers = createAction({
 const purchaseOrdersReceive = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_receive',
-    displayName: 'PurchaseOrders: Receive purchase order',
+    displayName: 'Purchase Orders: Receive Purchase Order',
     description: 'Receive purchase order. POST /api/PurchaseOrders/{id}/receive',
     props: {
         id: Property.Number({
@@ -755,7 +755,7 @@ const purchaseOrdersReceive = createAction({
 const purchaseOrdersSetQuickBookStatus = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_set_quick_book_status',
-    displayName: 'PurchaseOrders: Set Quick Book Status',
+    displayName: 'Purchase Orders: Set Quick Book Status',
     description: 'Mark Purchase Order QuickBook status as exported or unexported. PUT /api/PurchaseOrders/SetQuickBookStatus',
     props: {
         body: Property.Json({
@@ -793,7 +793,7 @@ const purchaseOrdersSetQuickBookStatus = createAction({
 const purchaseOrdersSplit = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_split',
-    displayName: 'PurchaseOrders: Split purchase order',
+    displayName: 'Purchase Orders: Split Purchase Order',
     description: 'Split purchase order. POST /api/PurchaseOrders/{id}/split',
     props: {
         id: Property.Number({
@@ -841,7 +841,7 @@ const purchaseOrdersSplit = createAction({
 const purchaseOrdersUpdate = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update',
-    displayName: 'PurchaseOrders: Update data of a purchase order',
+    displayName: 'Purchase Orders: Update Data of a Purchase Order',
     description: 'Update data of a purchase order. PUT /api/PurchaseOrders/{id}',
     props: {
         id: Property.Number({
@@ -905,7 +905,7 @@ const purchaseOrdersUpdate = createAction({
 const purchaseOrdersUpdateCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update_custom_columns',
-    displayName: 'PurchaseOrders: Updating custom columns',
+    displayName: 'Purchase Orders: Updating Custom Columns',
     description: 'Updating custom columns. PUT /api/PurchaseOrders/{id}/CustomColumns',
     props: {
         id: Property.Number({
@@ -945,7 +945,7 @@ const purchaseOrdersUpdateCustomColumns = createAction({
 const purchaseOrdersUpdateInvoice = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update_invoice',
-    displayName: 'PurchaseOrders: Updating po invoice data',
+    displayName: 'Purchase Orders: Updating PO Invoice Data',
     description: 'Updating po invoice data. PUT /api/PurchaseOrders/{id}/Invoice',
     props: {
         id: Property.Number({
@@ -984,7 +984,7 @@ const purchaseOrdersUpdateInvoice = createAction({
 const purchaseOrdersUpdatePurchaseOrderItems = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update_purchase_order_items',
-    displayName: 'PurchaseOrders: Update purchase order items',
+    displayName: 'Purchase Orders: Update Purchase Order Items',
     description: 'Update purchase order items. PUT /api/PurchaseOrders/{id}/Items',
     props: {
         id: Property.Number({
@@ -1035,7 +1035,7 @@ const purchaseOrdersUpdatePurchaseOrderItems = createAction({
 const purchaseOrdersUpdateTotal = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update_total',
-    displayName: 'PurchaseOrders: Updating po total data',
+    displayName: 'Purchase Orders: Updating PO Total Data',
     description: 'Updating po total data. PUT /api/PurchaseOrders/{id}/Total',
     props: {
         id: Property.Number({
@@ -1082,7 +1082,7 @@ const purchaseOrdersUpdateTotal = createAction({
 const purchaseOrdersUpdateTrackingNumber = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_update_tracking_number',
-    displayName: 'PurchaseOrders: Updating po tracking number',
+    displayName: 'Purchase Orders: Updating PO Tracking Number',
     description: 'Updating po tracking number. PUT /api/PurchaseOrders/{id}/TrackingNumber',
     props: {
         id: Property.Number({
@@ -1125,7 +1125,7 @@ const purchaseOrdersUpdateTrackingNumber = createAction({
 const purchaseOrdersViews = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_views',
-    displayName: 'PurchaseOrders: Get purchase orders saved views',
+    displayName: 'Purchase Orders: Get Purchase Orders Saved Views',
     description: 'Get purchase orders saved views. GET /api/PurchaseOrders/Views',
     props: {},
     async run(context) {

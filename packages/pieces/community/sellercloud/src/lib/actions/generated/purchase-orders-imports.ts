@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const purchaseOrdersImportsGetPurchaseOrdersFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_imports_get_purchase_orders_file_template',
-    displayName: 'PurchaseOrdersImports: Get template for populating purchase order info',
+    displayName: 'Purchase Orders Imports: Get Template for Populating Purchase Order Info',
     description: 'Get template for populating purchase order info. GET /api/PurchaseOrders/Import/DownloadPurchaseOrdersTemplate',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -47,7 +47,7 @@ const purchaseOrdersImportsGetPurchaseOrdersFileTemplate = createAction({
 const purchaseOrdersImportsGetVendorPricesFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_imports_get_vendor_prices_file_template',
-    displayName: 'PurchaseOrdersImports: Get template for populating vendor price info',
+    displayName: 'Purchase Orders Imports: Get Template for Populating Vendor Price Info',
     description: 'Get template for populating vendor price info. GET /api/PurchaseOrders/Import/DownloadVendorPricesTemplate',
     props: {
         fileFormat: Property.StaticDropdown({
@@ -86,7 +86,7 @@ const purchaseOrdersImportsGetVendorPricesFileTemplate = createAction({
 const purchaseOrdersImportsImportPurchaseOrders = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_imports_import_purchase_orders',
-    displayName: 'PurchaseOrdersImports: Import Purchase Orders',
+    displayName: 'Purchase Orders Imports: Import Purchase Orders',
     description: 'Import Purchase Orders. POST /api/PurchaseOrders/Import/ImportPurchaseOrders',
     props: {
         body: Property.Json({
@@ -130,7 +130,7 @@ const purchaseOrdersImportsImportPurchaseOrders = createAction({
 const purchaseOrdersImportsImportVendorPrices = createAction({
     auth: sellercloudAuth,
     name: 'purchase_orders_imports_import_vendor_prices',
-    displayName: 'PurchaseOrdersImports: Import Vendor Prices',
+    displayName: 'Purchase Orders Imports: Import Vendor Prices',
     description: 'Import Vendor Prices. POST /api/PurchaseOrders/Import/ImportVendorPrices',
     props: {
         body: Property.Json({

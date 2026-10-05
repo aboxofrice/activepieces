@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const settingsExecuteRules = createAction({
     auth: sellercloudAuth,
     name: 'settings_execute_rules',
-    displayName: 'Settings: Execute rules',
+    displayName: 'Settings: Execute Rules',
     description: 'Execute rules. POST /api/Settings/OrdersRuleEngine/ExecuteRules',
     props: {
         body: Property.Json({
@@ -49,7 +49,7 @@ const settingsExecuteRules = createAction({
 const settingsGetBrands = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_brands',
-    displayName: 'Settings: Get list of brands',
+    displayName: 'Settings: Get List of Brands',
     description: 'Get list of brands. GET /api/Settings/Brands',
     props: {},
     async run(context) {
@@ -75,7 +75,7 @@ const settingsGetBrands = createAction({
 const settingsGetManufacturers = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_manufacturers',
-    displayName: 'Settings: Get list of manufacturers for company',
+    displayName: 'Settings: Get List of Manufacturers for Company',
     description: 'Get list of manufacturers for company. GET /api/Settings/Manufacturers',
     props: {
         companyId: Property.Number({
@@ -107,7 +107,7 @@ const settingsGetManufacturers = createAction({
 const settingsGetOrderRules = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_order_rules',
-    displayName: 'Settings: Get list of order rules',
+    displayName: 'Settings: Get List of Order Rules',
     description: 'Get list of order rules. GET /api/Settings/OrdersRuleEngine/Rules',
     props: {
         request_pageNumber: Property.Number({
@@ -146,7 +146,7 @@ const settingsGetOrderRules = createAction({
 const settingsGetPaymentTerms = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_payment_terms',
-    displayName: 'Settings: Get list of payment terms',
+    displayName: 'Settings: Get List of Payment Terms',
     description: 'Get list of payment terms. GET /api/Settings/PaymentTerms',
     props: {},
     async run(context) {
@@ -172,7 +172,7 @@ const settingsGetPaymentTerms = createAction({
 const settingsGetShippingCarriers = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_shipping_carriers',
-    displayName: 'Settings: Get list of shipping carriers',
+    displayName: 'Settings: Get List of Shipping Carriers',
     description: 'Get list of shipping carriers. GET /api/Settings/ShippingCarriers',
     props: {
         siteCode: Property.StaticDropdown({
@@ -235,7 +235,7 @@ const settingsGetShippingCarriers = createAction({
 const settingsGetShippingPackageTypes = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_shipping_package_types',
-    displayName: 'Settings: Get list of shipping package types',
+    displayName: 'Settings: Get List of Shipping Package Types',
     description: 'Get list of shipping package types. GET /api/Settings/ShippingPackageTypes',
     props: {
         carrier: Property.ShortText({
@@ -266,7 +266,7 @@ const settingsGetShippingPackageTypes = createAction({
 const settingsGetShippingServices = createAction({
     auth: sellercloudAuth,
     name: 'settings_get_shipping_services',
-    displayName: 'Settings: Get list of shipping services',
+    displayName: 'Settings: Get List of Shipping Services',
     description: 'Get list of shipping services. GET /api/Settings/ShippingServices',
     props: {
         siteCode: Property.StaticDropdown({

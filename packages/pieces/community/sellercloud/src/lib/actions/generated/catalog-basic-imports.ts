@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogBasicImportsGetAvailableBasicImportTypes = createAction({
     auth: sellercloudAuth,
     name: 'catalog_basic_imports_get_available_basic_import_types',
-    displayName: 'CatalogBasicImports: Get a list of the available basic types of import',
+    displayName: 'Catalog Basic Imports: Get a List of the Available Basic Types of Import',
     description: 'Get a list of the available basic types of import. GET /api/Catalog/Imports/BasicImports/Types',
     props: {},
     async run(context) {
@@ -34,7 +34,7 @@ const catalogBasicImportsGetAvailableBasicImportTypes = createAction({
 const catalogBasicImportsGetFileTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_basic_imports_get_file_template',
-    displayName: 'CatalogBasicImports: Get template file that will be used later for catalog import',
+    displayName: 'Catalog Basic Imports: Get Template File That Will Be Used Later for Catalog Import',
     description: 'Get template file that will be used later for catalog import. GET /api/Catalog/Imports/BasicImports/{typeOfImport}/Template',
     props: {
         typeOfImport: Property.StaticDropdown({
@@ -110,7 +110,7 @@ const catalogBasicImportsGetFileTemplate = createAction({
 const catalogBasicImportsImportInfo = createAction({
     auth: sellercloudAuth,
     name: 'catalog_basic_imports_import_info',
-    displayName: 'CatalogBasicImports: Perform the specified type of data import',
+    displayName: 'Catalog Basic Imports: Perform the Specified Type of Data Import',
     description: 'Perform the specified type of data import. POST /api/Catalog/Imports/BasicImports/{typeOfImport}',
     props: {
         typeOfImport: Property.StaticDropdown({

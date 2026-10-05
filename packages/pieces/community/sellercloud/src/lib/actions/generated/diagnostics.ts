@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const diagnosticsServer = createAction({
     auth: sellercloudAuth,
     name: 'diagnostics_server',
-    displayName: 'Diagnostics: Pull server state information',
+    displayName: 'Diagnostics: Pull Server State Information',
     description: 'Pull server state information. GET /api/Diagnostics/Server',
     props: {
         accessKey: Property.ShortText({

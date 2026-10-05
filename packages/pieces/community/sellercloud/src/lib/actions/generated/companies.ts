@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const companiesCreateCustomSetting = createAction({
     auth: sellercloudAuth,
     name: 'companies_create_custom_setting',
-    displayName: 'Companies: Create company custom setting',
+    displayName: 'Companies: Create Company Custom Setting',
     description: 'Create company custom setting. POST /api/Companies/{id}/CustomSettings',
     props: {
         id: Property.Number({
@@ -52,7 +52,7 @@ const companiesCreateCustomSetting = createAction({
 const companiesGet = createAction({
     auth: sellercloudAuth,
     name: 'companies_get',
-    displayName: 'Companies: Get info for single company',
+    displayName: 'Companies: Get Info for Single Company',
     description: 'Get info for single company. GET /api/Companies/{id}',
     props: {
         id: Property.Number({
@@ -84,7 +84,7 @@ const companiesGet = createAction({
 const companiesGetAll = createAction({
     auth: sellercloudAuth,
     name: 'companies_get_all',
-    displayName: 'Companies: Get info for list of companies',
+    displayName: 'Companies: Get Info for List of Companies',
     description: 'Get info for list of companies. GET /api/Companies',
     props: {
         companyID: Property.Array({
@@ -133,7 +133,7 @@ const companiesGetAll = createAction({
 const companiesGetCustomSettings = createAction({
     auth: sellercloudAuth,
     name: 'companies_get_custom_settings',
-    displayName: 'Companies: Get company custom settings',
+    displayName: 'Companies: Get Company Custom Settings',
     description: 'Get company custom settings. GET /api/Companies/{id}/CustomSettings',
     props: {
         id: Property.Number({
@@ -165,7 +165,7 @@ const companiesGetCustomSettings = createAction({
 const companiesGetEbayBusinessPolicies = createAction({
     auth: sellercloudAuth,
     name: 'companies_get_ebay_business_policies',
-    displayName: 'Companies: Get eBay business policies',
+    displayName: 'Companies: Get eBay Business Policies',
     description: 'Get eBay business policies. GET /api/Companies/{id}/Settings/ebay/BusinessPolicies',
     props: {
         id: Property.Number({
@@ -212,7 +212,7 @@ const companiesGetEbayBusinessPolicies = createAction({
 const companiesGetEbaySiteCodes = createAction({
     auth: sellercloudAuth,
     name: 'companies_get_ebay_site_codes',
-    displayName: 'Companies: Get list of eBay site codes',
+    displayName: 'Companies: Get List of eBay Site Codes',
     description: 'Get list of eBay site codes. GET /api/Companies/{id}/Settings/ebay/SiteCodes',
     props: {
         id: Property.Number({
@@ -244,7 +244,7 @@ const companiesGetEbaySiteCodes = createAction({
 const companiesGetShippingApiDetails = createAction({
     auth: sellercloudAuth,
     name: 'companies_get_shipping_api_details',
-    displayName: 'Companies: Get metadata for company shipping APIs',
+    displayName: 'Companies: Get Metadata for Company Shipping APIs',
     description: 'Get metadata for company shipping APIs. GET /api/Companies/{id}/ShippingApi',
     props: {
         id: Property.Number({
@@ -276,7 +276,7 @@ const companiesGetShippingApiDetails = createAction({
 const companiesUpdateCustomSettings = createAction({
     auth: sellercloudAuth,
     name: 'companies_update_custom_settings',
-    displayName: 'Companies: Update company custom settings',
+    displayName: 'Companies: Update Company Custom Settings',
     description: 'Update company custom settings. PUT /api/Companies/{id}/CustomSettings',
     props: {
         id: Property.Number({

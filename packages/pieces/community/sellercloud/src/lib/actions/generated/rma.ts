@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const rmaAddRmaItems = createAction({
     auth: sellercloudAuth,
     name: 'rma_add_rma_items',
-    displayName: 'Rma: Add RMA items',
+    displayName: 'RMA: Add RMA Items',
     description: 'Add RMA items. POST /api/Rma/{id}/Items',
     props: {
         id: Property.Number({
@@ -56,7 +56,7 @@ const rmaAddRmaItems = createAction({
 const rmaCreateRma = createAction({
     auth: sellercloudAuth,
     name: 'rma_create_rma',
-    displayName: 'Rma: Create RMA',
+    displayName: 'RMA: Create RMA',
     description: 'Create RMA. POST /api/Rma',
     props: {
         body: Property.Json({
@@ -102,7 +102,7 @@ const rmaCreateRma = createAction({
 const rmaCreateRmaNote = createAction({
     auth: sellercloudAuth,
     name: 'rma_create_rma_note',
-    displayName: 'Rma: Create Rma Note',
+    displayName: 'RMA: Create RMA Note',
     description: 'POST /api/Rma/{id}/Notes',
     props: {
         id: Property.Number({
@@ -148,7 +148,7 @@ const rmaCreateRmaNote = createAction({
 const rmaCreateShippingLabel = createAction({
     auth: sellercloudAuth,
     name: 'rma_create_shipping_label',
-    displayName: 'Rma: Create shipping label',
+    displayName: 'RMA: Create Shipping Label',
     description: 'Create shipping label. POST /api/Rma/{id}/ShippingLabels',
     props: {
         id: Property.Number({
@@ -228,7 +228,7 @@ const rmaCreateShippingLabel = createAction({
 const rmaDownloadShippingLabel = createAction({
     auth: sellercloudAuth,
     name: 'rma_download_shipping_label',
-    displayName: 'Rma: Download shipping label in pdf format',
+    displayName: 'RMA: Download Shipping Label in PDF Format',
     description: 'Download shipping label in pdf format. GET /api/Rma/{id}/ShippingLabels/{labelId}',
     props: {
         id: Property.Number({
@@ -265,7 +265,7 @@ const rmaDownloadShippingLabel = createAction({
 const rmaGet = createAction({
     auth: sellercloudAuth,
     name: 'rma_get',
-    displayName: 'Rma: Get metadata for single RMA',
+    displayName: 'RMA: Get Metadata for Single RMA',
     description: 'Get metadata for single RMA. GET /api/Rma/{id}',
     props: {
         id: Property.Number({
@@ -297,7 +297,7 @@ const rmaGet = createAction({
 const rmaGetAll = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_all',
-    displayName: 'Rma: Get metadata for list of RMAs',
+    displayName: 'RMA: Get Metadata for List of RMAs',
     description: 'Get metadata for list of RMAs. GET /api/Rma',
     props: {
         rMAIDs: Property.Array({
@@ -429,7 +429,7 @@ const rmaGetAll = createAction({
 const rmaGetAllByView = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_all_by_view',
-    displayName: 'Rma: Get data for RMAs by view',
+    displayName: 'RMA: Get Data for RMAs by View',
     description: 'Get data for RMAs by view. GET /api/Rma/GetAllByView',
     props: {
         viewID: Property.Number({
@@ -471,7 +471,7 @@ const rmaGetAllByView = createAction({
 const rmaGetCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_custom_columns',
-    displayName: 'Rma: Get RMA Custom Columns',
+    displayName: 'RMA: Get RMA Custom Columns',
     description: 'Get RMA Custom Columns. GET /api/Rma/{id}/CustomColumns',
     props: {
         id: Property.Number({
@@ -503,7 +503,7 @@ const rmaGetCustomColumns = createAction({
 const rmaGetRmashippingLabelsDataContext = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_rmashipping_labels_data_context',
-    displayName: 'Rma: Get data for RMA Shipping labels',
+    displayName: 'RMA: Get Data for RMA Shipping Labels',
     description: 'Get data for RMA Shipping labels. GET /api/Rma/{id}/ShippingLabels',
     props: {
         id: Property.Number({
@@ -535,7 +535,7 @@ const rmaGetRmashippingLabelsDataContext = createAction({
 const rmaGetReturnReasons = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_return_reasons',
-    displayName: 'Rma: Get list of possible RMA items return reasons',
+    displayName: 'RMA: Get List of Possible RMA Items Return Reasons',
     description: 'Get list of possible RMA items return reasons. GET /api/Rma/ReturnReasons',
     props: {},
     async run(context) {
@@ -561,7 +561,7 @@ const rmaGetReturnReasons = createAction({
 const rmaGetRmaItems = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_rma_items',
-    displayName: 'Rma: Get RMA items',
+    displayName: 'RMA: Get RMA Items',
     description: 'Get RMA items. GET /api/Rma/{id}/Items',
     props: {
         id: Property.Number({
@@ -593,7 +593,7 @@ const rmaGetRmaItems = createAction({
 const rmaGetShippingCarriers = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_shipping_carriers',
-    displayName: 'Rma: Get list of possible RMA shipping carriers',
+    displayName: 'RMA: Get List of Possible RMA Shipping Carriers',
     description: 'Get list of possible RMA shipping carriers. GET /api/Rma/{id}/ShippingLabels/Carriers',
     props: {
         id: Property.Number({
@@ -625,7 +625,7 @@ const rmaGetShippingCarriers = createAction({
 const rmaGetShippingInsuraceProviders = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_shipping_insurace_providers',
-    displayName: 'Rma: Get list of possible RMA shipping insurance providers',
+    displayName: 'RMA: Get List of Possible RMA Shipping Insurance Providers',
     description: 'Get list of possible RMA shipping insurance providers. GET /api/Rma/{id}/ShippingLabels/InsuranceProviders',
     props: {
         id: Property.Number({
@@ -662,7 +662,7 @@ const rmaGetShippingInsuraceProviders = createAction({
 const rmaGetShippingPackageTypes = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_shipping_package_types',
-    displayName: 'Rma: Get list of possible RMA shipping package types',
+    displayName: 'RMA: Get List of Possible RMA Shipping Package Types',
     description: 'Get list of possible RMA shipping package types. GET /api/Rma/{id}/ShippingLabels/PackageTypes',
     props: {
         id: Property.Number({
@@ -699,7 +699,7 @@ const rmaGetShippingPackageTypes = createAction({
 const rmaGetShippingServices = createAction({
     auth: sellercloudAuth,
     name: 'rma_get_shipping_services',
-    displayName: 'Rma: Get list of possible RMA shipping services',
+    displayName: 'RMA: Get List of Possible RMA Shipping Services',
     description: 'Get list of possible RMA shipping services. GET /api/Rma/{id}/ShippingLabels/Services',
     props: {
         id: Property.Number({
@@ -736,7 +736,7 @@ const rmaGetShippingServices = createAction({
 const rmaReceiveRmaitems = createAction({
     auth: sellercloudAuth,
     name: 'rma_receive_rmaitems',
-    displayName: 'Rma: Receive RMA items',
+    displayName: 'RMA: Receive RMA Items',
     description: 'Receive RMA items. POST /api/Rma/{id}/Receive',
     props: {
         id: Property.Number({
@@ -782,7 +782,7 @@ const rmaReceiveRmaitems = createAction({
 const rmaReceiveRmaitemsBinEnabled = createAction({
     auth: sellercloudAuth,
     name: 'rma_receive_rmaitems_bin_enabled',
-    displayName: 'Rma: Receive RMA items in bin enabled warehouse',
+    displayName: 'RMA: Receive RMA Items in Bin Enabled Warehouse',
     description: 'Receive RMA items in bin enabled warehouse. POST /api/Rma/{id}/Receive/BinEnabled',
     props: {
         id: Property.Number({
@@ -832,7 +832,7 @@ const rmaReceiveRmaitemsBinEnabled = createAction({
 const rmaSetResolution = createAction({
     auth: sellercloudAuth,
     name: 'rma_set_resolution',
-    displayName: 'Rma: Set resolution for RMA items',
+    displayName: 'RMA: Set Resolution for RMA Items',
     description: 'Set resolution for RMA items. POST /api/Rma/{id}/Resolution',
     props: {
         id: Property.Number({
@@ -880,7 +880,7 @@ const rmaSetResolution = createAction({
 const rmaUpdate = createAction({
     auth: sellercloudAuth,
     name: 'rma_update',
-    displayName: 'Rma: Update single RMA',
+    displayName: 'RMA: Update Single RMA',
     description: 'Update single RMA. PUT /api/Rma/{id}',
     props: {
         id: Property.Number({
@@ -954,7 +954,7 @@ const rmaUpdate = createAction({
 const rmaUpdateCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'rma_update_custom_columns',
-    displayName: 'Rma: Update RMA custom columns',
+    displayName: 'RMA: Update RMA Custom Columns',
     description: 'Update RMA custom columns. PUT /api/Rma/{id}/CustomColumns',
     props: {
         id: Property.Number({
@@ -997,7 +997,7 @@ const rmaUpdateCustomColumns = createAction({
 const rmaUpdateRmaItems = createAction({
     auth: sellercloudAuth,
     name: 'rma_update_rma_items',
-    displayName: 'Rma: Update RMA items',
+    displayName: 'RMA: Update RMA Items',
     description: 'Update RMA items. PUT /api/Rma/{id}/Items',
     props: {
         id: Property.Number({
@@ -1043,7 +1043,7 @@ const rmaUpdateRmaItems = createAction({
 const rmaViews = createAction({
     auth: sellercloudAuth,
     name: 'rma_views',
-    displayName: 'Rma: Get RMA saved views',
+    displayName: 'RMA: Get RMA Saved Views',
     description: 'Get RMA saved views. GET /api/Rma/Views',
     props: {},
     async run(context) {

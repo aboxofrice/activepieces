@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const queuedJobsCancel = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_cancel',
-    displayName: 'QueuedJobs: Cancel a queued job',
+    displayName: 'Queued Jobs: Cancel a Queued Job',
     description: 'Cancel a queued job. PUT /api/QueuedJobs/Cancel',
     props: {
         id: Property.Number({
@@ -39,7 +39,7 @@ const queuedJobsCancel = createAction({
 const queuedJobsGet = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_get',
-    displayName: 'QueuedJobs: Get a single queued job by ID',
+    displayName: 'Queued Jobs: Get a Single Queued Job by ID',
     description: 'Get a single queued job by ID. GET /api/QueuedJobs/{id}',
     props: {
         id: Property.Number({
@@ -71,7 +71,7 @@ const queuedJobsGet = createAction({
 const queuedJobsGetAll = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_get_all',
-    displayName: 'QueuedJobs: Get All',
+    displayName: 'Queued Jobs: Get All',
     description: 'Get a paged result of queued jobs with the option to specify different filtering values. For complete set of results, multiple requests should be made by specifying a page number in the request. GET /api/QueuedJobs',
     props: {
         jobID: Property.Number({
@@ -138,7 +138,7 @@ const queuedJobsGetAll = createAction({
 const queuedJobsGetBulkUpdateLog = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_get_bulk_update_log',
-    displayName: 'QueuedJobs: Get Bulk Update Log Detail',
+    displayName: 'Queued Jobs: Get Bulk Update Log Detail',
     description: 'Get Bulk Update Log Detail. GET /api/QueuedJobs/BulkUpdateLog/{id}',
     props: {
         id: Property.Number({
@@ -170,7 +170,7 @@ const queuedJobsGetBulkUpdateLog = createAction({
 const queuedJobsGetLogs = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_get_logs',
-    displayName: 'QueuedJobs: Get Queued Job Logs',
+    displayName: 'Queued Jobs: Get Queued Job Logs',
     description: 'Get Queued Job Logs. GET /api/QueuedJobs/{id}/Logs',
     props: {
         id: Property.Number({
@@ -221,7 +221,7 @@ const queuedJobsGetLogs = createAction({
 const queuedJobsGetOutputFile = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_get_output_file',
-    displayName: 'QueuedJobs: Get output file for a queued job',
+    displayName: 'Queued Jobs: Get Output File for a Queued Job',
     description: 'Get output file for a queued job. GET /api/QueuedJobs/OutputFile',
     props: {
         id: Property.Number({
@@ -252,7 +252,7 @@ const queuedJobsGetOutputFile = createAction({
 const queuedJobsUpdateJobPriority = createAction({
     auth: sellercloudAuth,
     name: 'queued_jobs_update_job_priority',
-    displayName: 'QueuedJobs: Update job priority status',
+    displayName: 'Queued Jobs: Update Job Priority Status',
     description: 'Update job priority status. PUT /api/QueuedJobs/Priority',
     props: {
         iD: Property.Number({

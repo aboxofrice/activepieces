@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const shippingContainersAddItems = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_add_items',
-    displayName: 'ShippingContainers: Add items to container',
+    displayName: 'Shipping Containers: Add Items to Container',
     description: 'Add items to container. POST /api/ShippingContainers/{id}/Items',
     props: {
         id: Property.Number({
@@ -53,7 +53,7 @@ const shippingContainersAddItems = createAction({
 const shippingContainersCreate = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_create',
-    displayName: 'ShippingContainers: Create shipping container',
+    displayName: 'Shipping Containers: Create Shipping Container',
     description: 'Create shipping container. POST /api/ShippingContainers',
     props: {
         containerName: Property.ShortText({
@@ -110,7 +110,7 @@ const shippingContainersCreate = createAction({
 const shippingContainersDeleteItems = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_delete_items',
-    displayName: 'ShippingContainers: Delete items from container',
+    displayName: 'Shipping Containers: Delete Items from Container',
     description: 'Delete items from container. DELETE /api/ShippingContainers/{id}/Items',
     props: {
         id: Property.Number({
@@ -151,7 +151,7 @@ const shippingContainersDeleteItems = createAction({
 const shippingContainersGet = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_get',
-    displayName: 'ShippingContainers: Get data for shipping container by id',
+    displayName: 'Shipping Containers: Get Data for Shipping Container by ID',
     description: 'Get data for shipping container by id. GET /api/ShippingContainers/{id}',
     props: {
         id: Property.Number({
@@ -182,7 +182,7 @@ const shippingContainersGet = createAction({
 const shippingContainersGetAll = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_get_all',
-    displayName: 'ShippingContainers: Get data for multiple shipping containers',
+    displayName: 'Shipping Containers: Get Data for Multiple Shipping Containers',
     description: 'Get data for multiple shipping containers. GET /api/ShippingContainers',
     props: {
         containerIds: Property.Array({
@@ -247,7 +247,7 @@ const shippingContainersGetAll = createAction({
 const shippingContainersUpdate = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_update',
-    displayName: 'ShippingContainers: Update shipping containera',
+    displayName: 'Shipping Containers: Update Shipping Containera',
     description: 'Update shipping containera. PUT /api/ShippingContainers/{id}',
     props: {
         id: Property.Number({
@@ -305,7 +305,7 @@ const shippingContainersUpdate = createAction({
 const shippingContainersUpdateCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'shipping_containers_update_custom_columns',
-    displayName: 'ShippingContainers: Update custom columns',
+    displayName: 'Shipping Containers: Update Custom Columns',
     description: 'Update custom columns. PUT /api/ShippingContainers/{id}/CustomColumns',
     props: {
         id: Property.Number({

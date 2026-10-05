@@ -59,7 +59,7 @@ const vendorsAddVendorProduct = createAction({
 const vendorsGet = createAction({
     auth: sellercloudAuth,
     name: 'vendors_get',
-    displayName: 'Vendors: Get metadata for existing vendor',
+    displayName: 'Vendors: Get Metadata for Existing Vendor',
     description: 'Get metadata for existing vendor. GET /api/Vendors/{id}',
     props: {
         id: Property.Number({
@@ -91,7 +91,7 @@ const vendorsGet = createAction({
 const vendorsGetAll = createAction({
     auth: sellercloudAuth,
     name: 'vendors_get_all',
-    displayName: 'Vendors: Get metadata for list of vendors',
+    displayName: 'Vendors: Get Metadata for List of Vendors',
     description: 'Get metadata for list of vendors. GET /api/Vendors',
     props: {
         vendorIDs: Property.Array({
@@ -146,7 +146,7 @@ const vendorsGetAll = createAction({
 const vendorsGetVendorProducts = createAction({
     auth: sellercloudAuth,
     name: 'vendors_get_vendor_products',
-    displayName: 'Vendors: Get metadata for list of vendor products',
+    displayName: 'Vendors: Get Metadata for List of Vendor Products',
     description: 'Get metadata for list of vendor products. GET /api/Vendors/{id}/products',
     props: {
         id: Property.Number({
@@ -196,7 +196,7 @@ const vendorsGetVendorProducts = createAction({
 const vendorsUpdateVendorProduct = createAction({
     auth: sellercloudAuth,
     name: 'vendors_update_vendor_product',
-    displayName: 'Vendors: Update single Vendor Product [obsolete]',
+    displayName: 'Vendors: Update Single Vendor Product [obsolete]',
     description: 'Update single Vendor Product [obsolete]. PUT /api/Vendors/{vendorId}/products/{productSKU}',
     props: {
         vendorId: Property.Number({

@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const productsCreate = createAction({
     auth: sellercloudAuth,
     name: 'products_create',
-    displayName: 'Products: Create a new product',
+    displayName: 'Products: Create a New Product',
     description: 'Create a new product. POST /api/Products',
     props: {
         companyId: Property.Number({
@@ -79,7 +79,7 @@ const productsCreate = createAction({
 const productsGetCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'products_get_custom_columns',
-    displayName: 'Products: Get custom columns for specific product [obsolete]',
+    displayName: 'Products: Get Custom Columns for Specific Product [obsolete]',
     description: 'Get custom columns for specific product [obsolete]. GET /api/Products/{id}/CustomColumns',
     props: {
         id: Property.ShortText({
@@ -111,7 +111,7 @@ const productsGetCustomColumns = createAction({
 const productsGetCustomColumnsV2 = createAction({
     auth: sellercloudAuth,
     name: 'products_get_custom_columns_v2',
-    displayName: 'Products: Get custom columns for specific product',
+    displayName: 'Products: Get Custom Columns for Specific Product',
     description: 'Get custom columns for specific product. GET /api/Products/CustomColumns',
     props: {
         productID: Property.ShortText({
@@ -143,7 +143,7 @@ const productsGetCustomColumnsV2 = createAction({
 const productsUpdateCustomColumnsById = createAction({
     auth: sellercloudAuth,
     name: 'products_update_custom_columns_by_id',
-    displayName: 'Products: Updatе single custom column [obsolete]',
+    displayName: 'Products: Updatе Single Custom Column [obsolete]',
     description: 'Updatе single custom column [obsolete]. PUT /api/Products/{id}/CustomColumns',
     props: {
         id: Property.ShortText({
@@ -184,7 +184,7 @@ const productsUpdateCustomColumnsById = createAction({
 const productsUpdateCustomColumnsPut = createAction({
     auth: sellercloudAuth,
     name: 'products_update_custom_columns_put',
-    displayName: 'Products: Updatе multiple custom columns',
+    displayName: 'Products: Updatе Multiple Custom Columns',
     description: 'Updatе multiple custom columns. PUT /api/Products/CustomColumns',
     props: {
         body: Property.Json({
@@ -225,7 +225,7 @@ const productsUpdateCustomColumnsPut = createAction({
 const productsUpdateCustomColumnsMultiple = createAction({
     auth: sellercloudAuth,
     name: 'products_update_custom_columns_multiple',
-    displayName: 'Products: Updatе multiple custom columns [obsolete]',
+    displayName: 'Products: Updatе Multiple Custom Columns [obsolete]',
     description: 'Updatе multiple custom columns [obsolete]. PUT /api/Products/{id}/CustomColumnsMultiple',
     props: {
         id: Property.ShortText({

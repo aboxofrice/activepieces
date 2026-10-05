@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const warehouseInventoryTransfersAddProducts = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_add_products',
-    displayName: 'WarehouseInventoryTransfers: Add products',
+    displayName: 'Warehouse Inventory Transfers: Add Products',
     description: 'Add products. POST /api/WarehouseInventoryTransfers/{id}/Products',
     props: {
         id: Property.Number({
@@ -52,7 +52,7 @@ const warehouseInventoryTransfersAddProducts = createAction({
 const warehouseInventoryTransfersCreate = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_create',
-    displayName: 'WarehouseInventoryTransfers: Create warehouse inventory transfer',
+    displayName: 'Warehouse Inventory Transfers: Create Warehouse Inventory Transfer',
     description: 'Create warehouse inventory transfer. POST /api/WarehouseInventoryTransfers',
     props: {
         title: Property.ShortText({
@@ -103,7 +103,7 @@ const warehouseInventoryTransfersCreate = createAction({
 const warehouseInventoryTransfersGet = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_get',
-    displayName: 'WarehouseInventoryTransfers: Get inventory warehouse transfer by id',
+    displayName: 'Warehouse Inventory Transfers: Get Inventory Warehouse Transfer by ID',
     description: 'Get inventory warehouse transfer by id. GET /api/WarehouseInventoryTransfers/{id}',
     props: {
         id: Property.Number({
@@ -135,7 +135,7 @@ const warehouseInventoryTransfersGet = createAction({
 const warehouseInventoryTransfersGetAll = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_get_all',
-    displayName: 'WarehouseInventoryTransfers: Get multiple warehouse inventory transfers',
+    displayName: 'Warehouse Inventory Transfers: Get Multiple Warehouse Inventory Transfers',
     description: 'Get multiple warehouse inventory transfers. GET /api/WarehouseInventoryTransfers',
     props: {
         transferIdList: Property.Array({
@@ -195,7 +195,7 @@ const warehouseInventoryTransfersGetAll = createAction({
 const warehouseInventoryTransfersGetProducts = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_get_products',
-    displayName: 'WarehouseInventoryTransfers: Get inventory warehouse transfer products',
+    displayName: 'Warehouse Inventory Transfers: Get Inventory Warehouse Transfer Products',
     description: 'Get inventory warehouse transfer products. GET /api/WarehouseInventoryTransfers/{id}/Products',
     props: {
         id: Property.Number({
@@ -237,7 +237,7 @@ const warehouseInventoryTransfersGetProducts = createAction({
 const warehouseInventoryTransfersReceiveShipment = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_receive_shipment',
-    displayName: 'WarehouseInventoryTransfers: Receive shipment',
+    displayName: 'Warehouse Inventory Transfers: Receive Shipment',
     description: 'Receive shipment. PUT /api/WarehouseInventoryTransfers/{id}/ReceiveShipment',
     props: {
         id: Property.Number({
@@ -285,7 +285,7 @@ const warehouseInventoryTransfersReceiveShipment = createAction({
 const warehouseInventoryTransfersSetRequested = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_set_requested',
-    displayName: 'WarehouseInventoryTransfers: Set warehouse inventory transfer to requested',
+    displayName: 'Warehouse Inventory Transfers: Set Warehouse Inventory Transfer to Requested',
     description: 'Set warehouse inventory transfer to requested. PUT /api/WarehouseInventoryTransfers/{id}/SetRequested',
     props: {
         id: Property.Number({
@@ -316,7 +316,7 @@ const warehouseInventoryTransfersSetRequested = createAction({
 const warehouseInventoryTransfersSetShipped = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_set_shipped',
-    displayName: 'WarehouseInventoryTransfers: Set warehouse inventory transfer to shipped',
+    displayName: 'Warehouse Inventory Transfers: Set Warehouse Inventory Transfer to Shipped',
     description: 'Set warehouse inventory transfer to shipped. PUT /api/WarehouseInventoryTransfers/{id}/SetShipped',
     props: {
         id: Property.Number({
@@ -347,7 +347,7 @@ const warehouseInventoryTransfersSetShipped = createAction({
 const warehouseInventoryTransfersUploadDocument = createAction({
     auth: sellercloudAuth,
     name: 'warehouse_inventory_transfers_upload_document',
-    displayName: 'WarehouseInventoryTransfers: Upload document for warehouse inventory transfer',
+    displayName: 'Warehouse Inventory Transfers: Upload Document for Warehouse Inventory Transfer',
     description: 'Upload document for warehouse inventory transfer. POST /api/WarehouseInventoryTransfers/{id}/Documents',
     props: {
         id: Property.Number({

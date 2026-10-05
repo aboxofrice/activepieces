@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const customersAddCustomersToGroup = createAction({
     auth: sellercloudAuth,
     name: 'customers_add_customers_to_group',
-    displayName: 'Customers: Add customers to customer group',
+    displayName: 'Customers: Add Customers to Customer Group',
     description: 'Add customers to customer group. POST /api/Customers/CustomersGroups/{id}/Customers',
     props: {
         id: Property.Number({
@@ -49,7 +49,7 @@ const customersAddCustomersToGroup = createAction({
 const customersCreate = createAction({
     auth: sellercloudAuth,
     name: 'customers_create',
-    displayName: 'Customers: Create new customer',
+    displayName: 'Customers: Create New Customer',
     description: 'Create new customer. POST /api/Customers',
     props: {
         companyID: Property.Number({
@@ -112,7 +112,7 @@ const customersCreate = createAction({
 const customersGet = createAction({
     auth: sellercloudAuth,
     name: 'customers_get',
-    displayName: 'Customers: Get metadata of existing customer',
+    displayName: 'Customers: Get Metadata of Existing Customer',
     description: 'Get metadata of existing customer. GET /api/Customers/{id}',
     props: {
         id: Property.Number({
@@ -143,7 +143,7 @@ const customersGet = createAction({
 const customersGetAll = createAction({
     auth: sellercloudAuth,
     name: 'customers_get_all',
-    displayName: 'Customers: Get metadata for list of customers',
+    displayName: 'Customers: Get Metadata for List of Customers',
     description: 'Get metadata for list of customers. GET /api/Customers',
     props: {
         customerIds: Property.Array({
@@ -353,7 +353,7 @@ const customersGetAll = createAction({
 const customersUpdate = createAction({
     auth: sellercloudAuth,
     name: 'customers_update',
-    displayName: 'Customers: Update customer info',
+    displayName: 'Customers: Update Customer Info',
     description: 'Update customer info. PUT /api/Customers/{id}',
     props: {
         id: Property.Number({
@@ -416,7 +416,7 @@ const customersUpdate = createAction({
 const customersUpdateAddresses = createAction({
     auth: sellercloudAuth,
     name: 'customers_update_addresses',
-    displayName: 'Customers: Update customer addresses',
+    displayName: 'Customers: Update Customer Addresses',
     description: 'Update customer addresses. PUT /api/Customers/{id}/Addresses',
     props: {
         id: Property.Number({
@@ -474,7 +474,7 @@ const customersUpdateAddresses = createAction({
 const customersUpdateCustomColumns = createAction({
     auth: sellercloudAuth,
     name: 'customers_update_custom_columns',
-    displayName: 'Customers: Update customer custom columns',
+    displayName: 'Customers: Update Customer Custom Columns',
     description: 'Update customer custom columns. PUT /api/Customers/{id}/CustomColumns',
     props: {
         id: Property.Number({
@@ -518,7 +518,7 @@ const customersUpdateCustomColumns = createAction({
 const customersUpdateOrderOptions = createAction({
     auth: sellercloudAuth,
     name: 'customers_update_order_options',
-    displayName: 'Customers: Update customer order options',
+    displayName: 'Customers: Update Customer Order Options',
     description: 'Update customer order options. PUT /api/Customers/{id}/OrderOptions',
     props: {
         id: Property.Number({
@@ -625,7 +625,7 @@ const customersUpdateOrderOptions = createAction({
 const customersUpdateShippingPreferences = createAction({
     auth: sellercloudAuth,
     name: 'customers_update_shipping_preferences',
-    displayName: 'Customers: Update customer shipping preferences',
+    displayName: 'Customers: Update Customer Shipping Preferences',
     description: 'Update customer shipping preferences. PUT /api/Customers/{id}/ShippingPreferences',
     props: {
         id: Property.Number({

@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const warehousesGet = createAction({
     auth: sellercloudAuth,
     name: 'warehouses_get',
-    displayName: 'Warehouses: Get metadata of existing warehouse',
+    displayName: 'Warehouses: Get Metadata of Existing Warehouse',
     description: 'Get metadata of existing warehouse. GET /api/Warehouses/{id}',
     props: {
         id: Property.Number({
@@ -40,7 +40,7 @@ const warehousesGet = createAction({
 const warehousesGetAll = createAction({
     auth: sellercloudAuth,
     name: 'warehouses_get_all',
-    displayName: 'Warehouses: Get metadata for list of warehouses',
+    displayName: 'Warehouses: Get Metadata for List of Warehouses',
     description: 'Get metadata for list of warehouses. GET /api/Warehouses',
     props: {
         warehouseIds: Property.Array({

@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogExportsGetCustomExportTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_get_custom_export_template',
-    displayName: 'CatalogExports: Get Custom Export Template',
+    displayName: 'Catalog Exports: Get Custom Export Template',
     description: 'Get data about a catalog export template. The response model includes name, ID and array of the template\'s columns. Use the columns collection to perform a custom export. In the reponse model "Key" property will be "OriginalName" in the request, and "DisplayName" will be "DisplayName" from the request (you can specify your own display name for the given column). GET /api/Catalog/Exports/Custom/Templates/{id}',
     props: {
         id: Property.Number({
@@ -40,7 +40,7 @@ const catalogExportsGetCustomExportTemplate = createAction({
 const catalogExportsGetCustomExportsMetadata = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_get_custom_exports_metadata',
-    displayName: 'CatalogExports: Get Custom Exports Metadata',
+    displayName: 'Catalog Exports: Get Custom Exports Metadata',
     description: 'Get metadata necessary to create a custom export. Includes available File Formats, Names of previously created templates, Available fields from which a custom export template can be configured. Use the "AvailableColumns" collection to specify columns for a custom export. In this reponse model "Key" property will be "OriginalName" for column object in the request, and "Value" property from this response model can be "DisplayName" for the column request (you can specify your own display name for the given column). GET /api/Catalog/Exports/Custom/Metadata',
     props: {
         includeAdvancedColumns: Property.Checkbox({
@@ -72,7 +72,7 @@ const catalogExportsGetCustomExportsMetadata = createAction({
 const catalogExportsGetMappingProfileExportMetadata = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_get_mapping_profile_export_metadata',
-    displayName: 'CatalogExports: Get Mapping Profile Export Metadata',
+    displayName: 'Catalog Exports: Get Mapping Profile Export Metadata',
     description: 'Get a list of available mapping profiles that can be used to perform product export. GET /api/Catalog/Exports/ViaMappingProfile/Metadata',
     props: {},
     async run(context) {
@@ -98,7 +98,7 @@ const catalogExportsGetMappingProfileExportMetadata = createAction({
 const catalogExportsGetPluginExportMetadata = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_get_plugin_export_metadata',
-    displayName: 'CatalogExports: Get Plugin Export Metadata',
+    displayName: 'Catalog Exports: Get Plugin Export Metadata',
     description: 'Get a list of available plugins that can be used to perform product export. GET /api/Catalog/Exports/ViaPlugin/Metadata',
     props: {},
     async run(context) {
@@ -124,7 +124,7 @@ const catalogExportsGetPluginExportMetadata = createAction({
 const catalogExportsPerformBasicExport = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_perform_basic_export',
-    displayName: 'CatalogExports: Perform Basic Export',
+    displayName: 'Catalog Exports: Perform Basic Export',
     description: 'Create basic export of data. Either creates a queued job or directly receives the data as Base64 encoded string. Use the encoded string to convert it to file on your machine. POST /api/Catalog/Exports/Basic',
     props: {
         body: Property.Json({
@@ -162,7 +162,7 @@ const catalogExportsPerformBasicExport = createAction({
 const catalogExportsPerformCustomExport = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_perform_custom_export',
-    displayName: 'CatalogExports: Perform Custom Export',
+    displayName: 'Catalog Exports: Perform Custom Export',
     description: 'Create custom data export by providing a list of product fields. POST /api/Catalog/Exports/Custom',
     props: {
         body: Property.Json({
@@ -207,7 +207,7 @@ const catalogExportsPerformCustomExport = createAction({
 const catalogExportsPerformExportViaMappingProfile = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_perform_export_via_mapping_profile',
-    displayName: 'CatalogExports: Export products via mapping profile',
+    displayName: 'Catalog Exports: Export Products via Mapping Profile',
     description: 'Export products via mapping profile. POST /api/Catalog/Exports/ViaMappingProfile',
     props: {
         body: Property.Json({
@@ -246,7 +246,7 @@ const catalogExportsPerformExportViaMappingProfile = createAction({
 const catalogExportsPerformExportViaPlugin = createAction({
     auth: sellercloudAuth,
     name: 'catalog_exports_perform_export_via_plugin',
-    displayName: 'CatalogExports: Export products via plugin',
+    displayName: 'Catalog Exports: Export Products via Plugin',
     description: 'Export products via plugin. POST /api/Catalog/Exports/ViaPlugin',
     props: {
         body: Property.Json({

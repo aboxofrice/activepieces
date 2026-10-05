@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const catalogCustomImportsDeleteTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_delete_template',
-    displayName: 'CatalogCustomImports: Delete Template',
+    displayName: 'Catalog Custom Imports: Delete Template',
     description: 'DELETE /api/Catalog/Imports/Custom/Templates/{templateName}',
     props: {
         templateName: Property.ShortText({
@@ -39,7 +39,7 @@ const catalogCustomImportsDeleteTemplate = createAction({
 const catalogCustomImportsDownloadTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_download_template',
-    displayName: 'CatalogCustomImports: Download Template',
+    displayName: 'Catalog Custom Imports: Download Template',
     description: 'POST /api/Catalog/Imports/Custom/Template',
     props: {
         body: Property.Json({
@@ -81,7 +81,7 @@ const catalogCustomImportsDownloadTemplate = createAction({
 const catalogCustomImportsGetAllCustomTemplates = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_get_all_custom_templates',
-    displayName: 'CatalogCustomImports: Get All Custom Templates',
+    displayName: 'Catalog Custom Imports: Get All Custom Templates',
     description: 'GET /api/Catalog/Imports/Custom/Templates',
     props: {},
     async run(context) {
@@ -107,7 +107,7 @@ const catalogCustomImportsGetAllCustomTemplates = createAction({
 const catalogCustomImportsGetAvailableColumnsForExport = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_get_available_columns_for_export',
-    displayName: 'CatalogCustomImports: Get Available Columns For Export',
+    displayName: 'Catalog Custom Imports: Get Available Columns for Export',
     description: 'GET /api/Catalog/Imports/Custom/Templates/Fields',
     props: {},
     async run(context) {
@@ -133,7 +133,7 @@ const catalogCustomImportsGetAvailableColumnsForExport = createAction({
 const catalogCustomImportsGetCustomTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_get_custom_template',
-    displayName: 'CatalogCustomImports: Get Custom Template',
+    displayName: 'Catalog Custom Imports: Get Custom Template',
     description: 'GET /api/Catalog/Imports/Custom/Templates/{templateName}',
     props: {
         templateName: Property.ShortText({
@@ -164,7 +164,7 @@ const catalogCustomImportsGetCustomTemplate = createAction({
 const catalogCustomImportsImportData = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_import_data',
-    displayName: 'CatalogCustomImports: Import Data',
+    displayName: 'Catalog Custom Imports: Import Data',
     description: 'POST /api/Catalog/Imports/Custom',
     props: {
         body: Property.Json({
@@ -208,7 +208,7 @@ const catalogCustomImportsImportData = createAction({
 const catalogCustomImportsSaveTemplate = createAction({
     auth: sellercloudAuth,
     name: 'catalog_custom_imports_save_template',
-    displayName: 'CatalogCustomImports: Save Template',
+    displayName: 'Catalog Custom Imports: Save Template',
     description: 'POST /api/Catalog/Imports/Custom/Templates',
     props: {
         body: Property.Json({

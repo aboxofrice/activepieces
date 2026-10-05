@@ -8,7 +8,7 @@ import { generatedActionUtils } from '../../common/generated-action-utils';
 const productConditionsGetGet = createAction({
     auth: sellercloudAuth,
     name: 'product_conditions_get_get',
-    displayName: 'ProductConditions: Get list of all product conditions',
+    displayName: 'Product Conditions: Get List of All Product Conditions',
     description: 'Get list of all product conditions. GET /api/ProductConditions',
     props: {},
     async run(context) {
@@ -34,7 +34,7 @@ const productConditionsGetGet = createAction({
 const productConditionsGetById = createAction({
     auth: sellercloudAuth,
     name: 'product_conditions_get_by_id',
-    displayName: 'ProductConditions: Get product condition by id',
+    displayName: 'Product Conditions: Get Product Condition by ID',
     description: 'Get product condition by id. GET /api/ProductConditions/{id}',
     props: {
         id: Property.Number({
