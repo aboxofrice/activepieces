@@ -7,7 +7,7 @@ import { getQueuedJob } from './lib/actions/get-queued-job';
 import { importInventoryFromCsv } from './lib/actions/import-inventory-from-csv';
 import { importPhysicalInventory } from './lib/actions/import-physical-inventory';
 import { listWarehouses } from './lib/actions/list-warehouses';
-import { sellercloudAuth } from './lib/auth';
+import { sellercloudAuth, sellercloudAuthProps } from './lib/auth';
 import { sellercloudClient } from './lib/common/client';
 
 export const sellercloud = createPiece({
@@ -27,9 +27,9 @@ export const sellercloud = createPiece({
         ...generatedActions,
         createCustomApiCallAction({
             auth: sellercloudAuth,
-            baseUrl: (auth) => (auth ? sellercloudClient.apiBase({ auth: auth.props }) : ''),
+            baseUrl: (auth) => (auth ? sellercloudClient.apiBase({ auth: sellercloudAuthProps(auth) }) : ''),
             authMapping: async (auth) => ({
-                Authorization: `Bearer ${await sellercloudClient.getToken({ auth: auth.props })}`,
+                Authorization: `Bearer ${await sellercloudClient.getToken({ auth: sellercloudAuthProps(auth) })}`,
             }),
         }),
     ],

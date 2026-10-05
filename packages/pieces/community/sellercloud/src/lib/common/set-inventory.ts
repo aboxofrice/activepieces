@@ -8,32 +8,55 @@ import { WarehouseSnapshot } from './warehouse-snapshot';
 // ImportPhysicalInventory ADDS to the existing quantity, so "set this warehouse to N"
 // has to be expressed as a delta. AdjustPhysicalInventory takes one, and unlike
 // SetPhysicalInventory it is not blocked for shadow SKUs.
-async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress, snapshot, shadowSuffix }: SetQuantitiesParams): Promise<SetOutcome> {
+async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress, snapshot, shadowSuffix, maxWrites }: SetQuantitiesParams): Promise<SetOutcome> {
     // A snapshot is a reading of SellerCloud's own state, so zeroing from it needs no
     // verification; the ledger is a record of intent and still does.
     if (((zeroMissing && isNil(snapshot)) || useLedger) && !verify) {
         throw new Error('Trusting or extending the last-written history requires "Verify After Writing": without it the history records intent rather than confirmed quantities.');
+    }
+    const chunking = !isNil(maxWrites) && maxWrites > 0;
+    // Chunking has no checkpoint of its own: the next run recomputes the deltas from a
+    // fresh snapshot, and what this run wrote is simply no longer a delta. That only holds
+    // if the writes have landed before the next snapshot is taken, which is what the
+    // verification poll waits for.
+    if (chunking && !verify) {
+        throw new Error('Limiting writes per run requires "Verify After Writing": the next run re-reads SellerCloud to find the remaining work, so this run\'s adjustments have to have landed first.');
+    }
+    if (chunking && isNil(snapshot)) {
+        throw new Error('Limiting writes per run requires a warehouse snapshot: without one the remaining work cannot be recomputed on the next run.');
     }
     const targets = zeroMissing
         ? await withMissingZeroed({ store, warehouseId, rows, snapshot, shadowSuffix })
         : rows;
     const current = await currentQuantities({ auth, token, store, warehouseId, rows: targets, useLedger, snapshot });
     const planned = targets.map((row) => plan({ row, current: current.quantities.get(row.productId) }));
+    const chunk = writeChunk({ planned, maxWrites });
+    const writeDeadline = chunking ? Date.now() + WRITE_BUDGET_MS : null;
 
     const applied: AppliedAdjustment[] = [];
     for (const [index, item] of planned.entries()) {
-        if (item.delta !== 0 && isNil(item.error)) {
+        // The engine kills a run at AP_FLOW_TIMEOUT_SECONDS, which would lose the report
+        // for writes that did land, so stop starting new ones before that.
+        const outOfTime = !isNil(writeDeadline) && Date.now() > writeDeadline;
+        if (chunk.has(item.productId) && !outOfTime) {
             const { error } = await adjust({ auth, token, store, warehouseId, item, reason });
-            applied.push({ ...item, error: error?.message ?? null });
+            applied.push({ ...item, error: error?.message ?? null, deferred: false });
+        }
+        else if (chunk.has(item.productId)) {
+            chunk.delete(item.productId);
+            applied.push({ ...item, error: null, deferred: true });
         }
         else {
-            applied.push({ ...item, error: item.error ?? null });
+            applied.push({ ...item, error: item.error ?? null, deferred: isNil(item.error) && item.delta !== 0 });
         }
         onProgress?.({ done: index + 1, total: planned.length });
     }
 
+    // Only what this run actually submitted: a deferred adjustment has nothing to confirm,
+    // and re-reading one costs a request against an hourly budget.
+    const attempted = applied.filter((item) => chunk.has(item.productId));
     const verified = verify
-        ? await verifyQuantities({ auth, token, store, warehouseId, planned })
+        ? await verifyQuantities({ auth, token, store, warehouseId, expected: attempted })
         : null;
     // The ledger is a claim about SellerCloud's state, so only verified quantities may
     // enter it. Recording intent instead let an adjustment that lagged or failed leave a
@@ -43,7 +66,7 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
         const unconfirmed = new Set(verified.mismatches.map((mismatch) => mismatch.productId));
         const confirmed = Object.fromEntries(
             applied
-                .filter((item) => isNil(item.error) && !unconfirmed.has(item.productId))
+                .filter((item) => isNil(item.error) && !item.deferred && !unconfirmed.has(item.productId))
                 .map((item) => [item.productId, item.to] as const),
         );
         await quantityLedger.merge({ store, warehouseId, applied: confirmed });
@@ -52,17 +75,34 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
             await quantityLedger.forget({ store, warehouseId, productIds: [...unconfirmed] });
         }
     }
+    const deferred = applied.filter((item) => item.deferred).length;
     return {
         warehouseId,
         source: current.source,
         requested: targets.length,
         zeroedMissing: targets.length - rows.length,
-        changed: applied.filter((item) => item.delta !== 0 && isNil(item.error)).length,
+        changed: applied.filter((item) => item.delta !== 0 && isNil(item.error) && !item.deferred).length,
         unchanged: applied.filter((item) => item.delta === 0).length,
         failed: applied.filter((item) => !isNil(item.error)).length,
+        deferred,
+        // The caller re-runs until this is true. A failed write is not deferred work: the
+        // next snapshot still shows the old quantity, so it reappears as a delta on its own.
+        complete: deferred === 0,
         adjustments: applied,
         verified,
     };
+}
+
+// Which adjustments this run may send. Ordering by product id keeps the split stable, so
+// a run that gets through only part of the work always resumes where the last one stopped
+// instead of reshuffling what is left.
+function writeChunk({ planned, maxWrites }: { planned: PlannedAdjustment[]; maxWrites?: number }): Set<string> {
+    const writable = planned
+        .filter((item) => isNil(item.error) && item.delta !== 0)
+        .map((item) => item.productId)
+        .sort((a, b) => a.localeCompare(b));
+    const budget = isNil(maxWrites) || maxWrites <= 0 ? writable.length : maxWrites;
+    return new Set(writable.slice(0, budget));
 }
 
 // The snapshot already carries this warehouse's quantities, so when one was taken there is
@@ -193,11 +233,11 @@ async function adjust({ auth, token, store, warehouseId, item, reason }: AdjustP
 
 // Adjustments land ~30-60s later, so a read taken straight after a write returns the old
 // value. Acting on one double-applies; wait for the number to stop moving instead.
-async function verifyQuantities({ auth, token, store, warehouseId, planned }: VerifyParams): Promise<VerifyResult> {
-    // A SKU whose delta was 0 was not written, so there is nothing to confirm; including
-    // them made the first poll re-read the whole batch, which on a 466-SKU warehouse is
-    // ~320 wasted calls against an hourly request budget.
-    const expected = planned.filter((item) => isNil(item.error) && item.delta !== 0);
+// A SKU whose delta was 0 was not written, and a deferred one was not either, so the
+// caller passes only what it submitted: polling the whole batch made the first round
+// re-read every row, which on a 466-SKU warehouse is ~320 wasted calls against an hourly
+// request budget.
+async function verifyQuantities({ auth, token, store, warehouseId, expected }: VerifyParams): Promise<VerifyResult> {
     const deadline = Date.now() + VERIFY_TIMEOUT_MS;
     const observed = new Map<string, number | null>();
     // Re-reading every SKU each round is the bulk of a large batch's cost, so each round
@@ -230,6 +270,8 @@ const ADJUSTMENT_SUBTRACT = 0;
 const ADJUSTMENT_ADD = 1;
 const VERIFY_POLL_MS = 15000;
 const VERIFY_TIMEOUT_MS = 300000;
+// Leaves room inside AP_FLOW_TIMEOUT_SECONDS (600) for the verification poll that follows.
+const WRITE_BUDGET_MS = 240000;
 
 export type PlannedAdjustment = {
     productId: string;
@@ -239,7 +281,9 @@ export type PlannedAdjustment = {
     error: string | null;
 };
 
-export type AppliedAdjustment = PlannedAdjustment;
+// `deferred` is an adjustment this run chose not to send because it was over its write
+// budget. It is not an error and not a no-op: the work is still outstanding.
+export type AppliedAdjustment = PlannedAdjustment & { deferred: boolean };
 
 export type VerifyResult = {
     settled: boolean;
@@ -257,6 +301,8 @@ export type SetOutcome = {
     changed: number;
     unchanged: number;
     failed: number;
+    deferred: number;
+    complete: boolean;
     adjustments: AppliedAdjustment[];
     verified: VerifyResult | null;
 };
@@ -276,6 +322,7 @@ type SetQuantitiesParams = {
     onProgress?: (progress: { done: number; total: number }) => void;
     snapshot?: WarehouseSnapshot;
     shadowSuffix?: string;
+    maxWrites?: number;
 };
 
 type WithMissingZeroedParams = {
@@ -286,9 +333,11 @@ type WithMissingZeroedParams = {
     shadowSuffix?: string;
 };
 
-type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress'>;
+type WriteParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress' | 'maxWrites'>;
 
-type ReadQuantitiesParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { productIds: string[] };
+type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress' | 'maxWrites'>;
+
+type ReadQuantitiesParams = WriteParams & { productIds: string[] };
 type ReadQuantityParams = Omit<ReadQuantitiesParams, 'productIds'> & { productId: string };
-type AdjustParams = Omit<SetQuantitiesParams, 'rows' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { item: PlannedAdjustment };
-type VerifyParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress'> & { planned: PlannedAdjustment[] };
+type AdjustParams = WriteParams & { reason: string; item: PlannedAdjustment };
+type VerifyParams = WriteParams & { expected: AppliedAdjustment[] };

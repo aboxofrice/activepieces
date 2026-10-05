@@ -56,6 +56,7 @@ export const importInventoryFromCsv = createAction({
         verifyAfterWrite: sellercloudProps.verifyAfterWrite,
         trustLastWritten: sellercloudProps.trustLastWritten,
         zeroMissing: sellercloudProps.zeroMissing,
+        maxWritesPerRun: sellercloudProps.maxWritesPerRun,
         inventoryDate: sellercloudProps.inventoryDate,
         dryRun: Property.Checkbox({
             displayName: 'Dry Run',
@@ -122,6 +123,7 @@ export const importInventoryFromCsv = createAction({
             verifyAfterWrite: props.verifyAfterWrite,
             trustLastWritten: props.trustLastWritten,
             zeroMissing: props.zeroMissing,
+            maxWritesPerRun: props.maxWritesPerRun ?? 0,
             rows: mapping.rows,
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),
             waitForCompletion: props.waitForCompletion ?? true,
@@ -133,6 +135,11 @@ export const importInventoryFromCsv = createAction({
     },
 });
 
+// Anything unrecognised used to fall through to replacing the warehouse, so a mistyped
+// mode would zero every product the file does not list. Refuse instead.
 function writeModeOf({ value }: { value: string }): WriteMode {
-    return value === 'ADD' || value === 'SET_LISTED' ? value : 'REPLACE_WAREHOUSE';
+    if (value === 'ADD' || value === 'SET_LISTED' || value === 'REPLACE_WAREHOUSE') {
+        return value;
+    }
+    throw new Error(`Unknown quantity handling "${value}". Use SET_LISTED, REPLACE_WAREHOUSE or ADD.`);
 }

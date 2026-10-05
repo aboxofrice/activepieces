@@ -1,6 +1,6 @@
 import { Property } from '@activepieces/pieces-framework';
 import { tryCatch } from '@activepieces/shared';
-import { sellercloudAuth } from '../auth';
+import { sellercloudAuth, sellercloudAuthProps } from '../auth';
 import { sellercloudClient } from './client';
 
 const warehouse = Property.Dropdown({
@@ -12,7 +12,7 @@ const warehouse = Property.Dropdown({
         if (!auth) {
             return { disabled: true, options: [], placeholder: 'Connect SellerCloud first' };
         }
-        const { data, error } = await tryCatch(() => sellercloudClient.listWarehouses({ auth: auth.props }));
+        const { data, error } = await tryCatch(() => sellercloudClient.listWarehouses({ auth: sellercloudAuthProps(auth) }));
         if (error) {
             return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${error.message}` };
         }
@@ -71,6 +71,13 @@ const verifyAfterWrite = Property.Checkbox({
     defaultValue: true,
 });
 
+const maxWritesPerRun = Property.Number({
+    displayName: 'Max Adjustments Per Run',
+    description: 'When setting only the listed products, the most adjustments to send in one run. The rest are reported as deferred and picked up by the next run, which re-reads SellerCloud to find what is still outstanding. 0 means no limit. Use this when a day\'s changes are too many for one flow run.',
+    required: false,
+    defaultValue: 0,
+});
+
 const inventoryDate = Property.DateTime({
     displayName: 'Inventory Date',
     description: 'When the counts were taken. Defaults to now.',
@@ -98,6 +105,7 @@ export const sellercloudProps = {
     verifyAfterWrite,
     trustLastWritten,
     zeroMissing,
+    maxWritesPerRun,
     inventoryDate,
     waitForCompletion,
     timeoutSeconds,

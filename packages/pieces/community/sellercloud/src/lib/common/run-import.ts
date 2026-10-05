@@ -3,10 +3,10 @@ import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
 import { WarehouseSnapshot } from './warehouse-snapshot';
 
-async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix, maxWritesPerRun }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
-        return { warehouse, submitted: false, job: null };
+        return { warehouse, submitted: false, job: null, complete: true, pendingJobId: null };
     }
     // Only the delta path needs reads; both import modes are a single queued job.
     if (writeMode === 'SET_LISTED') {
@@ -22,22 +22,29 @@ async function runImport({ auth, token, store, warehouseId, rows, inventoryDate,
             zeroMissing: zeroMissing ?? false,
             snapshot,
             shadowSuffix,
+            maxWrites: maxWritesPerRun,
         });
-        return { warehouse, submitted: true, job: null, set };
+        return { warehouse, submitted: true, job: null, set, complete: set.complete, pendingJobId: null };
     }
     // A Full import replaces the warehouse; a Partial one adds to what is already there.
     const submitted = await inventoryImport.submitImport({
         auth, token, warehouse, rows, inventoryDate,
         updateType: writeMode === 'REPLACE_WAREHOUSE' ? 'FULL' : 'PARTIAL',
     });
+    // A full import runs for hours, far past AP_FLOW_TIMEOUT_SECONDS, so the caller submits
+    // and exits. That is not a finished import: `complete` stays false and the job id comes
+    // back so whoever runs this can poll it and only then treat the file as imported.
     if (!waitForCompletion) {
-        return { warehouse, submitted: true, job: { id: submitted.id, status: 'Submitted', message: submitted.message } };
+        return {
+            warehouse, submitted: true, complete: false, pendingJobId: submitted.id,
+            job: { id: submitted.id, status: 'Submitted', message: submitted.message },
+        };
     }
     const job = await inventoryImport.waitForJob({ auth, token, jobId: submitted.id, timeoutSeconds });
     if (job.finished && !job.succeeded && job.status !== 'PartialSuccess') {
         throw new Error(`SellerCloud import job ${job.id} ended as ${job.status}: ${job.errorMessage ?? job.errors.slice(0, 5).join('; ')}`);
     }
-    return { warehouse, submitted: true, job };
+    return { warehouse, submitted: true, job, complete: job.finished, pendingJobId: job.finished ? null : job.id };
 }
 
 async function findWarehouse({ auth, token, warehouseId }: { auth: SellercloudAuthProps; token: string; warehouseId: number }): Promise<{ ID: number; Name: string }> {
@@ -59,6 +66,10 @@ export type ImportOutcome = {
     submitted: boolean;
     job: JobResult | { id: number; status: string; message: string | null } | null;
     set?: SetOutcome;
+    // False means work is still outstanding — a queued import that has not finished, or
+    // adjustments deferred past this run's write budget. Run it again.
+    complete: boolean;
+    pendingJobId: number | null;
 };
 
 export type WriteMode = 'REPLACE_WAREHOUSE' | 'SET_LISTED' | 'ADD';
@@ -74,6 +85,7 @@ type RunImportParams = {
     verifyAfterWrite?: boolean;
     trustLastWritten?: boolean;
     zeroMissing?: boolean;
+    maxWritesPerRun?: number;
     warehouseId: number;
     rows: InventoryRow[];
     inventoryDate: Date;
