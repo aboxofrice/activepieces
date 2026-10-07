@@ -3,7 +3,7 @@ import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
 import { WarehouseSnapshot } from './warehouse-snapshot';
 
-async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix, maxWritesPerRun }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix, maxWritesPerRun, deadline }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
         return { warehouse, submitted: false, job: null, complete: true, pendingJobId: null };
@@ -23,6 +23,7 @@ async function runImport({ auth, token, store, warehouseId, rows, inventoryDate,
             snapshot,
             shadowSuffix,
             maxWrites: maxWritesPerRun,
+            deadline,
         });
         return { warehouse, submitted: true, job: null, set, complete: set.complete, pendingJobId: null };
     }
@@ -86,6 +87,7 @@ type RunImportParams = {
     trustLastWritten?: boolean;
     zeroMissing?: boolean;
     maxWritesPerRun?: number;
+    deadline?: number;
     warehouseId: number;
     rows: InventoryRow[];
     inventoryDate: Date;

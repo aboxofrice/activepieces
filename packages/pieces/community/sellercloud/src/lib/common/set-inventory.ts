@@ -8,7 +8,7 @@ import { WarehouseSnapshot } from './warehouse-snapshot';
 // ImportPhysicalInventory ADDS to the existing quantity, so "set this warehouse to N"
 // has to be expressed as a delta. AdjustPhysicalInventory takes one, and unlike
 // SetPhysicalInventory it is not blocked for shadow SKUs.
-async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress, snapshot, shadowSuffix, maxWrites }: SetQuantitiesParams): Promise<SetOutcome> {
+async function setQuantities({ auth, token, store, warehouseId, rows, reason, verify, useLedger, zeroMissing, onProgress, snapshot, shadowSuffix, maxWrites, deadline }: SetQuantitiesParams): Promise<SetOutcome> {
     // A snapshot is a reading of SellerCloud's own state, so zeroing from it needs no
     // verification; the ledger is a record of intent and still does.
     if (((zeroMissing && isNil(snapshot)) || useLedger) && !verify) {
@@ -31,7 +31,12 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
     const current = await currentQuantities({ auth, token, store, warehouseId, rows: targets, useLedger, snapshot });
     const planned = targets.map((row) => plan({ row, current: current.quantities.get(row.productId) }));
     const chunk = writeChunk({ planned, maxWrites });
-    const writeDeadline = chunking ? Date.now() + WRITE_BUDGET_MS : null;
+    // Measured from the start of the run, not from here: fetching the ~350 MB template takes
+    // SellerCloud up to ~200s before a single quantity is known, so a budget counted from the
+    // first write overran AP_FLOW_TIMEOUT_SECONDS and the engine killed the run - losing the
+    // report for adjustments that had already landed.
+    const runDeadline = deadline ?? Date.now() + DEFAULT_RUN_BUDGET_MS;
+    const writeDeadline = chunking ? runDeadline - VERIFY_RESERVE_MS : null;
 
     const applied: AppliedAdjustment[] = [];
     for (const [index, item] of planned.entries()) {
@@ -56,7 +61,7 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
     // and re-reading one costs a request against an hourly budget.
     const attempted = applied.filter((item) => chunk.has(item.productId));
     const verified = verify
-        ? await verifyQuantities({ auth, token, store, warehouseId, expected: attempted })
+        ? await verifyQuantities({ auth, token, store, warehouseId, expected: attempted, deadline: runDeadline })
         : null;
     // The ledger is a claim about SellerCloud's state, so only verified quantities may
     // enter it. Recording intent instead let an adjustment that lagged or failed leave a
@@ -69,10 +74,19 @@ async function setQuantities({ auth, token, store, warehouseId, rows, reason, ve
                 .filter((item) => isNil(item.error) && !item.deferred && !unconfirmed.has(item.productId))
                 .map((item) => [item.productId, item.to] as const),
         );
-        await quantityLedger.merge({ store, warehouseId, applied: confirmed });
-        // A SKU that did not land must not keep a stale claim either.
-        if (unconfirmed.size > 0) {
-            await quantityLedger.forget({ store, warehouseId, productIds: [...unconfirmed] });
+        // The adjustments have already landed by now, so failing here would report a run that
+        // changed SellerCloud as one that did not. Centerline's ~39k parts outgrew the store's
+        // 512 KB per-key cap this way. A ledger that could not be updated is cleared instead,
+        // so it cannot leave a stale baseline behind; runs with a snapshot do not need it.
+        const { error: ledgerError } = await tryCatch(async () => {
+            await quantityLedger.merge({ store, warehouseId, applied: confirmed });
+            // A SKU that did not land must not keep a stale claim either.
+            if (unconfirmed.size > 0) {
+                await quantityLedger.forget({ store, warehouseId, productIds: [...unconfirmed] });
+            }
+        });
+        if (!isNil(ledgerError)) {
+            await tryCatch(() => quantityLedger.write({ store, warehouseId, quantities: {} }));
         }
     }
     const deferred = applied.filter((item) => item.deferred).length;
@@ -237,31 +251,47 @@ async function adjust({ auth, token, store, warehouseId, item, reason }: AdjustP
 // caller passes only what it submitted: polling the whole batch made the first round
 // re-read every row, which on a 466-SKU warehouse is ~320 wasted calls against an hourly
 // request budget.
-async function verifyQuantities({ auth, token, store, warehouseId, expected }: VerifyParams): Promise<VerifyResult> {
-    const deadline = Date.now() + VERIFY_TIMEOUT_MS;
+async function verifyQuantities({ auth, token, store, warehouseId, expected, deadline }: VerifyParams): Promise<VerifyResult> {
+    // Whichever comes first: the usual settling allowance, or what is left of the run.
+    const until = Math.min(Date.now() + VERIFY_TIMEOUT_MS, deadline ?? Number.MAX_SAFE_INTEGER);
     const observed = new Map<string, number | null>();
+    const unreadableRounds = new Map<string, number>();
     // Re-reading every SKU each round is the bulk of a large batch's cost, so each round
     // only polls what has not landed yet.
     let outstanding = expected;
+    const settled = new Set<string>();
 
     // Only an exact match counts as settled. Two identical reads are NOT evidence of
     // completion: a pending adjustment reads as the old value for as long as a minute,
     // so "stopped changing" is indistinguishable from "has not started".
-    while (outstanding.length > 0 && Date.now() < deadline) {
+    while (outstanding.length > 0 && Date.now() < until) {
         await new Promise((resolve) => setTimeout(resolve, VERIFY_POLL_MS));
         const round = await readQuantities({ auth, token, store, warehouseId, productIds: outstanding.map((item) => item.productId) });
         for (const [productId, quantity] of round) {
             observed.set(productId, quantity);
+            unreadableRounds.set(productId, quantity === null ? (unreadableRounds.get(productId) ?? 0) + 1 : 0);
         }
-        outstanding = outstanding.filter((item) => round.get(item.productId) !== item.to);
+        for (const item of outstanding) {
+            if (round.get(item.productId) === item.to) {
+                settled.add(item.productId);
+            }
+        }
+        // A pending adjustment reads as the OLD value, never as null, so a SKU that keeps
+        // coming back null is an error or a missing row and will not improve by asking again.
+        // Re-reading it every 15s until the deadline is what turned Sherwood's 58 writes into
+        // enough requests to lock the whole account out for an hour.
+        outstanding = outstanding.filter((item) => !settled.has(item.productId)
+            && (unreadableRounds.get(item.productId) ?? 0) < MAX_UNREADABLE_ROUNDS);
     }
 
-    const mismatches = outstanding.map((item) => ({
-        productId: item.productId,
-        expected: item.to,
-        actual: observed.get(item.productId) ?? null,
-    }));
-    return { settled: outstanding.length === 0, timedOut: outstanding.length > 0, mismatches };
+    const mismatches = expected
+        .filter((item) => !settled.has(item.productId))
+        .map((item) => ({
+            productId: item.productId,
+            expected: item.to,
+            actual: observed.get(item.productId) ?? null,
+        }));
+    return { settled: mismatches.length === 0, timedOut: outstanding.length > 0, mismatches };
 }
 
 export const inventorySetter = { setQuantities, readQuantity };
@@ -270,8 +300,11 @@ const ADJUSTMENT_SUBTRACT = 0;
 const ADJUSTMENT_ADD = 1;
 const VERIFY_POLL_MS = 15000;
 const VERIFY_TIMEOUT_MS = 300000;
-// Leaves room inside AP_FLOW_TIMEOUT_SECONDS (600) for the verification poll that follows.
-const WRITE_BUDGET_MS = 240000;
+const MAX_UNREADABLE_ROUNDS = 3;
+// Held back from the run's budget so there is time to confirm the writes that were made.
+const VERIFY_RESERVE_MS = 150000;
+// Only used when the caller passes no deadline; a flow action always does.
+const DEFAULT_RUN_BUDGET_MS = 540000;
 
 export type PlannedAdjustment = {
     productId: string;
@@ -323,6 +356,8 @@ type SetQuantitiesParams = {
     snapshot?: WarehouseSnapshot;
     shadowSuffix?: string;
     maxWrites?: number;
+    // When this run has to be finished, as an absolute timestamp.
+    deadline?: number;
 };
 
 type WithMissingZeroedParams = {
@@ -333,11 +368,11 @@ type WithMissingZeroedParams = {
     shadowSuffix?: string;
 };
 
-type WriteParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress' | 'maxWrites'>;
+type WriteParams = Omit<SetQuantitiesParams, 'rows' | 'reason' | 'verify' | 'useLedger' | 'zeroMissing' | 'onProgress' | 'maxWrites' | 'deadline'>;
 
-type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress' | 'maxWrites'>;
+type CurrentQuantitiesParams = Omit<SetQuantitiesParams, 'reason' | 'verify' | 'zeroMissing' | 'onProgress' | 'maxWrites' | 'deadline'>;
 
 type ReadQuantitiesParams = WriteParams & { productIds: string[] };
 type ReadQuantityParams = Omit<ReadQuantitiesParams, 'productIds'> & { productId: string };
 type AdjustParams = WriteParams & { reason: string; item: PlannedAdjustment };
-type VerifyParams = WriteParams & { expected: AppliedAdjustment[] };
+type VerifyParams = WriteParams & { expected: AppliedAdjustment[]; deadline?: number };

@@ -68,6 +68,9 @@ export const importInventoryFromCsv = createAction({
         timeoutSeconds: sellercloudProps.timeoutSeconds,
     },
     async run(context) {
+        // The clock starts here, before the template fetch, because that fetch is the single
+        // biggest slice of the run and what is left after it decides how much can be written.
+        const deadline = Date.now() + RUN_BUDGET_MS;
         const props = context.propsValue;
         const onlyProductIds = (props.onlyProductIds ?? []).map((id) => String(id).trim()).filter((id) => id !== '');
         const writeMode = writeModeOf({ value: props.writeMode });
@@ -124,6 +127,7 @@ export const importInventoryFromCsv = createAction({
             trustLastWritten: props.trustLastWritten,
             zeroMissing: props.zeroMissing,
             maxWritesPerRun: props.maxWritesPerRun ?? 0,
+            deadline,
             rows: mapping.rows,
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),
             waitForCompletion: props.waitForCompletion ?? true,
@@ -137,6 +141,10 @@ export const importInventoryFromCsv = createAction({
 
 // Anything unrecognised used to fall through to replacing the warehouse, so a mistyped
 // mode would zero every product the file does not list. Refuse instead.
+// AP_FLOW_TIMEOUT_SECONDS is 600; the rest is headroom for the report and the store writes
+// that follow this step.
+const RUN_BUDGET_MS = 540000;
+
 function writeModeOf({ value }: { value: string }): WriteMode {
     if (value === 'ADD' || value === 'SET_LISTED' || value === 'REPLACE_WAREHOUSE') {
         return value;
