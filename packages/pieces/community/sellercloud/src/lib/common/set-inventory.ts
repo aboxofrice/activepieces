@@ -139,7 +139,12 @@ async function withMissingZeroed({ store, warehouseId, rows, snapshot, shadowSuf
         const present = new Set(rows.map((row) => holding(row.productId)));
         const missing: InventoryRow[] = [];
         for (const [productId, quantity] of snapshot.quantities) {
-            if (quantity !== 0 && !present.has(holding(productId))) {
+            // The snapshot lists a shadow SKU with its parent's quantity, so a dropped part shows
+            // up twice for the same stock. Zeroing both subtracted that stock twice, leaving the
+            // pair at minus its original quantity (12 -> -12). The parent row is the physical
+            // holding; the shadow is only a view onto it.
+            const duplicatesParent = holding(productId) !== productId && snapshot.quantities.has(holding(productId));
+            if (quantity !== 0 && !present.has(holding(productId)) && !duplicatesParent) {
                 missing.push({ productId, quantity: 0 });
             }
         }
