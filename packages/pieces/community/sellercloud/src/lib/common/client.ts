@@ -53,7 +53,7 @@ async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<
     if (!error) {
         return data.body;
     }
-    const delay = retryDelayMs({ error, attempt });
+    const delay = retryDelayMs({ error, attempt, safeToRepeat: isSafeToRepeat({ request }) });
     if (delay === null) {
         throw error;
     }
@@ -61,7 +61,16 @@ async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<
     return sendWithRetry({ request, attempt: attempt + 1 });
 }
 
-function retryDelayMs({ error, attempt }: { error: Error; attempt: number }): number | null {
+// A 502/503/504 says the gateway gave up, not that the server did nothing: the request may
+// well have been processed. Repeating a read or fetching a token is harmless; repeating an
+// inventory adjustment applies the same delta twice. That is how a run's zero-writes left 41
+// SKUs at minus their original stock. Only a 409/429 is safe to retry for a write, because
+// SellerCloud rejects those before doing any work.
+function isSafeToRepeat({ request }: { request: Parameters<typeof httpClient.sendRequest>[0] }): boolean {
+    return request.method === HttpMethod.GET || /\/token\/?$/.test(request.url);
+}
+
+function retryDelayMs({ error, attempt, safeToRepeat }: { error: Error; attempt: number; safeToRepeat: boolean }): number | null {
     if (attempt >= MAX_ATTEMPTS || !(error instanceof HttpError)) {
         return null;
     }
@@ -70,7 +79,7 @@ function retryDelayMs({ error, attempt }: { error: Error; attempt: number }): nu
         const wait = rateLimitWaitMs({ body: error.response.body });
         return wait !== null && wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
     }
-    if (TRANSIENT_STATUSES.includes(status)) {
+    if (safeToRepeat && TRANSIENT_STATUSES.includes(status)) {
         return BASE_BACKOFF_MS * 2 ** (attempt - 1);
     }
     return null;
