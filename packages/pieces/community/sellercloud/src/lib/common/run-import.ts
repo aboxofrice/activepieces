@@ -1,12 +1,27 @@
+import { isNil } from '@activepieces/shared';
 import { SellercloudAuthProps, TokenStore, sellercloudClient } from './client';
 import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
 import { WarehouseSnapshot } from './warehouse-snapshot';
 
-async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix, maxWritesPerRun, deadline }: RunImportParams): Promise<ImportOutcome> {
+async function runImport({ auth, token, store, warehouseId, rows, inventoryDate, waitForCompletion, timeoutSeconds, writeMode, adjustmentReason, verifyAfterWrite, trustLastWritten, zeroMissing, snapshot, shadowSuffix, maxWritesPerRun, fullImportAbove, deadline }: RunImportParams): Promise<ImportOutcome> {
     const warehouse = await findWarehouse({ auth, token, warehouseId });
     if (rows.length === 0) {
         return { warehouse, submitted: false, job: null, complete: true, pendingJobId: null };
+    }
+    // A delta costs about two requests per changed part against an hourly budget, a full
+    // import a handful regardless of size. On a day with a big swing the import is the
+    // faster way to the same end state - which it only is when missing parts are zeroed too.
+    const changes = writeMode === 'SET_LISTED' && !isNil(snapshot) && (fullImportAbove ?? 0) > 0 && (zeroMissing ?? false)
+        ? await inventorySetter.countChanges({ store, warehouseId, rows, snapshot, shadowSuffix })
+        : null;
+    if (!isNil(changes) && changes > (fullImportAbove ?? 0)) {
+        const submitted = await inventoryImport.submitImport({ auth, token, warehouse, rows, inventoryDate, updateType: 'FULL' });
+        // Hours of processing on SellerCloud's side: hand the job back to be polled rather than wait.
+        return {
+            warehouse, submitted: true, complete: false, pendingJobId: submitted.id, switchedToFullImport: { changes, threshold: fullImportAbove ?? 0 },
+            job: { id: submitted.id, status: 'Submitted', message: submitted.message },
+        };
     }
     // Only the delta path needs reads; both import modes are a single queued job.
     if (writeMode === 'SET_LISTED') {
@@ -25,7 +40,7 @@ async function runImport({ auth, token, store, warehouseId, rows, inventoryDate,
             maxWrites: maxWritesPerRun,
             deadline,
         });
-        return { warehouse, submitted: true, job: null, set, complete: set.complete, pendingJobId: null };
+        return { warehouse, submitted: true, job: null, set, complete: set.complete, pendingJobId: null, ...(isNil(changes) ? {} : { changes }) };
     }
     // A Full import replaces the warehouse; a Partial one adds to what is already there.
     const submitted = await inventoryImport.submitImport({
@@ -67,6 +82,9 @@ export type ImportOutcome = {
     submitted: boolean;
     job: JobResult | { id: number; status: string; message: string | null } | null;
     set?: SetOutcome;
+    // Set when a delta was large enough that one full import replaced it.
+    switchedToFullImport?: { changes: number; threshold: number };
+    changes?: number;
     // False means work is still outstanding — a queued import that has not finished, or
     // adjustments deferred past this run's write budget. Run it again.
     complete: boolean;
@@ -87,6 +105,7 @@ type RunImportParams = {
     trustLastWritten?: boolean;
     zeroMissing?: boolean;
     maxWritesPerRun?: number;
+    fullImportAbove?: number;
     deadline?: number;
     warehouseId: number;
     rows: InventoryRow[];

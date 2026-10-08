@@ -294,7 +294,17 @@ async function verifyQuantities({ auth, token, store, warehouseId, expected, dea
     return { settled: mismatches.length === 0, timedOut: outstanding.length > 0, mismatches };
 }
 
-export const inventorySetter = { setQuantities, readQuantity };
+// How many adjustments a delta would send, from the snapshot alone (no requests), so the
+// caller can choose between adjustments and a full import before spending any budget.
+async function countChanges({ store, warehouseId, rows, snapshot, shadowSuffix }: WithMissingZeroedParams & { snapshot: WarehouseSnapshot }): Promise<number> {
+    const targets = await withMissingZeroed({ store, warehouseId, rows, snapshot, shadowSuffix });
+    return targets.filter((row) => {
+        const current = snapshot.quantities.get(row.productId);
+        return !isNil(current) && current !== row.quantity;
+    }).length;
+}
+
+export const inventorySetter = { setQuantities, readQuantity, countChanges };
 
 const ADJUSTMENT_SUBTRACT = 0;
 const ADJUSTMENT_ADD = 1;

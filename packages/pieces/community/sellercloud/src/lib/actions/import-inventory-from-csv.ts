@@ -57,6 +57,7 @@ export const importInventoryFromCsv = createAction({
         trustLastWritten: sellercloudProps.trustLastWritten,
         zeroMissing: sellercloudProps.zeroMissing,
         maxWritesPerRun: sellercloudProps.maxWritesPerRun,
+        fullImportAbove: sellercloudProps.fullImportAbove,
         inventoryDate: sellercloudProps.inventoryDate,
         dryRun: Property.Checkbox({
             displayName: 'Dry Run',
@@ -127,6 +128,7 @@ export const importInventoryFromCsv = createAction({
             trustLastWritten: props.trustLastWritten,
             zeroMissing: props.zeroMissing,
             maxWritesPerRun: props.maxWritesPerRun ?? 0,
+            fullImportAbove: props.fullImportAbove ?? 0,
             deadline,
             rows: mapping.rows,
             inventoryDate: props.inventoryDate ? new Date(props.inventoryDate) : new Date(),

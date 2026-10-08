@@ -78,6 +78,13 @@ const maxWritesPerRun = Property.Number({
     defaultValue: 0,
 });
 
+const fullImportAbove = Property.Number({
+    displayName: 'Switch to Full Import Above (changes)',
+    description: 'When setting only the listed products with missing products zeroed, count today\'s changes first. If there are more than this, replace the warehouse with one full import instead (a few requests, but SellerCloud takes hours to process it); otherwise write the changes as adjustments. 0 never switches.',
+    required: false,
+    defaultValue: 0,
+});
+
 const inventoryDate = Property.DateTime({
     displayName: 'Inventory Date',
     description: 'When the counts were taken. Defaults to now.',
@@ -106,6 +113,7 @@ export const sellercloudProps = {
     trustLastWritten,
     zeroMissing,
     maxWritesPerRun,
+    fullImportAbove,
     inventoryDate,
     waitForCompletion,
     timeoutSeconds,
