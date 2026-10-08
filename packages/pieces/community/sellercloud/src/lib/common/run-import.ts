@@ -1,4 +1,4 @@
-import { isNil } from '@activepieces/shared';
+import { isNil, tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, TokenStore, sellercloudClient } from './client';
 import { InventoryRow, JobResult, inventoryImport } from './inventory';
 import { SetOutcome, inventorySetter } from './set-inventory';
@@ -16,12 +16,23 @@ async function runImport({ auth, token, store, warehouseId, rows, inventoryDate,
         ? await inventorySetter.countChanges({ store, warehouseId, rows, snapshot, shadowSuffix })
         : null;
     if (!isNil(changes) && changes > (fullImportAbove ?? 0)) {
-        const submitted = await inventoryImport.submitImport({ auth, token, warehouse, rows, inventoryDate, updateType: 'FULL' });
-        // Hours of processing on SellerCloud's side: hand the job back to be polled rather than wait.
-        return {
-            warehouse, submitted: true, complete: false, pendingJobId: submitted.id, switchedToFullImport: { changes, threshold: fullImportAbove ?? 0 },
-            job: { id: submitted.id, status: 'Submitted', message: submitted.message },
-        };
+        // SellerCloud allows one physical-inventory import in flight per account, and a full
+        // import runs for hours. When another PDC already holds that slot, waiting is not an
+        // option inside a 10-minute run (and the refusal names no job to wait on), so the delta
+        // is written in chunks instead - slower, but it needs no slot and it makes progress.
+        // Without this the second PDC to want an import failed outright and was retried into the
+        // same refusal until the first job ended.
+        const { data: submitted, error } = await tryCatch(() => inventoryImport.submitImport({ auth, token, warehouse, rows, inventoryDate, updateType: 'FULL', waitForSlotSeconds: 0 }));
+        if (!isNil(submitted)) {
+            // Hours of processing on SellerCloud's side: hand the job back to be polled rather than wait.
+            return {
+                warehouse, submitted: true, complete: false, pendingJobId: submitted.id, switchedToFullImport: { changes, threshold: fullImportAbove ?? 0 },
+                job: { id: submitted.id, status: 'Submitted', message: submitted.message },
+            };
+        }
+        if (!isNil(error) && !importSlotIsTaken({ error })) {
+            throw error;
+        }
     }
     // Only the delta path needs reads; both import modes are a single queued job.
     if (writeMode === 'SET_LISTED') {
@@ -70,6 +81,10 @@ async function findWarehouse({ auth, token, warehouseId }: { auth: SellercloudAu
         throw new Error(`Warehouse ${warehouseId} not found. Available: ${warehouses.map((w) => `${w.ID} ${w.Name}`).join(', ')}`);
     }
     return { ID: warehouse.ID, Name: warehouse.Name };
+}
+
+function importSlotIsTaken({ error }: { error: Error }): boolean {
+    return /not allowed to import physical inventory/i.test(error.message);
 }
 
 export const importRunner = {
