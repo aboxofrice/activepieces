@@ -71,6 +71,9 @@
       "@activepieces/piece-amazon-s3": [
         "packages/pieces/community/amazon-s3/src/index.ts"
       ],
+      "@vqnguyen1/piece-amazon-seller": [
+        "packages/pieces/community/amazon-seller/src/index.ts"
+      ],
       "@activepieces/piece-amazon-sns": [
         "packages/pieces/community/amazon-sns/src/index.ts"
       ],
