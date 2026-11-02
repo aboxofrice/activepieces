@@ -1,5 +1,6 @@
 import { HttpMethod } from '@activepieces/pieces-common';
 import { AmazonSellerAuthProps, spApiClient } from './client';
+import { listingPatches, MFN_CHANNEL_CODE } from './listing-patches';
 
 async function getListing({ auth, sellerId, sku, marketplaceId, includedData }: GetListingParams): Promise<ListingItem> {
     return spApiClient.request<ListingItem>({
@@ -10,7 +11,7 @@ async function getListing({ auth, sellerId, sku, marketplaceId, includedData }: 
     });
 }
 
-async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, ...target }: SetQuantityParams): Promise<ListingSubmission> {
+async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, currentAttributes, ...target }: SetQuantityParams): Promise<ListingSubmission> {
     return patchListing({
         ...target,
         marketplaceId,
@@ -18,20 +19,13 @@ async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, .
             {
                 op: 'replace',
                 path: '/attributes/fulfillment_availability',
-                value: [
-                    {
-                        fulfillment_channel_code: MFN_CHANNEL_CODE,
-                        quantity,
-                        marketplace_id: marketplaceId,
-                        ...(handlingTime === undefined ? {} : { lead_time_to_ship_max_days: handlingTime }),
-                    },
-                ],
+                value: listingPatches.fulfillmentAvailability({ current: currentAttributes['fulfillment_availability'], marketplaceId, quantity, handlingTime }),
             },
         ],
     });
 }
 
-async function setPrice({ price, currency, minimumPrice, maximumPrice, marketplaceId, ...target }: SetPriceParams): Promise<ListingSubmission> {
+async function setPrice({ price, currency, minimumPrice, maximumPrice, marketplaceId, currentAttributes, ...target }: SetPriceParams): Promise<ListingSubmission> {
     return patchListing({
         ...target,
         marketplaceId,
@@ -39,15 +33,7 @@ async function setPrice({ price, currency, minimumPrice, maximumPrice, marketpla
             {
                 op: 'replace',
                 path: '/attributes/purchasable_offer',
-                value: [
-                    {
-                        marketplace_id: marketplaceId,
-                        currency,
-                        our_price: priceSchedule({ amount: price }),
-                        ...(minimumPrice === undefined ? {} : { minimum_seller_allowed_price: priceSchedule({ amount: minimumPrice }) }),
-                        ...(maximumPrice === undefined ? {} : { maximum_seller_allowed_price: priceSchedule({ amount: maximumPrice }) }),
-                    },
-                ],
+                value: listingPatches.purchasableOffer({ current: currentAttributes['purchasable_offer'], marketplaceId, currency, price, minimumPrice, maximumPrice }),
             },
         ],
     });
@@ -67,11 +53,15 @@ async function patchListing({ auth, sellerId, sku, marketplaceId, productType, p
     });
 }
 
-// Amazon validates a patch against the product type's schema, so the listing's real type is
-// sent. "PRODUCT" is the generic type Amazon accepts for offer-only attributes (price, quantity).
-async function lookupProductType({ auth, sellerId, sku, marketplaceId }: ListingTarget): Promise<string> {
-    const listing = await getListing({ auth, sellerId, sku, marketplaceId, includedData: ['summaries'] });
-    return flattenListing({ listing, marketplaceId }).product_type ?? 'PRODUCT';
+// A patch replaces whole attributes, so writes start from the listing's current attributes.
+// Amazon also validates a patch against the product type's schema, so the listing's real type
+// is sent; "PRODUCT" is the generic type Amazon accepts for offer-only attributes.
+async function readForUpdate({ auth, sellerId, sku, marketplaceId }: ListingTarget): Promise<{ productType: string; attributes: Record<string, unknown> }> {
+    const listing = await getListing({ auth, sellerId, sku, marketplaceId, includedData: ['summaries', 'attributes'] });
+    return {
+        productType: flattenListing({ listing, marketplaceId }).product_type ?? 'PRODUCT',
+        attributes: listing.attributes ?? {},
+    };
 }
 
 // An INVALID submission is a 200 with the reasons in `issues`; surfacing it as a failed step
@@ -82,10 +72,6 @@ function submissionIssues({ submission, what }: { submission: ListingSubmission;
         throw new Error(`Amazon rejected the ${what}: ${issues.map((issue) => `${issue.code}: ${issue.message}`).join('; ')}`);
     }
     return issues;
-}
-
-function priceSchedule({ amount }: { amount: number }): { schedule: { value_with_tax: number }[] }[] {
-    return [{ schedule: [{ value_with_tax: amount }] }];
 }
 
 function flattenListing({ listing, marketplaceId }: { listing: ListingItem; marketplaceId: string }): FlatListing {
@@ -122,11 +108,7 @@ function listingPath({ sellerId, sku }: { sellerId: string; sku: string }): stri
     return `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}/${encodeURIComponent(sku.trim())}`;
 }
 
-// "DEFAULT" is Amazon's code for merchant-fulfilled stock; FBA channels (AMAZON_NA, ...) are
-// owned by the fulfilment centres and can't be set through Listings Items.
-const MFN_CHANNEL_CODE = 'DEFAULT';
-
-export const amazonListings = { getListing, setFulfillmentQuantity, setPrice, lookupProductType, submissionIssues, flattenListing };
+export const amazonListings = { getListing, setFulfillmentQuantity, setPrice, readForUpdate, submissionIssues, flattenListing };
 
 export const LISTING_INCLUDED_DATA = [
     { label: 'Summaries (ASIN, title, status, product type)', value: 'summaries' },
@@ -213,11 +195,13 @@ type PatchListingParams = WriteTarget & {
 };
 
 type SetQuantityParams = WriteTarget & {
+    currentAttributes: Record<string, unknown>;
     quantity: number;
     handlingTime?: number;
 };
 
 type SetPriceParams = WriteTarget & {
+    currentAttributes: Record<string, unknown>;
     price: number;
     currency: string;
     minimumPrice?: number;
