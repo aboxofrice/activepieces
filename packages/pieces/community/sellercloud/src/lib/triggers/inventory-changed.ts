@@ -64,6 +64,7 @@ export const inventoryChanged = createTrigger({
             fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
+            keepState: keepState({ propsValue: context.propsValue }),
             sinceMs: Date.now() - sellercloudPoller.OVERLAP_MS,
         });
     },
@@ -85,6 +86,7 @@ export const inventoryChanged = createTrigger({
             // is already low; that is the event, so report it.
             emitUnseen: watchingWarehouseOnly,
             retentionMs: RETENTION_MS,
+            keepState: keepState({ propsValue: context.propsValue }),
         });
         return emissions.map((emission) => ({
             ...emission.item,
@@ -145,6 +147,12 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<I
         }
         return { truncated: page.truncated, nextPage: page.nextPage, partialError: page.partialError, items: [...lowItems, ...(rechecked ?? [])] };
     };
+}
+
+// Watching a warehouse, only full "low" entries are re-read for recovery, so when the
+// remembered set outgrows the store the "ok" entries are trimmed first.
+function keepState({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string | undefined {
+    return parseSkus({ value: propsValue.skus }).length === 0 ? 'low' : undefined;
 }
 
 function itemKey({ sku, warehouseId }: { sku: string; warehouseId: number | null }): string {

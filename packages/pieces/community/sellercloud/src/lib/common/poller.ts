@@ -11,10 +11,10 @@ import { tenantTime } from './tenant-time';
 // and the next poll carries on reading the same window from where it stopped. The
 // watermark only moves once a window has been read to the end, so nothing between the
 // pages read and the end of the window is lost, whatever order SellerCloud lists it in.
-async function poll<T>({ store, fingerprint, fetchItems, emitUnseen, retentionMs, overlapMs, now = Date.now() }: PollParams<T>): Promise<PollEmission<T>[]> {
+async function poll<T>({ store, fingerprint, fetchItems, emitUnseen, retentionMs, overlapMs, keepState, now = Date.now() }: PollParams<T>): Promise<PollEmission<T>[]> {
     const state = await readState({ store, fingerprint });
     if (state === null) {
-        await baseline({ store, fingerprint, fetchItems, retentionMs, now, sinceMs: now - overlapMs });
+        await baseline({ store, fingerprint, fetchItems, retentionMs, keepState, now, sinceMs: now - overlapMs });
         return [];
     }
     const cursor = state.cursor ?? { sinceMs: state.lastPollAt - overlapMs, page: 1, startedAt: now, baseline: false };
@@ -22,7 +22,7 @@ async function poll<T>({ store, fingerprint, fetchItems, emitUnseen, retentionMs
     if (result.partialError) {
         console.warn(`SellerCloud trigger: stopped after the pages read so far (${result.partialError}); the next poll continues from there.`);
     }
-    const forgotten = parseEvicted({ evicted: state.evicted });
+    const forgotten = parseEvicted({ evicted: state.evicted, now });
     const emissions = lastPerKey({ items: result.items })
         .filter((item) => item.eligible)
         .flatMap((item): TimedEmission<T>[] => {
@@ -37,7 +37,7 @@ async function poll<T>({ store, fingerprint, fetchItems, emitUnseen, retentionMs
             }
             return emitUnseen && !isHistory({ item, cursor }) ? [{ item: item.data, previousState: null, eventTime: item.eventTime }] : [];
         });
-    await writeState({ store, state: nextState({ state, cursor, result, now, retentionMs, fingerprint }) });
+    await writeState({ store, state: nextState({ state, cursor, result, now, retentionMs, fingerprint, keepState }) });
     return sortByEventTime({ emissions });
 }
 
@@ -55,23 +55,23 @@ function isHistory<T>({ item, cursor }: { item: PolledItem<T>; cursor: PollCurso
 
 // Records everything currently visible without emitting, so enabling a trigger does not
 // replay history. A window too big for one call is finished by the following polls.
-async function baseline<T>({ store, fingerprint, fetchItems, retentionMs, now = Date.now(), sinceMs }: BaselineParams<T>): Promise<void> {
+async function baseline<T>({ store, fingerprint, fetchItems, retentionMs, keepState, now = Date.now(), sinceMs }: BaselineParams<T>): Promise<void> {
     const cursor: PollCursor = { sinceMs, page: 1, startedAt: now, baseline: true };
     const result = await fetchItems({ since: new Date(sinceMs), startPage: 1, seen: {} });
     const empty: PollState = { v: STATE_VERSION, fp: fingerprint, lastPollAt: now, seen: {}, evicted: '', cursor: null };
-    await writeState({ store, state: nextState({ state: empty, cursor, result, now, retentionMs, fingerprint }) });
+    await writeState({ store, state: nextState({ state: empty, cursor, result, now, retentionMs, fingerprint, keepState }) });
 }
 
 // Publishing a flow disables and re-enables its trigger. Re-baselining there marked
 // everything since the last poll as seen, so events in that gap were never reported.
 // Existing state for the same trigger and settings is kept; a long-disabled trigger
 // starts fresh rather than replaying everything it missed.
-async function enable<T>({ store, fingerprint, fetchItems, retentionMs, sinceMs, now = Date.now() }: BaselineParams<T>): Promise<'resumed' | 'baselined'> {
+async function enable<T>({ store, fingerprint, fetchItems, retentionMs, sinceMs, keepState, now = Date.now() }: BaselineParams<T>): Promise<'resumed' | 'baselined'> {
     const state = await readState({ store, fingerprint });
     if (state !== null && now - state.lastPollAt <= Math.min(retentionMs, MAX_RESUME_GAP_MS)) {
         return 'resumed';
     }
-    await baseline({ store, fingerprint, fetchItems, retentionMs, now, sinceMs });
+    await baseline({ store, fingerprint, fetchItems, retentionMs, keepState, now, sinceMs });
     return 'baselined';
 }
 
@@ -81,9 +81,9 @@ async function disable(): Promise<void> {
     return;
 }
 
-function nextState<T>({ state, cursor, result, now, retentionMs, fingerprint }: NextStateParams<T>): PollState {
-    const { seen, trimmed } = mergeSeen({ seen: state.seen, items: lastPerKey({ items: result.items }), now, retentionMs });
-    const evicted = mergeEvicted({ evicted: state.evicted, trimmed, seen });
+function nextState<T>({ state, cursor, result, now, retentionMs, fingerprint, keepState }: NextStateParams<T>): PollState {
+    const { seen, trimmed } = mergeSeen({ seen: state.seen, items: lastPerKey({ items: result.items }), now, retentionMs, keepState });
+    const evicted = mergeEvicted({ evicted: state.evicted, trimmed, seen, now });
     if (result.truncated && result.nextPage > cursor.page) {
         // Re-read the last page next time: records added mid-window shift the pages.
         return { v: STATE_VERSION, fp: fingerprint, lastPollAt: state.lastPollAt, seen, evicted, cursor: { ...cursor, page: Math.max(cursor.page + 1, result.nextPage - 1) } };
@@ -91,7 +91,9 @@ function nextState<T>({ state, cursor, result, now, retentionMs, fingerprint }: 
     return { v: STATE_VERSION, fp: fingerprint, lastPollAt: cursor.startedAt, seen, evicted, cursor: null };
 }
 
-function mergeSeen<T>({ seen, items, now, retentionMs }: { seen: Record<string, SeenEntry>; items: PolledItem<T>[]; now: number; retentionMs: number }): { seen: Record<string, SeenEntry>; trimmed: [string, SeenEntry][] } {
+// `keepState` entries are trimmed last: in low-stock mode only full "low" entries are
+// re-read for recovery, so they are the ones worth keeping in full.
+function mergeSeen<T>({ seen, items, now, retentionMs, keepState }: { seen: Record<string, SeenEntry>; items: PolledItem<T>[]; now: number; retentionMs: number; keepState?: string }): { seen: Record<string, SeenEntry>; trimmed: [string, SeenEntry][] } {
     const nowSec = Math.floor(now / 1000);
     const cutoffSec = Math.floor((now - retentionMs) / 1000);
     const merged: Record<string, SeenEntry> = {
@@ -100,7 +102,7 @@ function mergeSeen<T>({ seen, items, now, retentionMs }: { seen: Record<string, 
     };
     const newestFirst = Object.entries(merged)
         .filter(([, entry]) => entry[1] >= cutoffSec)
-        .sort((a, b) => b[1][1] - a[1][1]);
+        .sort((a, b) => Number(b[1][0] === keepState) - Number(a[1][0] === keepState) || b[1][1] - a[1][1]);
     const fit = fitCount({ entries: newestFirst });
     return { seen: Object.fromEntries(newestFirst.slice(0, fit)), trimmed: newestFirst.slice(fit) };
 }
@@ -119,30 +121,37 @@ function fitCount({ entries }: { entries: [string, SeenEntry][] }): number {
     return entries.length;
 }
 
-// Entries trimmed for space keep a fixed-width fingerprint (key hash + state hash), about
-// a third of the size, so a busy warehouse whose low products outgrow the full entries
-// does not report every one of them again after the next bulk update. Fingerprints are
-// dropped only past their own cap, and that is logged.
-function mergeEvicted({ evicted, trimmed, seen }: { evicted: string; trimmed: [string, SeenEntry][]; seen: Record<string, SeenEntry> }): string {
-    const tokenWidth = KEY_HASH_CHARS + STATE_HASH_CHARS;
+// Entries trimmed for space keep a fixed-width fingerprint (key hash + state hash + day),
+// about a third of the size, so a busy warehouse whose low products outgrow the full
+// entries does not report every one of them again after the next bulk update. A trimmed
+// product cannot be re-read for recovery, so its fingerprint expires after a bounded time
+// and the product is then treated as new again; past the fingerprint cap a warning is logged.
+function mergeEvicted({ evicted, trimmed, seen, now }: { evicted: string; trimmed: [string, SeenEntry][]; seen: Record<string, SeenEntry>; now: number }): string {
+    const today = dayOf({ ms: now });
     const remembered = new Set(Object.keys(seen).map((key) => shortHash({ text: key, length: KEY_HASH_CHARS })));
-    const fresh = trimmed.map(([key, entry]) => shortHash({ text: key, length: KEY_HASH_CHARS }) + shortHash({ text: entry[0], length: STATE_HASH_CHARS }));
+    const fresh = trimmed.map(([key, entry]) => shortHash({ text: key, length: KEY_HASH_CHARS }) + shortHash({ text: entry[0], length: STATE_HASH_CHARS }) + today.toString(16).padStart(DAY_CHARS, '0'));
     const freshKeys = new Set(fresh.map((token) => token.slice(0, KEY_HASH_CHARS)));
-    const older = tokensOf({ evicted }).filter((token) => !freshKeys.has(token.slice(0, KEY_HASH_CHARS)));
+    const older = liveTokens({ evicted, now }).filter((token) => !freshKeys.has(token.slice(0, KEY_HASH_CHARS)));
     const all = [...fresh, ...older].filter((token) => !remembered.has(token.slice(0, KEY_HASH_CHARS)));
     if (all.length > MAX_EVICTED) {
         console.warn(`SellerCloud trigger: watching more records than its state can hold (${all.length + Object.keys(seen).length}); ${all.length - MAX_EVICTED} of the least recently seen may be reported again. Narrow the trigger (warehouse, company or threshold).`);
     }
-    return all.slice(0, MAX_EVICTED).join('').slice(0, MAX_EVICTED * tokenWidth);
+    return all.slice(0, MAX_EVICTED).join('');
 }
 
-function parseEvicted({ evicted }: { evicted: string }): Map<string, string> {
-    return new Map(tokensOf({ evicted }).map((token) => [token.slice(0, KEY_HASH_CHARS), token.slice(KEY_HASH_CHARS)]));
+function parseEvicted({ evicted, now }: { evicted: string; now: number }): Map<string, string> {
+    return new Map(liveTokens({ evicted, now }).map((token) => [token.slice(0, KEY_HASH_CHARS), token.slice(KEY_HASH_CHARS, KEY_HASH_CHARS + STATE_HASH_CHARS)]));
 }
 
-function tokensOf({ evicted }: { evicted: string }): string[] {
-    const width = KEY_HASH_CHARS + STATE_HASH_CHARS;
-    return Array.from({ length: Math.floor(evicted.length / width) }, (_, index) => evicted.slice(index * width, (index + 1) * width));
+function liveTokens({ evicted, now }: { evicted: string; now: number }): string[] {
+    const width = KEY_HASH_CHARS + STATE_HASH_CHARS + DAY_CHARS;
+    const oldestDay = dayOf({ ms: now }) - EVICTED_TTL_DAYS;
+    return Array.from({ length: Math.floor(evicted.length / width) }, (_, index) => evicted.slice(index * width, (index + 1) * width))
+        .filter((token) => Number.parseInt(token.slice(KEY_HASH_CHARS + STATE_HASH_CHARS), 16) >= oldestDay);
+}
+
+function dayOf({ ms }: { ms: number }): number {
+    return Math.floor(ms / DAY_MS);
 }
 
 function shortHash({ text, length }: { text: string; length: number }): string {
@@ -203,14 +212,17 @@ function toEventTime({ tenantLocal }: { tenantLocal: string | null | undefined }
 }
 
 const STATE_KEY = 'sellercloud_poll_state';
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 // Covers a late poll and clock skew between this worker and SellerCloud.
 const OVERLAP_MS = 10 * 60 * 1000;
 const MAX_RESUME_GAP_MS = 6 * 60 * 60 * 1000;
-const MAX_SEEN_CHARS = 340 * 1024;
+const MAX_SEEN_CHARS = 320 * 1024;
 const KEY_HASH_CHARS = 8;
 const STATE_HASH_CHARS = 2;
-const MAX_EVICTED = 12000;
+const MAX_EVICTED = 11000;
+const DAY_CHARS = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EVICTED_TTL_DAYS = 7;
 const ENTRY_OVERHEAD_CHARS = 6;
 
 export const sellercloudPoller = { poll, baseline, enable, disable, fingerprintOf, toEventTime, OVERLAP_MS };
@@ -270,6 +282,7 @@ type PollParams<T> = {
     emitUnseen: boolean;
     retentionMs: number;
     overlapMs: number;
+    keepState?: string;
     now?: number;
 };
 
@@ -278,6 +291,7 @@ type BaselineParams<T> = {
     fingerprint: string;
     fetchItems: FetchItems<T>;
     retentionMs: number;
+    keepState?: string;
     now?: number;
     sinceMs: number;
 };
@@ -289,4 +303,5 @@ type NextStateParams<T> = {
     now: number;
     retentionMs: number;
     fingerprint: string;
+    keepState?: string;
 };

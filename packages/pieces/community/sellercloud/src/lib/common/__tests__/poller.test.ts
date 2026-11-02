@@ -138,6 +138,42 @@ describe('sellercloudPoller round 2', () => {
         expect(size).toBeLessThan(512 * 1024);
     });
 
+    it('trims "ok" entries before "low" ones in low-stock mode, so low products stay rechecked', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const store = memoryStore();
+        const product = ({ index, state }: { index: number; state: string }) => ({ ...record({ id: index, state }), key: `PDC-SKU-${String(index).padStart(8, '0')}-AWP|5` });
+        const low = Array.from({ length: 3000 }, (_, index) => product({ index, state: 'low' }));
+        const ok = Array.from({ length: 9000 }, (_, index) => product({ index: 10000 + index, state: 'ok' }));
+        const source = fakeSource({ records: [...low], maxPages: 1000 });
+        await sellercloudPoller.enable({ store, fingerprint: FP, fetchItems: source.fetch, retentionMs: 30 * DAY, sinceMs: 0, keepState: 'low', now: T0 });
+        // The "ok" products are seen later, so they are the most recent entries.
+        source.records.splice(0, source.records.length, ...ok);
+        await sellercloudPoller.poll({ store, fingerprint: FP, fetchItems: source.fetch, emitUnseen: true, retentionMs: 30 * DAY, overlapMs: sellercloudPoller.OVERLAP_MS, keepState: 'low', now: T0 + MINUTE });
+        const stored = await store.get<{ seen: Record<string, [string, number]> }>('sellercloud_poll_state');
+        const seen = stored?.seen ?? {};
+        expect(low.every((item) => seen[item.key]?.[0] === 'low')).toBe(true);
+        expect(Object.keys(seen).length).toBeLessThan(low.length + ok.length);
+        expect(lowStock.skusToRecheck({ seen, returned: new Set(), warehouseId: 5 })).toHaveLength(lowStock.MAX_RECHECK_PER_POLL);
+    });
+
+    it('expires a trimmed fingerprint after 7 days, so a product it hid is reported again', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const store = memoryStore();
+        const products = Array.from({ length: 12000 }, (_, index) => ({ ...record({ id: index, state: 'low' }), key: `PDC-SKU-${String(index).padStart(8, '0')}-AWP|5` }));
+        const source = fakeSource({ records: [...products], maxPages: 1000 });
+        await sellercloudPoller.enable({ store, fingerprint: FP, fetchItems: source.fetch, retentionMs: 30 * DAY, sinceMs: 0, now: T0 });
+        const stored = await store.get<{ seen: Record<string, unknown> }>('sellercloud_poll_state');
+        const trimmed = products.length - Object.keys(stored?.seen ?? {}).length;
+        expect(trimmed).toBeGreaterThan(0);
+        const pollAt = (now: number) => sellercloudPoller.poll({ store, fingerprint: FP, fetchItems: source.fetch, emitUnseen: true, retentionMs: 30 * DAY, overlapMs: sellercloudPoller.OVERLAP_MS, now });
+        // Within 7 days the hidden products stay hidden (and seeing them refreshes the stamp)...
+        expect(await pollAt(T0 + 6 * DAY)).toEqual([]);
+        // ...but 7 days after they were last seen, the fingerprints are gone and they count as new.
+        const afterExpiry = await pollAt(T0 + 14 * DAY);
+        expect(afterExpiry.length).toBeGreaterThan(0);
+        expect(afterExpiry.length).toBeLessThanOrEqual(trimmed);
+    });
+
     it('keeps the progress of a poll whose later page failed', async () => {
         const store = memoryStore();
         const source = fakeSource({ records: [] });
