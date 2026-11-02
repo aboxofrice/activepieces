@@ -13,8 +13,9 @@ set -eu
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "ERROR: .env not found" >&2; exit 1; }
 if [ -z "${COMPOSE_FILE:-}" ]; then
-    if grep -qE '^  backup:' docker-compose.yml; then COMPOSE_FILE=docker-compose.yml
-    else COMPOSE_FILE=docker-compose.yml:compose.backup.yml; fi
+    # Same file set install.sh uses, so helper services (ap-sync) are stopped and started too.
+    COMPOSE_FILE=docker-compose.yml
+    for f in compose.*.yml; do [ -f "$f" ] && COMPOSE_FILE="$COMPOSE_FILE:$f"; done
     export COMPOSE_FILE
 fi
 dc() { docker compose --env-file .env "$@" < /dev/null; }

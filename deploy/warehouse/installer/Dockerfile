@@ -11,7 +11,7 @@ ENV DEFAULT_AP_IMAGE=${AP_IMAGE} \
     TEMPLATE_DIR=/opt/installer \
     DATA_DIR=/data
 
-COPY *.yml pieces.txt install.sh /opt/installer/
-RUN chmod +x /opt/installer/install.sh
+COPY *.yml pieces.txt install.sh restore.sh backup-setup.sh /opt/installer/
+RUN chmod +x /opt/installer/*.sh
 
 ENTRYPOINT ["/opt/installer/install.sh"]

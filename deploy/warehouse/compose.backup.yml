@@ -27,9 +27,12 @@ services:
     volumes:
       - backup_config:/config
       - backup_status:/status
+      # BACKUP_REMOTE_TYPE=local only (testing / NAS mount): the encrypted files live here.
+      - backup_local:/local-backups
 
 volumes:
   # rclone.conf (Drive token + obscured crypt passwords), mode 600, root only.
   backup_config:
   # status file: last_success / last_failure timestamps, readable by other services.
   backup_status:
+  backup_local:

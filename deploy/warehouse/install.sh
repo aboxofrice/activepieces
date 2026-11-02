@@ -15,6 +15,14 @@
 #   ADMIN_EMAIL       admin login (default admin@warehouse.local)
 #   GHCR_USER / GHCR_TOKEN   registry login for private images
 #   COMPOSE_PROJECT_NAME     stack name (default activepieces); lets a test copy run beside it
+#   Optional, saved to .env when given (first run or re-run; see compose.ap-sync.yml / compose.backup.yml):
+#     GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES EXPORT_HOUR
+#     AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
+#     BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY
+#
+# Restore / backup setup run from the same image (they are copied next to .env):
+#   docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ~/activepieces:/data \
+#     --entrypoint /data/restore.sh ghcr.io/aboxofrice/ap-installer:<tag>        (or /data/backup-setup.sh)
 set -euo pipefail
 
 TEMPLATE_DIR=${TEMPLATE_DIR:-$(cd "$(dirname "$0")" && pwd)}
@@ -24,6 +32,10 @@ PIECES_FILE=$DATA_DIR/pieces.txt
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+# Settings an installer run may pass with -e and that must survive into .env for the helper services.
+PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES EXPORT_HOUR
+AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
+BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY"
 rand_hex() { openssl rand -hex "$1"; }
 rand_pw() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
 env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-; }
@@ -53,6 +65,10 @@ copy_templates() {
     cp "$TEMPLATE_DIR"/docker-compose.yml "$DATA_DIR"/
     for f in "$TEMPLATE_DIR"/compose.*.yml; do [ -f "$f" ] && cp "$f" "$DATA_DIR"/; done
     cp "$TEMPLATE_DIR"/pieces.txt "$DATA_DIR"/
+    for f in restore.sh backup-setup.sh; do
+        [ -f "$TEMPLATE_DIR/$f" ] && cp "$TEMPLATE_DIR/$f" "$DATA_DIR/$f" && chmod 755 "$DATA_DIR/$f"
+    done
+    return 0
 }
 
 write_env() {
@@ -99,6 +115,10 @@ EOF
         [ -n "${AP_FRONTEND_URL:-}" ] && env_set AP_FRONTEND_URL "$AP_FRONTEND_URL"
         NEW_SECRETS=0
     fi
+    local var
+    for var in $PASSTHROUGH_VARS; do
+        [ -n "${!var:-}" ] && env_set "$var" "${!var}"
+    done
     chmod 600 "$ENV_FILE" 2>/dev/null || true
 }
 
