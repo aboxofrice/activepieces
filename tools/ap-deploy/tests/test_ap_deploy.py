@@ -1,0 +1,781 @@
+"""Unit tests for ap_deploy / ap_sync logic against an in-memory fake Activepieces.
+
+Run from tools/ap-deploy:  python3 -m unittest discover -s tests -v
+"""
+import copy
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import ap_deploy  # noqa: E402
+
+PIECE = {'name': '@activepieces/piece-webhook', 'version': '0.1.43'}
+
+
+def make_trigger(code='return 1'):
+    return {
+        'name': 'trigger', 'displayName': 'Catch Webhook', 'type': 'PIECE_TRIGGER', 'valid': True,
+        'settings': {'pieceName': PIECE['name'], 'pieceVersion': PIECE['version'], 'triggerName': 'catch_webhook',
+                     'input': {}, 'propertySettings': {}},
+        'nextAction': {'name': 'step_1', 'displayName': 'Code', 'type': 'CODE', 'valid': True,
+                       'settings': {'input': {}, 'sourceCode': {'code': code, 'packageJson': '{}'}}, 'nextAction': None},
+    }
+
+
+def make_def(key, code='return 1', schema='22'):
+    trigger = make_trigger(code)
+    return {'deployKey': key, 'displayName': key.title(), 'schemaVersion': schema, 'notes': [], 'trigger': trigger,
+            'pieces': ap_deploy.pieces_used(trigger), 'connections': ap_deploy.connections_used(trigger)}
+
+
+class FakeAP:
+    """Just enough of the flows API for evaluate/apply."""
+
+    def __init__(self):
+        self.url = 'http://fake'
+        self.project_id = 'proj'
+        self._flows = {}
+        self._n = 0
+        self.calls = []
+        self.hidden = None  # None: Community / nothing filtered; a set: EE BLOCKED filteredPieceNames
+        self.fail_platform_update = False
+
+    def _id(self, prefix):
+        self._n += 1
+        return f'{prefix}{self._n}'
+
+    def flows(self):
+        return [copy.deepcopy(f) for f in self._flows.values()]
+
+    def flow(self, flow_id):
+        return copy.deepcopy(self._flows[flow_id])
+
+    def connection_names(self):
+        return set()
+
+    def has_piece(self, name, version):
+        return not self.hidden or name not in self.hidden
+
+    def hidden_pieces(self):
+        return set(self.hidden) if self.hidden is not None else None
+
+    def set_hidden_pieces(self, names):
+        self.calls.append(('set_hidden', tuple(sorted(names))))
+        if self.fail_platform_update:
+            raise ap_deploy.ApiError('POST /v1/platforms/p1 -> 403: forbidden', status=403)
+        self.hidden = set(names)
+
+    def request(self, method, path, body=None, auth=True):
+        assert (method, path) == ('POST', '/v1/flows')
+        fid = self._id('flow')
+        vid = self._id('ver')
+        self._flows[fid] = {'id': fid, 'externalId': f'ext-{fid}', 'status': 'DISABLED', 'metadata': body.get('metadata'), 'publishedVersionId': None,
+                            'created': '2026-01-01', 'version': {'id': vid, 'state': 'DRAFT', 'displayName': body['displayName'],
+                                                                'schemaVersion': '22', 'notes': [], 'trigger': make_trigger()}}
+        self.calls.append(('create', fid))
+        return copy.deepcopy(self._flows[fid])
+
+    def operate(self, flow_id, op_type, request):
+        f = self._flows[flow_id]
+        self.calls.append((op_type, flow_id))
+        if op_type == 'IMPORT_FLOW':
+            if f['version']['state'] == 'LOCKED':
+                f['version'] = dict(f['version'], id=self._id('ver'), state='DRAFT')
+            f['version'].update(displayName=request['displayName'], schemaVersion=request['schemaVersion'],
+                                notes=request['notes'], trigger=request['trigger'])
+        elif op_type == 'LOCK_AND_PUBLISH':
+            f['version']['state'] = 'LOCKED'
+            f['publishedVersionId'] = f['version']['id']
+            f['status'] = request['status']
+        elif op_type == 'CHANGE_STATUS':
+            f['status'] = request['status']
+        elif op_type == 'UPDATE_METADATA':
+            f['metadata'] = request['metadata']
+        return copy.deepcopy(f)
+
+    # helpers simulating things that happen on the server outside ap-sync
+    def staff_edit(self, flow_id, code):
+        f = self._flows[flow_id]
+        trigger = copy.deepcopy(f['version']['trigger'])
+        trigger['nextAction']['settings']['sourceCode']['code'] = code
+        f['version'] = dict(f['version'], id=self._id('ver'), state='DRAFT', trigger=trigger)
+
+    def delete(self, flow_id):
+        del self._flows[flow_id]
+
+    def migrate_in_place(self, flow_id, new_schema='23'):
+        """What flow-version-migration.service does on an image upgrade: same version row, new schema."""
+        v = self._flows[flow_id]['version']
+        v['schemaVersion'] = new_schema
+        v['trigger']['settings']['input']['addedByMigration'] = True
+
+
+class Repo:
+    def __init__(self, test):
+        self.tmp = tempfile.TemporaryDirectory()
+        test.addCleanup(self.tmp.cleanup)
+        self.path = self.tmp.name
+        os.makedirs(os.path.join(self.path, ap_deploy.MANAGED_DIR))
+
+    def put(self, key, flow_def):
+        ap_deploy.write_json(os.path.join(self.path, ap_deploy.MANAGED_DIR, f'{key}.json'), flow_def)
+
+    def put_raw(self, key, text):
+        with open(os.path.join(self.path, ap_deploy.MANAGED_DIR, f'{key}.json'), 'w') as f:
+            f.write(text)
+
+    def deploy(self, entries):
+        with open(os.path.join(self.path, ap_deploy.DEPLOY_FILE), 'w') as f:
+            json.dump({'warehouse': entries}, f)
+
+
+def apply(ap, repo):
+    return {r['key']: r for r in ap_deploy.apply(ap, repo.path, 'warehouse', log=lambda m: None)}
+
+
+def evaluate(ap, repo):
+    return {r['key']: r for r in ap_deploy.evaluate(ap, repo.path, 'warehouse')}
+
+
+def flow_of(ap, key):
+    [f] = [f for f in ap.flows() if (f.get('metadata') or {}).get('deployKey') == key]
+    return f
+
+
+class HashTests(unittest.TestCase):
+    def test_schema_version_not_in_hash(self):
+        self.assertEqual(ap_deploy.definition_hash(make_def('a', schema='22')),
+                         ap_deploy.definition_hash(make_def('a', schema='23')))
+
+    def test_legacy_hash_includes_schema(self):
+        self.assertNotEqual(ap_deploy.definition_hash(make_def('a', schema='22'), 1),
+                            ap_deploy.definition_hash(make_def('a', schema='23'), 1))
+
+
+class ApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+
+    def test_create_then_in_sync(self):
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r.get('applied')), ('new', True))
+        meta = flow_of(self.ap, 'a')['metadata']
+        self.assertEqual(meta['deployedStatus'], 'ENABLED')
+        self.assertEqual(meta['hashVersion'], ap_deploy.HASH_VERSION)
+        self.assertEqual(meta['deploySchemaVersion'], '22')
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'none'))
+
+    def test_new_flow_is_created_disabled_unless_enabled(self):
+        self.repo.put('b', make_def('b'))
+        self.repo.put('c', make_def('c'))
+        self.repo.deploy({'b': {}, 'c': {'enabled': False}})
+        apply(self.ap, self.repo)
+        for key in ('b', 'c'):
+            flow = flow_of(self.ap, key)
+            self.assertEqual(flow['status'], 'DISABLED', key)
+            self.assertEqual(flow['metadata']['deployedStatus'], 'DISABLED', key)
+
+    def test_upgrade_migration_rebaselines_instead_of_drift(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        self.ap.migrate_in_place(fid)
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+        apply(self.ap, self.repo)
+        meta = flow_of(self.ap, 'a')['metadata']
+        self.assertEqual(meta['deploySchemaVersion'], '23')
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'none'))
+
+    def test_staff_edit_after_upgrade_is_still_drift(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        self.ap.migrate_in_place(fid)
+        self.ap.staff_edit(fid, 'return 2')  # new version id, newer schema: must not be rebaselined
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual(r['state'], 'drifted')
+
+    def test_staff_edit_is_drift_and_not_overwritten(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        self.ap.staff_edit(fid, 'return 2')
+        self.repo.put('a', make_def('a', code='return 3'))
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('drifted', 'none'))
+        self.assertEqual(self.ap.flow(fid)['version']['trigger']['nextAction']['settings']['sourceCode']['code'], 'return 2')
+
+    def test_staff_edit_exported_into_git_becomes_baseline(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        self.ap.staff_edit(fid, 'return 99')
+        self.ap.operate(fid, 'LOCK_AND_PUBLISH', {'status': 'ENABLED'})
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+        self.repo.put('a', make_def('a', code='return 99'))  # "keep the staff edit": exported into git
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+        calls = len(self.ap.calls)
+        apply(self.ap, self.repo)
+        self.assertNotIn('IMPORT_FLOW', [c[0] for c in self.ap.calls[calls:]])
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['action'], 'none')
+        self.ap.staff_edit(fid, 'return 100')  # later edits are drift again
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
+    def test_legacy_metadata_is_rebaselined_not_reimported(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        f = self.ap._flows[fid]
+        # metadata as written by the previous ap-deploy: v1 hashes, no version bookkeeping
+        f['metadata'] = {'deployKey': 'a', 'sourceHash': ap_deploy.definition_hash(make_def('a'), 1),
+                         'deployHash': ap_deploy.target_hash(f, 1)}
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+        apply(self.ap, self.repo)
+        self.assertNotIn('IMPORT_FLOW', [c[0] for c in self.ap.calls[-3:]])
+        meta = flow_of(self.ap, 'a')['metadata']
+        self.assertEqual(meta['hashVersion'], ap_deploy.HASH_VERSION)
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['action'], 'none')
+
+
+class InterruptedApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.fid = flow_of(self.ap, 'a')['id']
+        self.repo.put('a', make_def('a', code='return 2'))
+        real = self.ap.operate
+
+        def publish_fails_once(flow_id, op_type, request):
+            if op_type == 'LOCK_AND_PUBLISH' and not getattr(self, 'failed', False):
+                self.failed = True
+                raise ap_deploy.ApiError('POST /v1/flows -> 500: publish rejected')
+            return real(flow_id, op_type, request)
+        self.ap.operate = publish_fails_once
+
+    def test_failed_publish_is_retried_not_drift(self):
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('publish rejected', r['error'])
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        meta = flow_of(self.ap, 'a')['metadata']
+        self.assertNotIn('applyingSourceHash', meta)
+        self.assertNotIn('applyingHash', meta)
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+    def test_staff_edit_after_failed_publish_is_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.staff_edit(self.fid, 'return 99')
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
+    def test_http_error_on_import_clears_pending_so_staff_edit_is_drift(self):
+        self.failed = True  # this test is about IMPORT_FLOW failing, not publish
+        real = self.ap.operate
+
+        def import_rejected(flow_id, op_type, request):
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 500: import rejected', status=500)
+            return real(flow_id, op_type, request)
+        self.ap.operate = import_rejected
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('import rejected', r['error'])
+        self.assertNotIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        self.ap.staff_edit(self.fid, 'return 2')  # same content as the git version
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
+    def test_timeout_on_import_keeps_pending_and_finishes_next_pass(self):
+        self.failed = True  # this test is about IMPORT_FLOW failing, not publish
+        real = self.ap.operate
+
+        def import_then_timeout(flow_id, op_type, request):
+            result = real(flow_id, op_type, request)
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST http://fake: timed out')  # server imported, answer lost
+            return result
+        self.ap.operate = import_then_timeout
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('timed out', r['error'])
+        self.assertIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+    def test_gateway_error_on_import_keeps_pending(self):
+        self.failed = True
+        real = self.ap.operate
+
+        def import_then_gateway_timeout(flow_id, op_type, request):
+            result = real(flow_id, op_type, request)
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 504: gateway timeout', status=504)
+            return result
+        self.ap.operate = import_then_gateway_timeout
+        apply(self.ap, self.repo)
+        self.assertIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'changed')
+
+    def test_died_between_import_and_recording_hash(self):
+        apply(self.ap, self.repo)
+        meta = self.ap._flows[self.fid]['metadata']
+        meta['applyingHash'] = None  # run killed right after IMPORT_FLOW
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'changed')
+
+
+class OverwriteTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.fid = flow_of(self.ap, 'a')['id']
+        self.ap.staff_edit(self.fid, 'return 99')
+
+    def code(self):
+        return self.ap.flow(self.fid)['version']['trigger']['nextAction']['settings']['sourceCode']['code']
+
+    def test_overwrite_token_lets_git_win_once(self):
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+        self.repo.deploy({'a': {'enabled': True, 'overwrite': '2026-11-02'}})
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        self.assertEqual(self.code(), 'return 1')
+        self.assertEqual(self.ap.flow(self.fid)['metadata']['overwriteApplied'], '2026-11-02')
+        self.ap.staff_edit(self.fid, 'return 100')  # same token still in deploy.json
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual(r['state'], 'drifted')
+        self.assertEqual(self.code(), 'return 100')
+
+    def test_overwrite_reenables_flow_stopped_in_ui(self):
+        self.ap.operate(self.fid, 'CHANGE_STATUS', {'status': 'DISABLED'})
+        self.repo.deploy({'a': {'enabled': True, 'overwrite': 'x1'}})
+        apply(self.ap, self.repo)
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'ENABLED')
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+
+class KillSwitchTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.fid = flow_of(self.ap, 'a')['id']
+
+    def test_disabled_honoured_when_drifted(self):
+        self.ap.staff_edit(self.fid, 'return 2')
+        self.repo.deploy({'a': {'enabled': False}})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual(r['state'], 'drifted')
+        self.assertEqual(r['action'], 'disable')
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+        self.assertEqual(self.ap.flow(self.fid)['metadata']['deployedStatus'], 'DISABLED')
+
+    def test_disabled_honoured_when_missing_deps(self):
+        self.ap.has_piece = lambda name, version: False
+        self.repo.deploy({'a': {'enabled': False}})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('missing-deps', 'disable'))
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+
+    def test_disabled_honoured_when_flow_file_broken(self):
+        self.repo.put_raw('a', '{not json')
+        self.repo.deploy({'a': {'enabled': False}})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('error', 'disable'))
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+
+    def test_emergency_off_in_ui_is_not_reenabled(self):
+        self.ap.operate(self.fid, 'CHANGE_STATUS', {'status': 'DISABLED'})  # staff, in the UI
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('drifted', 'none'))
+        self.assertIn('turned off on this server', r['reason'])
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+        # a new git version must not switch it back on either
+        self.repo.put('a', make_def('a', code='return 9'))
+        self.assertEqual(apply(self.ap, self.repo)['a']['state'], 'drifted')
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+
+    def test_emergency_off_accepted_by_git_then_reenabled(self):
+        self.ap.operate(self.fid, 'CHANGE_STATUS', {'status': 'DISABLED'})
+        self.repo.deploy({'a': {'enabled': False}})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+        self.assertEqual(self.ap.flow(self.fid)['metadata']['deployedStatus'], 'DISABLED')
+        self.repo.deploy({'a': {'enabled': True}})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'status'))
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'ENABLED')
+
+    def test_staff_turning_on_a_disabled_flow_is_reverted(self):
+        self.repo.deploy({'a': {'enabled': False}})
+        apply(self.ap, self.repo)
+        self.ap.operate(self.fid, 'CHANGE_STATUS', {'status': 'ENABLED'})
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual(r['action'], 'status')
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'DISABLED')
+
+
+class IsolationTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('good', make_def('good'))
+
+    def test_bad_flow_file_only_marks_its_key(self):
+        self.repo.put_raw('bad', '<html>oops</html>')
+        self.repo.put('notaflow', {'hello': 'world'})
+        self.repo.deploy({'good': {'enabled': True}, 'bad': {'enabled': True}, 'notaflow': {'enabled': True}})
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['good']['state'], 'new')
+        self.assertTrue(recs['good'].get('applied'))
+        self.assertEqual(recs['bad']['state'], 'error')
+        self.assertEqual(recs['notaflow']['state'], 'error')
+
+    def test_bad_deploy_entry_only_marks_its_key(self):
+        self.repo.deploy({'good': {'enabled': True}, 'weird': 'yes', 'num': {'enabled': 'true'}})
+        recs = apply(self.ap, self.repo)
+        self.assertTrue(recs['good'].get('applied'))
+        self.assertEqual(recs['weird']['state'], 'error')
+        self.assertEqual(recs['num']['state'], 'error')
+
+    def test_path_traversal_key_rejected(self):
+        self.repo.deploy({'good': {'enabled': True}, '../../etc/passwd': {'enabled': True}})
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['../../etc/passwd']['state'], 'error')
+        self.assertIn('invalid deploy key', recs['../../etc/passwd']['reason'])
+
+    def test_invalid_deploy_json_is_api_error(self):
+        with open(os.path.join(self.repo.path, ap_deploy.DEPLOY_FILE), 'w') as f:
+            f.write('{"warehouse": ')
+        with self.assertRaises(ap_deploy.ApiError):
+            ap_deploy.evaluate(self.ap, self.repo.path, 'warehouse')
+
+    def test_one_failing_apply_does_not_stop_others(self):
+        self.repo.put('other', make_def('other'))
+        self.repo.deploy({'good': {'enabled': True}, 'other': {'enabled': True}})
+        real = self.ap.operate
+
+        def flaky(flow_id, op_type, request):
+            if op_type == 'IMPORT_FLOW' and request['displayName'] == 'Good':
+                raise KeyError('boom')
+            return real(flow_id, op_type, request)
+        self.ap.operate = flaky
+        recs = apply(self.ap, self.repo)
+        self.assertIn('boom', recs['good']['error'])
+        self.assertTrue(recs['other'].get('applied'))
+
+
+class HiddenPieceTests(unittest.TestCase):
+    """EE piece filter: a managed flow's pieces are unhidden before it is applied."""
+
+    def setUp(self):
+        self.ap, self.repo, self.logs = FakeAP(), Repo(self), []
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {}})
+
+    def run_apply(self, dry_run=False):
+        return {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', dry_run=dry_run,
+                                                     log=self.logs.append)}
+
+    def test_needed_piece_is_unhidden_and_flow_deploys_disabled(self):
+        self.ap.hidden = {PIECE['name'], '@activepieces/piece-other'}
+        r = self.run_apply()['a']
+        self.assertEqual((r['state'], r.get('applied')), ('new', True))
+        self.assertEqual(self.ap.hidden, {'@activepieces/piece-other'})
+        self.assertIn(f"unhid {PIECE['name']} (needed by flow a)", self.logs)
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+
+    def test_unrelated_hidden_pieces_are_left_alone(self):
+        self.ap.hidden = {'@activepieces/piece-other'}
+        self.run_apply()
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+
+    def test_community_does_not_touch_the_filter(self):
+        self.run_apply()
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+
+    def test_failed_unhide_skips_only_that_flow(self):
+        other = make_def('b')
+        other['trigger']['settings']['pieceName'] = '@activepieces/piece-plain'
+        other['pieces'] = ap_deploy.pieces_used(other['trigger'])
+        self.repo.put('b', other)
+        self.repo.deploy({'a': {}, 'b': {}})
+        self.ap.hidden = {PIECE['name']}
+        self.ap.fail_platform_update = True
+        recs = self.run_apply()
+        self.assertEqual((recs['a']['state'], recs['a']['action']), ('missing-deps', 'none'))
+        self.assertIn('unhiding it failed', recs['a']['reason'])
+        self.assertTrue(any(m.startswith('skip a: missing-deps') for m in self.logs))
+        self.assertTrue(recs['b'].get('applied'))
+
+    def test_plan_only_reports(self):
+        self.ap.hidden = {PIECE['name']}
+        self.run_apply(dry_run=True)
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+        self.assertIn(f"would unhide {PIECE['name']} (needed by flow a)", self.logs)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+# ---------- cross-flow references ----------
+
+def make_ref_def(key, code_input, display=None):
+    """A flow whose code step carries code_input (where placeholders go)."""
+    d = make_def(key)
+    d['displayName'] = display or key.title()
+    d['trigger']['nextAction']['settings']['input'] = code_input
+    d['flowRefs'] = ap_deploy.flow_refs_used(d['trigger'])
+    return d
+
+
+def code_input_of(ap, key):
+    return flow_of(ap, key)['version']['trigger']['nextAction']['settings']['input']
+
+
+class PlaceholderTests(unittest.TestCase):
+    def setUp(self):
+        self.flows = [
+            {'id': 'Spj2MffBKnLaiMwA4YU4G', 'externalId': '4I33ClMFWq52RZ1gFfLhJ', 'metadata': {'deployKey': 'orch'}},
+            {'id': 'aXW3xj7wPLlHItqIhNnmA', 'externalId': 'eJc9JrDzMtyzp428BWi01', 'metadata': {'deployKey': 'worker'}},
+            {'id': 'D628ea8nSzXlcB7x8VS8s', 'externalId': 'icD513dzEkNtgVADrah1v', 'metadata': None},
+        ]
+        self.refs = ap_deploy.source_refs(self.flows, ['http://localhost:8080/'])
+
+    def test_ids_externals_and_base_url_become_placeholders(self):
+        obj = {'apUrl': 'http://localhost:8080', 'url': 'http://127.0.0.1:8080/api/v1/webhooks/aXW3xj7wPLlHItqIhNnmA/sync',
+               'centers': [{'flowId': 'aXW3xj7wPLlHItqIhNnmA'}], 'flow': {'externalId': 'eJc9JrDzMtyzp428BWi01'},
+               'code': "fetch(`${base}/webhooks/aXW3xj7wPLlHItqIhNnmA`)"}
+        out = ap_deploy.to_placeholders(obj, self.refs)
+        self.assertEqual(out['apUrl'], '{{ap-base-url}}')
+        self.assertEqual(out['url'], '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}/sync')
+        self.assertEqual(out['centers'][0]['flowId'], '{{ap-flow:worker}}')
+        self.assertEqual(out['flow']['externalId'], '{{ap-flow-external:worker}}')
+        self.assertIn('{{ap-flow:worker}}', out['code'])
+        self.assertEqual(ap_deploy.flow_refs_used(out), ['worker'])
+
+    def test_partial_matches_and_unmanaged_flows_are_left_alone(self):
+        obj = {'a': 'xaXW3xj7wPLlHItqIhNnmA', 'b': 'http://localhost:80801/x', 'c': 'http://localhost:8080.example.com',
+               'd': 'D628ea8nSzXlcB7x8VS8s'}
+        self.assertEqual(ap_deploy.to_placeholders(obj, self.refs), obj)
+        self.assertEqual([f['id'] for f in ap_deploy.unmanaged_refs(obj, self.flows)], ['D628ea8nSzXlcB7x8VS8s'])
+
+    def test_resolve_round_trip_and_missing(self):
+        obj = {'u': '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}', 'e': '{{ap-flow-external:worker}}', 'm': '{{ap-flow:gone}}'}
+        refs = {'keys': {'worker': {'id': 'NEWID', 'externalId': 'NEWEXT'}}, 'base_url': 'http://activepieces:8080'}
+        out, missing = ap_deploy.resolve_placeholders(obj, refs)
+        self.assertEqual(out['u'], 'http://activepieces:8080/api/v1/webhooks/NEWID')
+        self.assertEqual(out['e'], 'NEWEXT')
+        self.assertEqual(out['m'], '{{ap-flow:gone}}')
+        self.assertEqual(missing, ['gone'])
+
+
+class ExportRefsTests(unittest.TestCase):
+    def test_export_rewrites_refs_and_warns_about_unmanaged(self):
+        src, repo = FakeAP(), Repo(self)
+        src.url = 'http://localhost:8080'
+        worker = src.request('POST', '/v1/flows', {'displayName': 'W', 'metadata': {'deployKey': 'worker'}})
+        loose = src.request('POST', '/v1/flows', {'displayName': 'Loose', 'metadata': {}})
+        orch = src.request('POST', '/v1/flows', {'displayName': 'O', 'metadata': {}})
+        src._flows[orch['id']]['version']['trigger']['nextAction']['settings']['input'] = {
+            'apUrl': 'http://localhost:8080', 'ids': [worker['id'], loose['id'], orch['id']]}
+        logs = []
+        ap_deploy.export(src, repo.path, ['orch'], flow_id=orch['id'], log=logs.append)
+        d = ap_deploy.read_json(os.path.join(repo.path, 'managed', 'orch.json'))
+        self.assertEqual(d['trigger']['nextAction']['settings']['input'],
+                         {'apUrl': '{{ap-base-url}}', 'ids': ['{{ap-flow:worker}}', loose['id'], '{{ap-flow:orch}}']})
+        self.assertEqual(d['flowRefs'], ['orch', 'worker'])
+        self.assertTrue(any('Loose' in m and 'no deployKey' in m for m in logs))
+
+
+class FlowRefApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.ap.base_url = 'http://activepieces:8080'
+        # "a-orch" sorts before "worker", so the worker has no id yet when the orchestrator is evaluated
+        self.repo.put('a-orch', make_ref_def('a-orch', {
+            'fire': '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}', 'sub': {'externalId': '{{ap-flow-external:worker}}'}}))
+        self.repo.put('worker', make_def('worker'))
+        self.repo.deploy({'a-orch': {}, 'worker': {}})
+
+    def test_new_flows_resolve_to_target_ids_and_hash_in_placeholder_form(self):
+        recs = apply(self.ap, self.repo)
+        self.assertEqual({k: r['state'] for k, r in recs.items()}, {'a-orch': 'new', 'worker': 'new'})
+        worker = flow_of(self.ap, 'worker')
+        self.assertEqual(code_input_of(self.ap, 'a-orch'), {
+            'fire': f'http://activepieces:8080/api/v1/webhooks/{worker["id"]}', 'sub': {'externalId': worker['externalId']}})
+        meta = flow_of(self.ap, 'a-orch')['metadata']
+        self.assertEqual(meta['deployRefs'], {'worker': {'id': worker['id'], 'externalId': worker['externalId']}})
+        self.assertEqual(meta['deployBaseUrl'], 'http://activepieces:8080')
+        self.assertEqual(meta['deployHash'], meta['sourceHash'])
+        self.assertEqual({k: (r['state'], r['action']) for k, r in evaluate(self.ap, self.repo).items()},
+                         {'a-orch': ('in-sync', 'none'), 'worker': ('in-sync', 'none')})
+
+    def test_recreated_referenced_flow_is_not_drift_and_is_re_resolved(self):
+        apply(self.ap, self.repo)
+        old = flow_of(self.ap, 'worker')['id']
+        self.ap.delete(old)
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['worker']['state'], 'new')
+        self.assertEqual(recs['a-orch']['state'], 'changed')
+        new = flow_of(self.ap, 'worker')['id']
+        self.assertNotEqual(old, new)
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].endswith(new))
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'in-sync')
+
+    def test_deleted_referenced_flow_defers_without_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.delete(flow_of(self.ap, 'worker')['id'])
+        self.repo.deploy({'a-orch': {}})
+        r = evaluate(self.ap, self.repo)['a-orch']
+        self.assertEqual((r['state'], r['action']), ('missing-deps', 'none'))
+        self.assertIn('worker', r['reason'])
+
+    def test_staff_edit_of_referencing_flow_is_still_drift(self):
+        apply(self.ap, self.repo)
+        f = self.ap._flows[flow_of(self.ap, 'a-orch')['id']]
+        f['version'] = dict(f['version'], id='ver-staff', state='DRAFT')
+        f['version']['trigger']['nextAction']['settings']['input']['fire'] = 'http://elsewhere/hook'
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'drifted')
+
+    def test_base_url_change_reapplies_not_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.base_url = 'http://192.168.1.50:8080'
+        r = evaluate(self.ap, self.repo)['a-orch']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        apply(self.ap, self.repo)
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].startswith('http://192.168.1.50:8080/api/v1/webhooks/'))
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'in-sync')
+
+    def test_reference_to_unlisted_flow_is_deferred_then_applied(self):
+        self.repo.deploy({'a-orch': {}})
+        logs = []
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', log=logs.append)}
+        self.assertEqual(recs['a-orch']['state'], 'missing-deps')
+        self.assertTrue(any(m.startswith('skip a-orch: missing-deps - references flow worker') for m in logs))
+        self.assertEqual(self.ap.flows(), [])
+        self.repo.deploy({'a-orch': {}, 'worker': {}})
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['a-orch']['state'], 'new')
+
+    def test_deferral_cascades_through_dependents(self):
+        self.repo.put('b-mid', make_ref_def('b-mid', {'x': '{{ap-flow:missing}}'}))
+        self.repo.put('a-orch', make_ref_def('a-orch', {'x': '{{ap-flow:b-mid}}'}))
+        self.repo.deploy({'a-orch': {}, 'b-mid': {}})
+        r = evaluate(self.ap, self.repo)
+        self.assertEqual((r['a-orch']['state'], r['b-mid']['state']), ('missing-deps', 'missing-deps'))
+
+    def test_cycle_resolves_in_one_pass(self):
+        self.repo.put('worker', make_ref_def('worker', {'back': '{{ap-flow:a-orch}}'}))
+        apply(self.ap, self.repo)
+        self.assertEqual(code_input_of(self.ap, 'worker')['back'], flow_of(self.ap, 'a-orch')['id'])
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].endswith(flow_of(self.ap, 'worker')['id']))
+
+    def test_plan_creates_nothing(self):
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', dry_run=True, log=lambda m: None)}
+        self.assertEqual(recs['a-orch']['action'], 'create')
+        self.assertEqual(self.ap.flows(), [])
+
+    def test_v2_metadata_is_rebaselined(self):
+        self.repo.deploy({'worker': {}})
+        apply(self.ap, self.repo)
+        f = self.ap._flows[flow_of(self.ap, 'worker')['id']]
+        f['metadata'] = dict(f['metadata'], hashVersion=2, deployHash=ap_deploy.target_hash(f, 2))
+        r = evaluate(self.ap, self.repo)['worker']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+
+
+class ReviewFixTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+
+    def test_blocked_flow_that_wants_off_is_disabled(self):
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.repo.put('a', make_def('a', code='return 2'))  # pending update...
+        self.repo.deploy({'a': {'enabled': False}})
+        self.ap.hidden = {PIECE['name']}               # ...but its piece is hidden and cannot be unhidden
+        self.ap.fail_platform_update = True
+        self.ap.has_piece = lambda name, version: True  # so evaluate() alone does not defer it
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('missing-deps', 'disable'))
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+
+    def test_failed_update_still_honours_enabled_false(self):
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.repo.put('a', make_def('a', code='return 2'))
+        self.repo.deploy({'a': {'enabled': False}})
+        real = self.ap.operate
+
+        def failing(flow_id, op_type, request):
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 400: bad', status=400)
+            return real(flow_id, op_type, request)
+        self.ap.operate = failing
+        logs = []
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', log=logs.append)}
+        self.assertTrue(recs['a'].get('error'))
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+        self.assertTrue(any(m.startswith('disable a -> DISABLED ok') for m in logs))
+
+    def test_leftover_server_urls(self):
+        trigger = {'a': 'http://localhost:3000/x', 'b': 'see http://192.168.1.50:8080/api', 'c': 'http://host.docker.internal:9418',
+                   'd': 'https://vpic.nhtsa.dot.gov/api', 'e': '{{ap-base-url}}/api', 'f': 'http://172.20.0.3', 'g': 'http://172.40.0.3',
+                   'h': 'http://warehouse.example.com:8080/flows'}
+        self.assertEqual(ap_deploy.leftover_server_urls(trigger, 'http://warehouse.example.com:8080'),
+                         ['http://172.20.0.3', 'http://192.168.1.50:8080', 'http://host.docker.internal:9418',
+                          'http://localhost:3000', 'http://warehouse.example.com:8080'])
+
+    def test_export_warns_on_leftover_urls(self):
+        src = FakeAP()
+        src.url = 'http://localhost:8080'
+        f = src.request('POST', '/v1/flows', {'displayName': 'F', 'metadata': {}})
+        src._flows[f['id']]['version']['trigger']['nextAction']['settings']['input'] = {
+            'ok': 'http://localhost:8080/api', 'bad': 'http://localhost:3000/api'}
+        real = src.request
+        src.request = lambda method, path, body=None, auth=True: {'PUBLIC_URL': 'http://lan:8080/'} if path == '/v1/flags' else real(method, path, body, auth)
+        logs = []
+        ap_deploy.export(src, self.repo.path, ['f'], flow_id=f['id'], log=logs.append)
+        warns = [m for m in logs if 'server-local address' in m]
+        self.assertEqual(len(warns), 1)
+        self.assertIn('http://localhost:3000', warns[0])
+
+    def test_pieces_file_check(self):
+        self.repo.put('a', make_def('a'))
+        path = os.path.join(self.repo.path, 'pieces.txt')
+        with open(path, 'w') as f:
+            f.write('# comment\n@vqnguyen1/piece-extra 1.0.0\n')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(self.repo.path, path), [f'{PIECE["name"]}@{PIECE["version"]} (used by a)'])
+        with open(path, 'a') as f:
+            f.write(f'{PIECE["name"]} {PIECE["version"]}  # pinned\n')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(self.repo.path, path), [])
+
+
+def _flows_repo():
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(os.path.join(here, '..', '..', '..'))
+    for path in (os.environ.get('AP_FLOWS_REPO'), os.path.join(root, '..', 'activepieces-flows'), os.path.join(root, '..', 'flows-add9')):
+        if path and os.path.isdir(os.path.join(path, ap_deploy.MANAGED_DIR)):
+            return path, os.path.join(root, 'deploy', 'warehouse', 'pieces.txt')
+    return None, None
+
+
+class PiecesFileTests(unittest.TestCase):
+    def test_warehouse_pieces_txt_covers_the_flows_repo(self):
+        repo, pieces = _flows_repo()
+        if not repo:
+            self.skipTest('flows repo not found (set AP_FLOWS_REPO)')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(repo, pieces), [])

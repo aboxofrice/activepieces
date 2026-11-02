@@ -36,6 +36,8 @@ export type FormResponse = z.infer<typeof FormResponse>
 
 export const ChatUIProps = z.object({
     botName: z.string(),
+    welcomeMessage: z.string().optional(),
+    suggestedTopics: z.array(z.string()).optional(),
 })
 
 export type ChatUIProps = z.infer<typeof ChatUIProps>

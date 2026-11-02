@@ -41,6 +41,18 @@ export const onChatSubmission = createTrigger({
       required: true,
       defaultValue: 'AI Bot',
     }),
+    welcomeMessage: Property.LongText({
+      displayName: 'Welcome Message',
+      description:
+        'Shown above the suggested topics before the first message, e.g. what the bot can do.',
+      required: false,
+    }),
+    suggestedTopics: Property.Array({
+      displayName: 'Suggested Topics',
+      description:
+        'Quick-start topics shown as buttons before the first message. Clicking one sends it as the message.',
+      required: false,
+    }),
   },
   sampleData: undefined,
   type: TriggerStrategy.WEBHOOK,

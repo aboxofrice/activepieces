@@ -1,0 +1,231 @@
+# Builds and pushes the warehouse images to GHCR (private: the app contains EE code, whose license
+# forbids distribution). See "Images and release" in deploy/warehouse/README.md.
+#   ghcr.io/aboxofrice/activepieces   app (root Dockerfile)
+#   ghcr.io/aboxofrice/ap-sync        tools/ap-deploy
+#   ghcr.io/aboxofrice/ap-backup      deploy/warehouse/backup
+#   ghcr.io/aboxofrice/ap-installer   deploy/warehouse (AP_IMAGE = the app image built here, by digest)
+# Tags: sha-<short> always; the version X.Y.Z only when the run is for a warehouse-vX.Y.Z tag (push,
+# or a manual run started on that tag) and no image has that version yet. Never latest.
+# Actions are pinned by commit; the comment names the release.
+# Vulnerability scans run in separate jobs whose token cannot write packages: they rebuild the
+# amd64 image locally (from the build cache) and scan it, so the scanner never sees a registry login.
+# Optional next step: sign the pushed digests with cosign (sigstore/cosign-installer + keyless
+# `cosign sign`, needs `id-token: write`) and verify them in the installer before `compose up`.
+name: Warehouse images
+
+on:
+  push:
+    tags:
+      - 'warehouse-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warehouse-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/aboxofrice
+
+jobs:
+  version:
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Resolve version
+        id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=
+          case "$REF_TYPE:$REF_NAME" in
+            tag:warehouse-v*) version=${REF_NAME#warehouse-v} ;;
+          esac
+          if [ -n "$version" ] && ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::version '$version' is not X.Y.Z"; exit 1
+          fi
+          [ -n "$version" ] || echo "::notice::not a warehouse-v* tag: only sha-* tags are pushed"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The compose files pin the helper tags; a release whose version differs would ship an
+      # installer that runs other helper images than the ones built here.
+      - name: Check the compose files pin this version
+        if: steps.v.outputs.version != ''
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          grep -qF "ghcr.io/aboxofrice/ap-sync:$VERSION}" deploy/warehouse/compose.ap-sync.yml \
+            || { echo "::error::compose.ap-sync.yml does not pin ap-sync:$VERSION; bump it first"; exit 1; }
+          grep -qF "ghcr.io/aboxofrice/ap-backup:$VERSION}" deploy/warehouse/compose.backup.yml \
+            || { echo "::error::compose.backup.yml does not pin ap-backup:$VERSION; bump it first"; exit 1; }
+      - if: steps.v.outputs.version != ''
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # A version tag is never overwritten: installs pinned to it must keep getting the same image.
+      - name: Refuse a version that was already pushed
+        if: steps.v.outputs.version != ''
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          for name in activepieces ap-installer ap-sync ap-backup; do
+            if out=$(docker buildx imagetools inspect "$REGISTRY/$name:$VERSION" 2>&1); then
+              echo "::error::$REGISTRY/$name:$VERSION already exists; release a new version instead"; exit 1
+            fi
+            # Only "not found" means unpushed; an auth or network error must not let a version be overwritten.
+            if ! printf '%s' "$out" | grep -qiE 'not found|manifest unknown|name unknown'; then
+              echo "::error::Could not check $REGISTRY/$name:$VERSION: $out"; exit 1
+            fi
+          done
+
+  app:
+    needs: version
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ghcr.io/aboxofrice/activepieces@${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/activepieces
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.version != '' }}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version || format('sha-{0}', github.sha) }}
+      # amd64 only: the warehouse server is amd64 and an arm64 app build under QEMU takes hours.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=warehouse-activepieces
+          cache-to: type=gha,mode=max,scope=warehouse-activepieces
+
+  helpers:
+    needs: [version, app]
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: ap-sync
+            context: tools/ap-deploy
+            file: tools/ap-deploy/Dockerfile
+          - name: ap-backup
+            context: deploy/warehouse/backup
+            file: deploy/warehouse/backup/Dockerfile
+          - name: ap-installer
+            context: deploy/warehouse
+            file: deploy/warehouse/installer/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.version != '' }}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version || format('sha-{0}', github.sha) }}
+      # REVISION feeds the labels the installer checks (helpers) and its HELPER_REVISION default
+      # (installer): all built from this commit. AP_IMAGE is used by the installer only.
+      # Small images, so arm64 too (Apple Silicon test runs).
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REVISION=${{ github.sha }}
+            AP_IMAGE=${{ needs.app.outputs.image }}
+          cache-from: type=gha,scope=warehouse-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=warehouse-${{ matrix.name }}
+
+  scan:
+    needs: [app, helpers]
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: activepieces
+            context: .
+            file: ./Dockerfile
+          - name: ap-sync
+            context: tools/ap-deploy
+            file: tools/ap-deploy/Dockerfile
+          - name: ap-backup
+            context: deploy/warehouse/backup
+            file: deploy/warehouse/backup/Dockerfile
+          - name: ap-installer
+            context: deploy/warehouse
+            file: deploy/warehouse/installer/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Same inputs as the pushed amd64 image, served from the cache the push job wrote.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          load: true
+          tags: warehouse-scan/${{ matrix.name }}:${{ github.sha }}
+          build-args: |
+            REVISION=${{ github.sha }}
+            AP_IMAGE=${{ needs.app.outputs.image }}
+          cache-from: type=gha,scope=warehouse-${{ matrix.name }}
+      - name: Vulnerability scan (report only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        continue-on-error: true
+        with:
+          image-ref: warehouse-scan/${{ matrix.name }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'

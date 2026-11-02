@@ -1,17 +1,24 @@
+import {
+  AIAssistantMode,
+  AIProviderModel,
+  AIProviderModelType,
+  AIProviderName,
+  AIProviderWithoutSensitiveData,
+} from '@activepieces/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { t } from 'i18next';
-import { Bot, MessageSquare, PenLine, Send, Settings2, Sparkles, Wand2 } from 'lucide-react';
+import {
+  Bot,
+  MessageSquare,
+  PenLine,
+  Send,
+  Settings2,
+  Sparkles,
+  Wand2,
+} from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 import { Button } from '@/components/ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import {
   Card,
   CardContent,
@@ -20,26 +27,31 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+} from '@/components/ui/popover';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { aiAssistantApi } from '@/features/ai-assistant/lib/ai-assistant-api';
 import { piecesApi } from '@/features/pieces/api/pieces-api';
 import { aiProviderApi } from '@/features/platform-admin/api/ai-provider-api';
 import { authenticationSession } from '@/lib/authentication-session';
 import { cn } from '@/lib/utils';
-import {
-  AIAssistantMode,
-  AIProviderModel,
-  AIProviderModelType,
-  AIProviderName,
-  AIProviderWithoutSensitiveData,
-} from '@activepieces/shared';
 
 import { FlowWizard } from './flow-wizard';
 
@@ -76,11 +88,18 @@ const ModeSelectionCard = ({
   >
     <CardHeader className="pb-2">
       <div className="flex items-center gap-3">
-        <div className={cn(
-          'flex h-10 w-10 items-center justify-center rounded-lg',
-          disabled ? 'bg-muted' : 'bg-primary/10',
-        )}>
-          <Icon className={cn('h-5 w-5', disabled ? 'text-muted-foreground' : 'text-primary')} />
+        <div
+          className={cn(
+            'flex h-10 w-10 items-center justify-center rounded-lg',
+            disabled ? 'bg-muted' : 'bg-primary/10',
+          )}
+        >
+          <Icon
+            className={cn(
+              'h-5 w-5',
+              disabled ? 'text-muted-foreground' : 'text-primary',
+            )}
+          />
         </div>
         <CardTitle className="text-lg">{title}</CardTitle>
       </div>
@@ -200,7 +219,9 @@ export const AIAssistantPage = () => {
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
-  const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(null);
+  const [mentionStartIndex, setMentionStartIndex] = useState<number | null>(
+    null,
+  );
   const [mentionCursorPos, setMentionCursorPos] = useState<number | null>(null);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -214,11 +235,13 @@ export const AIAssistantPage = () => {
 
   // Filter pieces based on mention search
   const filteredPieces = mentionSearch
-    ? pieces.filter(
-        (p) =>
-          p.displayName.toLowerCase().includes(mentionSearch.toLowerCase()) ||
-          p.name.toLowerCase().includes(mentionSearch.toLowerCase()),
-      ).slice(0, 8)
+    ? pieces
+        .filter(
+          (p) =>
+            p.displayName.toLowerCase().includes(mentionSearch.toLowerCase()) ||
+            p.name.toLowerCase().includes(mentionSearch.toLowerCase()),
+        )
+        .slice(0, 8)
     : pieces.slice(0, 8);
 
   // Fetch AI providers
@@ -275,7 +298,7 @@ export const AIAssistantPage = () => {
       content:
         selectedMode === 'chat'
           ? t(
-              "I'm ready to help you create a new integration flow. Let's start by understanding what you want to build.\n\nPlease describe the automation you'd like to create. For example:\n- \"Sync contacts from HubSpot to our loan system when a deal closes\"\n- \"When a webhook is received, create a record in Encompass\"\n- \"Process loan applications and update the CRM with status\"\n\nOr, if you'd like me to guide you through it, just say \"help me get started\" and I'll ask you the right questions.",
+              'I\'m ready to help you create a new integration flow. Let\'s start by understanding what you want to build.\n\nPlease describe the automation you\'d like to create. For example:\n- "Sync contacts from HubSpot to our loan system when a deal closes"\n- "When a webhook is received, create a record in Encompass"\n- "Process loan applications and update the CRM with status"\n\nOr, if you\'d like me to guide you through it, just say "help me get started" and I\'ll ask you the right questions.',
             )
           : t(
               "I'm ready to help you review or modify an existing flow.\n\nYou can:\n1. **Paste a flow JSON** for me to analyze and identify issues\n2. **Describe changes** you want to make to an existing flow\n3. **Ask questions** about how a flow works\n\nWhat would you like to do?",
@@ -301,31 +324,60 @@ export const AIAssistantPage = () => {
       // Extract detailed error message from Axios error
       const axiosError = error as {
         response?: {
-          data?: { message?: string; code?: string; params?: { message?: string } };
-          status?: number
+          data?: {
+            message?: string;
+            code?: string;
+            params?: { message?: string };
+          };
+          status?: number;
         };
-        message?: string
+        message?: string;
       };
 
       let errorContent = '';
       const status = axiosError.response?.status;
-      const serverMessage = axiosError.response?.data?.message
-        || axiosError.response?.data?.params?.message
-        || axiosError.message
-        || 'Unknown error';
+      const serverMessage =
+        axiosError.response?.data?.message ||
+        axiosError.response?.data?.params?.message ||
+        axiosError.message ||
+        'Unknown error';
 
       // Check for quota/credit errors
-      if (serverMessage.includes('quota') || serverMessage.includes('insufficient_quota') ||
-          serverMessage.includes('credit') || serverMessage.includes('billing') ||
-          serverMessage.includes('rate limit') || serverMessage.includes('RESOURCE_EXHAUSTED')) {
-        errorContent = t('**API Quota Exceeded**\n\nYour AI provider has run out of credits or exceeded rate limits.\n\n**Solutions:**\n1. Add credits to your provider account\n2. Wait a few minutes if rate limited\n3. Switch to a different AI provider\n\nProvider error: {message}', { message: serverMessage.substring(0, 200) });
-      } else if (serverMessage.includes('API key') || serverMessage.includes('authentication') ||
-                 serverMessage.includes('UNAUTHENTICATED') || status === 401 || status === 403) {
-        errorContent = t('**Authentication Error**\n\nThe API key for your AI provider is invalid or expired.\n\nPlease check your AI provider configuration in Settings → AI Providers.');
-      } else if (serverMessage.includes('ENTITY_NOT_FOUND') || serverMessage.includes('not found') || status === 404) {
-        errorContent = t('**AI Provider Not Found**\n\nNo AI provider is configured for this platform.\n\nPlease configure an AI provider in Settings → AI Providers.');
+      if (
+        serverMessage.includes('quota') ||
+        serverMessage.includes('insufficient_quota') ||
+        serverMessage.includes('credit') ||
+        serverMessage.includes('billing') ||
+        serverMessage.includes('rate limit') ||
+        serverMessage.includes('RESOURCE_EXHAUSTED')
+      ) {
+        errorContent = t(
+          '**API Quota Exceeded**\n\nYour AI provider has run out of credits or exceeded rate limits.\n\n**Solutions:**\n1. Add credits to your provider account\n2. Wait a few minutes if rate limited\n3. Switch to a different AI provider\n\nProvider error: {message}',
+          { message: serverMessage.substring(0, 200) },
+        );
+      } else if (
+        serverMessage.includes('API key') ||
+        serverMessage.includes('authentication') ||
+        serverMessage.includes('UNAUTHENTICATED') ||
+        status === 401 ||
+        status === 403
+      ) {
+        errorContent = t(
+          '**Authentication Error**\n\nThe API key for your AI provider is invalid or expired.\n\nPlease check your AI provider configuration in Settings → AI Providers.',
+        );
+      } else if (
+        serverMessage.includes('ENTITY_NOT_FOUND') ||
+        serverMessage.includes('not found') ||
+        status === 404
+      ) {
+        errorContent = t(
+          '**AI Provider Not Found**\n\nNo AI provider is configured for this platform.\n\nPlease configure an AI provider in Settings → AI Providers.',
+        );
       } else if (status === 500) {
-        errorContent = t('**Server Error**\n\nAn error occurred while processing your request.\n\nDetails: {message}', { message: serverMessage.substring(0, 300) });
+        errorContent = t(
+          '**Server Error**\n\nAn error occurred while processing your request.\n\nDetails: {message}',
+          { message: serverMessage.substring(0, 300) },
+        );
       } else {
         errorContent = t('**Error**\n\n{message}', { message: serverMessage });
       }
@@ -341,7 +393,8 @@ export const AIAssistantPage = () => {
   });
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isLoading || !selectedProvider || !selectedModel) return;
+    if (!input.trim() || isLoading || !selectedProvider || !selectedModel)
+      return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -391,7 +444,11 @@ export const AIAssistantPage = () => {
       if (lastAtIndex !== -1) {
         // Check if @ is at start or preceded by whitespace
         const charBeforeAt = lastAtIndex > 0 ? value[lastAtIndex - 1] : ' ';
-        if (charBeforeAt === ' ' || charBeforeAt === '\n' || lastAtIndex === 0) {
+        if (
+          charBeforeAt === ' ' ||
+          charBeforeAt === '\n' ||
+          lastAtIndex === 0
+        ) {
           const searchText = textBeforeCursor.slice(lastAtIndex + 1);
           // Only open if there's no space after @
           if (!searchText.includes(' ') && !searchText.includes('\n')) {
@@ -596,9 +653,7 @@ export const AIAssistantPage = () => {
               <PenLine className="h-4 w-4 text-primary" />
             )}
             <span className="font-medium">
-              {mode === 'chat'
-                ? t('Chat with AI')
-                : t('Review & Edit Flow')}
+              {mode === 'chat' ? t('Chat with AI') : t('Review & Edit Flow')}
             </span>
           </div>
         </div>
@@ -652,8 +707,12 @@ export const AIAssistantPage = () => {
                 onKeyDown={handleKeyDown}
                 placeholder={
                   mode === 'chat'
-                    ? t('Describe the automation you want to build... (Type @ to mention a piece)')
-                    : t('Paste a flow JSON or describe the changes you want... (Type @ to mention a piece)')
+                    ? t(
+                        'Describe the automation you want to build... (Type @ to mention a piece)',
+                      )
+                    : t(
+                        'Paste a flow JSON or describe the changes you want... (Type @ to mention a piece)',
+                      )
                 }
                 className="min-h-[60px] resize-none"
                 disabled={isLoading || !selectedProvider || !selectedModel}
@@ -704,7 +763,9 @@ export const AIAssistantPage = () => {
           </Popover>
           <Button
             onClick={handleSendMessage}
-            disabled={!input.trim() || isLoading || !selectedProvider || !selectedModel}
+            disabled={
+              !input.trim() || isLoading || !selectedProvider || !selectedModel
+            }
             size="icon"
             className="h-[60px] w-[60px]"
           >

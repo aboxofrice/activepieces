@@ -10,6 +10,8 @@ on:
 
 jobs:
   validate-publishable-packages:
+    # The fork publishes @vqnguyen1 pieces by hand from tested tarballs; this gate is for upstream's @activepieces releases.
+    if: github.repository == 'activepieces/activepieces'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
@@ -36,6 +38,8 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+        env:
+          REDISMS_DISABLE_POSTINSTALL: "1"
 
       - name: validate publishable packages
         run: npx ts-node -r tsconfig-paths/register -P packages/server/engine/tsconfig.lib.json tools/scripts/validate-publishable-packages.ts

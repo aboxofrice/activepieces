@@ -1,6 +1,5 @@
 import { PiecePropertyMap, StaticPropsValue, TriggerStrategy } from '@activepieces/pieces-framework'
-import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, FlowTrigger, InvalidCronExpressionError, isNil, PieceTrigger, PropertySettings, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@activepieces/shared'
-import { isValidCron } from 'cron-validator'
+import { assertEqual, AUTHENTICATION_PROPERTY_NAME, EngineGenericError, EventPayload, ExecuteTriggerResponse, FlowTrigger, isNil, PieceTrigger, PropertySettings, ScheduleOptions, TriggerHookType, TriggerSourceScheduleType } from '@activepieces/shared'
 import { EngineConstants, ResolvedExecuteTriggerOperation } from '../handler/context/engine-constants'
 import { FlowExecutorContext } from '../handler/context/flow-execution-context'
 import { createFileUploader } from '../piece-context/file-uploader'
@@ -10,6 +9,7 @@ import { utils } from '../utils'
 import { propsProcessor } from '../variables/props-processor'
 import { createPropsResolver } from '../variables/props-resolver'
 import { pieceLoader } from './piece-loader'
+import { scheduleOptionsUtils, ScheduleRequest } from './schedule-options'
 
 type Listener = {
     events: string[]
@@ -110,14 +110,12 @@ export const triggerHelper = {
                     appListeners.push({ events, identifierValue, identifierKey })
                 },
             },
-            setSchedule(request: ScheduleOptions) {
-                if (!isValidCron(request.cronExpression)) {
-                    throw new InvalidCronExpressionError(request.cronExpression)
-                }
+            setSchedule(request: ScheduleRequest): void {
+                const cron = scheduleOptionsUtils.toCronSchedule(request)
                 scheduleOptions = {
                     type: TriggerSourceScheduleType.CRON_EXPRESSION,
-                    cronExpression: request.cronExpression,
-                    timezone: request.timezone ?? 'UTC',
+                    cronExpression: cron.cronExpression,
+                    timezone: cron.timezone,
                 }
             },
             flows: createFlowsContext({

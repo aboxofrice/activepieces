@@ -1,0 +1,4 @@
+# Shell scripts and the files they read run inside Linux containers: CRLF breaks them.
+*.sh text eol=lf
+*.yml text eol=lf
+deploy/warehouse/*.txt text eol=lf

@@ -1,4 +1,4 @@
-FROM node:24.14.0-bullseye-slim AS base
+FROM node:24.14.0-bookworm-slim AS base
 
 # Set environment variables early for better layer caching
 ENV LANG=en_US.UTF-8 \
@@ -65,6 +65,10 @@ WORKDIR /usr/src/app
 COPY .npmrc package.json bun.lock bunfig.toml ./
 COPY packages/ ./packages/
 
+# redis-memory-server is a test-only dependency; its postinstall compiles Redis from source on
+# arm64 and fails. The image never runs the tests, so skip it.
+ENV REDISMS_DISABLE_POSTINSTALL=1
+
 # Install all dependencies with frozen lockfile
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
@@ -95,6 +99,9 @@ RUN rm -rf packages/pieces/core packages/pieces/custom && \
 
 ### STAGE 2: Run ###
 FROM base AS run
+
+# See the build stage: skip redis-memory-server's arm64 compile in the production install too.
+ENV REDISMS_DISABLE_POSTINSTALL=1
 
 WORKDIR /usr/src/app
 

@@ -1,0 +1,206 @@
+# ap-deploy
+
+Git-driven flow deploys. Flows built on the Mac are exported to the flows repo
+(`aboxofrice/activepieces-flows`); `ap-sync` on the server pulls the repo and applies them.
+Python 3 stdlib only.
+
+ap-sync is **pull-only**: it never commits or pushes, so its GitHub token needs read access only
+(fine-grained, Contents: Read on the flows repo). Flows staff build on the server are not exported
+to git; they live in the database and are protected by the encrypted Drive backups
+(`deploy/warehouse/compose.backup.yml`).
+
+## Flows repo layout
+
+```
+managed/<deploy-key>.json    # exported by `ap_deploy.py export`; git is the source of truth
+deploy.json                  # per server: which managed flows exist there, and on/off
+```
+
+`deploy.json`:
+
+```json
+{ "warehouse": { "vin-request-email": { "enabled": false } } }
+```
+
+Optional per flow: `"overwrite": "<any new string>"` (see "To resolve a drifted flow").
+
+Each flow file holds `deployKey`, `displayName`, `schemaVersion`, `notes`, the `trigger` step tree,
+and the derived `pieces` (name + version), `connections` (names) and `flowRefs` (deploy keys of
+other managed flows it references) it uses. Ids, owners, timestamps and sample data are stripped;
+keys are sorted so diffs stay clean.
+
+## Cross-flow references
+
+Flow ids differ per server, so a flow that calls another (the PDC orchestrator fires each worker at
+`<url>/api/v1/webhooks/<flow id>`; a subflows "Call Flow" step stores the callee's `externalId`)
+would break when apply creates the callee with a new id. Export therefore writes, in every string
+of the step tree:
+
+| Source value | Written as | Apply resolves to |
+|---|---|---|
+| id of a flow carrying a deployKey | `{{ap-flow:<key>}}` | that flow's id on the target |
+| externalId of such a flow | `{{ap-flow-external:<key>}}` | its externalId on the target |
+| the source's own URL (`AP_SOURCE_URL`, localhost = 127.0.0.1, plus any `--base-url`) | `{{ap-base-url}}` | `AP_DEPLOY_BASE_URL`, else `AP_URL` |
+
+Only whole tokens match (an id inside a longer word, or `http://localhost:80801`, is left alone).
+Export warns when a flow still contains the id of a source flow without a deployKey: export that
+flow first, then re-export the one referencing it.
+
+`{{ap-base-url}}` resolves to ap-sync's `AP_URL`, `http://activepieces:<port>`: the compose service
+name, which resolves from inside the app container where the engine runs. It is used rather than
+`AP_FRONTEND_URL` because the LAN address can change (DHCP) and the call never leaves the Docker
+network. Set `AP_DEPLOY_BASE_URL` to override.
+- `AP_NETWORK_MODE=STRICT` (engine SSRF guard / egress filter) would block these calls: the
+  internal URL is a private address. The warehouse runs the default `UNRESTRICTED`; switching to
+  STRICT means the orchestrator can no longer fire its workers.
+- The base URL is whatever the applying process resolves, and it is recorded per flow
+  (`deployBaseUrl`). A manual apply from somewhere with a different `AP_URL` (e.g. the host, with
+  `AP_URL=http://localhost:8080`) re-imports every flow using `{{ap-base-url}}` with that URL, and
+  the next ap-sync pass re-imports them back. Run manual applies inside the ap-sync container
+  (`docker compose exec ap-sync python3 ap_deploy.py --repo /data/flows apply`), or set
+  `AP_DEPLOY_BASE_URL` to the same value.
+
+Export also warns about server-local URLs it did not turn into `{{ap-base-url}}` (localhost,
+`host.docker.internal`, `*.local`, private LAN IPs, the source's frontend URL): they would not work
+on the target. Pass `--base-url` if one of them is the source server itself.
+
+`ap_deploy.py --repo <flows repo> check-pieces deploy/warehouse/pieces.txt` fails if a managed flow
+uses a piece version pieces.txt does not pin (a fresh server only has the latest official versions,
+so the installer must install every pinned one). The unit tests run it too when they find the flows
+repo (`AP_FLOWS_REPO`, or `activepieces-flows` next to this checkout).
+
+Apply:
+- creates every new flow (empty) before importing any, so flows that reference each other resolve
+  in one pass whatever the order, cycles included;
+- defers a flow whose reference names a key that is not on the server and not being created this
+  pass (not in deploy.json, or itself flagged): `missing-deps`, `references flow <key>, not on this
+  server yet ...`; flows referencing a deferred flow are deferred too. The next pass retries;
+- records what it resolved to (`deployRefs`, `deployBaseUrl` in the flow metadata) and hashes the
+  target flow in placeholder form (`hashVersion` 3), using both the current ids and the recorded
+  ones. So a referenced flow that is recreated with a new id, or a new base URL, is not drift: the
+  referencing flow shows `changed` (`a referenced flow or the base URL changed ...`) and is
+  re-imported with the new values. A staff edit of the flow is still drift.
+## Commands
+
+```bash
+# Mac: export (first time picks the source flow; also stamps metadata.deployKey on it)
+AP_SOURCE_URL=http://localhost:8080 AP_SOURCE_API_KEY=sk-... AP_SOURCE_PROJECT_ID=... \
+  python3 ap_deploy.py --repo ~/activepieces-flows export vin-request-email --flow-id <id>   # or --name "<display name>"
+# later re-exports find the flow by its deployKey
+python3 ap_deploy.py --repo ~/activepieces-flows export vin-request-email pdc-inventory-email
+
+# Any target (AP_* env + AP_DEPLOY_TARGET)
+python3 ap_deploy.py --repo <checkout> plan          # what apply would do
+python3 ap_deploy.py --repo <checkout> apply
+python3 ap_deploy.py --repo <checkout> status        # table: state, on/off, wanted, flow id
+
+# Helper loop (normally the ap-sync container)
+python3 ap_sync.py [--once]
+```
+
+Exit codes: `0` ok, `1` something skipped/flagged/failed, `2` fatal (auth, missing deploy.json).
+
+## How apply decides
+
+Flows are matched by `metadata.deployKey`. After each apply the flow's metadata also gets
+`sourceHash` (hash of the file applied), `deployHash` (hash of the resulting flow on the server),
+`deployVersionId` + `deploySchemaVersion` (the published version it produced), `deployedStatus`
+(on/off as left by the apply) and `hashVersion`.
+
+Hashes leave out `schemaVersion`. After an image upgrade Activepieces migrates flow versions in
+place (same version id, newer `schemaVersion`, sometimes a rewritten trigger); apply recognises
+that (same `deployVersionId`, newer schema) and re-records the baseline instead of flagging drift.
+A staff edit always creates a new version id, so it is still flagged. Metadata written by an older
+ap-deploy (`hashVersion` 1 or 2) is compared the old way once and then re-recorded.
+
+`"enabled": false` in deploy.json always wins: it turns the flow off even when the flow is
+drifted, missing deps (also when found only during the apply, e.g. a piece that could not be unhidden), its file is broken, or its import failed. The other way round is not automatic: if a flow
+that apply left **on** is turned **off** in the UI (an emergency stop), apply flags it as drifted
+and leaves it off. Accept the stop with `"enabled": false`, or turn it back on in the UI.
+
+EE piece filter: on an EE server whose platform hides pieces (`filteredPieceNames`, BLOCKED; set
+by the installer from `deploy/warehouse/hidden-pieces.txt`), apply first unhides exactly the pieces
+the flows listed in deploy.json use, via `POST /v1/platforms/<id>`, and logs
+`unhid <piece> (needed by flow <key>)`. If that update fails, only the flows needing those pieces
+are skipped (`missing-deps`) and the next pass retries. `plan` only reports what it would unhide.
+The platform id comes from sign-in (or `AP_PLATFORM_ID` with an API key).
+
+Apply takes a lock per target (a file in the temp dir), so a manual
+`docker compose exec ap-sync python3 ap_deploy.py --repo /data/flows apply` never races the loop.
+Each deploy key is evaluated on its own: a broken flow file or deploy.json entry marks only that
+key `error`; a deploy.json that is not valid JSON stops the pass (logged, retried next pass).
+
+| State | Meaning | Apply does |
+|---|---|---|
+| `new` | listed, not on the server | create in folder "Managed (from git)", import, publish, set on/off (default off) |
+| `changed` | file differs from `sourceHash`, or a previous apply did not finish (see below) | import, publish, set on/off |
+| `in-sync` | nothing changed | only fixes on/off if it differs from deploy.json |
+| `drifted` | flow on the server no longer matches `deployHash` (edited there), or was turned off there | skips and flags; never overwrites, never turns back on |
+| `missing-deps` | a piece version or connection name is not on the server | skips and flags |
+| `unlisted` | carries a deployKey but is not in deploy.json for this server | nothing (never deleted) |
+| `error` | file missing or not a flow, bad deploy.json entry or key, or two flows share a deployKey | skips and flags |
+
+Any flagged flow that deploy.json wants off is still turned off (`pending: disable`).
+
+Interrupted applies: apply writes `applyingSourceHash` before IMPORT_FLOW and `applyingHash` (the
+imported version's hash) right after it, and clears both when the apply completes. If publish
+fails, the next pass sees a flow that still matches `applyingHash` and finishes the apply instead
+of flagging it as drifted. If the server rejects the import with an HTTP error, nothing was
+imported and the pending hash is cleared at once; on a timeout or connection error it is kept,
+because the import may have gone through.
+
+To resolve a drifted flow without reaching the server:
+- **Keep the staff edit:** restore the latest Drive backup onto a local test stack on the Mac
+  (see "Restore a warehouse backup on another machine" in `deploy/warehouse/README.md`), run `ap_deploy.py export <key>` against it, commit.
+  The next pass sees the server copy equals git and adopts it as the new baseline (no re-import).
+- **Discard it (let git win):** add a new `"overwrite"` token to the flow's deploy.json entry, e.g.
+  `{"enabled": true, "overwrite": "2026-11-02"}`, and push. The next pass re-imports the git
+  version once (also undoing a stop made in the UI) and records the token, so later edits are
+  flagged again; a new token is needed to overwrite again. Remove the token from deploy.json once
+  it has applied: restoring an older backup (without the recorded token) would otherwise re-fire it.
+
+## Environment
+
+| Var | Used by | Notes |
+|---|---|---|
+| `AP_URL` | all target commands | e.g. `http://activepieces:8080` |
+| `AP_EMAIL` / `AP_PASSWORD` | target | Community has no API keys: signs in via `/api/v1/authentication/sign-in` |
+| `AP_API_KEY` | target | alternative to email/password (EE platform key) |
+| `AP_PROJECT_ID` | target | optional with email/password (taken from sign-in); required with an API key |
+| `AP_SOURCE_*` | `export` | same names with `AP_SOURCE_` prefix; each falls back to the `AP_*` one |
+| `AP_DEPLOY_TARGET` | plan/apply/status, ap-sync | key in deploy.json (ap-sync default `warehouse`) |
+| `AP_DEPLOY_BASE_URL` | apply | what `{{ap-base-url}}` resolves to; default `AP_URL` (see "Cross-flow references") |
+| `AP_FLOWS_REPO` | ap_deploy.py | repo checkout (default `.`); `--repo` overrides |
+| `FLOWS_REPO_URL`, `FLOWS_BRANCH` | ap-sync | HTTPS clone URL, default branch `main` |
+| `GITHUB_TOKEN` | ap-sync | fine-grained token, **read-only** (Contents: Read) on the flows repo; passed by a credential helper scoped to the `FLOWS_REPO_URL` host, never written to `.git/config`. Empty for a public repo |
+| `SYNC_HEALTHCHECK_URL` | ap-sync | optional healthchecks.io-style URL: GET after every good pass, `<url>/fail` after a failed one (separate check from the backup's `HEALTHCHECK_URL`) |
+| `FLOWS_DIR` | ap-sync | checkout, default `/data/flows` (named volume); reset to `origin/<branch>` every pass |
+| `SYNC_INTERVAL_MINUTES` | ap-sync | default 5 (an invalid value logs a warning and uses the default) |
+| `TZ` | ap-sync | log timestamps only |
+
+## Container
+
+```bash
+docker build --build-arg REVISION=$(git rev-parse HEAD) -t ghcr.io/aboxofrice/ap-sync:1.2.0 tools/ap-deploy
+```
+
+The installer pins this tag (`compose.ap-sync.yml`) and checks the image's
+`org.opencontainers.image.revision` label; see "Images and release" in `deploy/warehouse/README.md`.
+
+Service definition: `deploy/warehouse/compose.ap-sync.yml` (named volume only; gets `ADMIN_EMAIL`,
+`ADMIN_PASSWORD`, `GITHUB_TOKEN`, the `AP_DEPLOY_*` and sync settings from the stack `.env` and
+nothing else; set them with `-e` on an installer run). Image upgrades via
+`release.json` are not implemented yet: `check_release_upgrade()` in `ap_sync.py` is the hook.
+
+Tests (no server needed): `cd tools/ap-deploy && python3 -m unittest discover -s tests`.
+
+## Known limits
+
+- Piece and connection checks are by exact piece version and connection name; connections are
+  never created or copied (logins stay on each server).
+- ap-sync signs in as the admin (Community has no API keys, and adding a second user needs the
+  invitation flow). If someone changes the admin password in the UI, ap-sync logs
+  `sign-in as … was rejected` until `ADMIN_PASSWORD` in the server `.env` is updated and the
+  installer is re-run (Community has no password reset).
+- Staff-built flows have no git history; to see or recover an older version, restore a backup
+  (onto a test instance if only one flow is needed).

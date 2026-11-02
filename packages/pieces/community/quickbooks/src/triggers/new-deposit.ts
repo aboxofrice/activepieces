@@ -19,7 +19,7 @@ const polling: Polling<
     const { access_token } = auth;
     const companyId = auth.props?.['companyId'] as string;
 
-    const apiUrl = quickbooksCommon.getApiUrl(companyId!);
+    const apiUrl = quickbooksCommon.getApiUrl({ companyId: companyId!, environment: auth.props?.['environment'] as string | undefined });
 
     const query =
       lastFetchEpochMS === 0
