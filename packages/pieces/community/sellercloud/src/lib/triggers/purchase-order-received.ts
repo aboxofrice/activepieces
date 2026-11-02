@@ -25,26 +25,29 @@ export const purchaseOrderReceived = createTrigger({
     sampleData: sellercloudSamples.purchaseOrder,
     type: TriggerStrategy.POLLING,
     async onEnable(context) {
-        await sellercloudPoller.baseline({
+        await sellercloudPoller.enable({
             store: context.store,
+            fingerprint: fingerprint({ propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now(),
         });
     },
-    async onDisable(context) {
-        await sellercloudPoller.clear({ store: context.store });
+    async onDisable() {
+        await sellercloudPoller.disable();
     },
     async test(context) {
-        const items = await buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue })({ since: new Date() });
+        const { items } = await buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue })({ since: new Date(), startPage: 1, seen: {} });
         return items.filter((item) => item.eligible).slice(0, 5).map((item) => item.data);
     },
     async run(context) {
         const emissions = await sellercloudPoller.poll({
             store: context.store,
+            fingerprint: fingerprint({ propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             emitUnseen: true,
             retentionMs: RETENTION_MS,
+            overlapMs: sellercloudPoller.OVERLAP_MS,
         });
         return emissions.map((emission) => emission.item);
     },
@@ -53,16 +56,17 @@ export const purchaseOrderReceived = createTrigger({
 // Receive dates can be date-only, so read a few days back and dedupe on PO + receiving
 // state: the PO fires once per state it reaches (partial, then full).
 function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<Record<string, unknown>> {
-    return async ({ since }) => {
-        const pos = await sellercloudFeeds.receivedPurchaseOrders({
+    return async ({ since, startPage }) => {
+        const page = await sellercloudFeeds.receivedPurchaseOrders({
             auth: sellercloudAuthProps(auth),
             store,
             since: new Date(since.getTime() - WINDOW_MS),
             companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds }),
             warehouses: (propsValue.warehouses ?? []).map(Number),
             maxPages: MAX_PAGES,
+            startPage,
         });
-        return pos.map((po) => {
+        const items = page.items.map((po) => {
             const fullyReceived = po.PurchaseOrderStatus === PO_STATUS_RECEIVED || po.ReceivingStatus === RECEIVING_FULL;
             const partiallyReceived = po.ReceivingStatus === RECEIVING_PARTIAL;
             const state = fullyReceived ? 'full' : partiallyReceived ? 'partial' : 'none';
@@ -70,10 +74,24 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<R
                 key: String(po.ID),
                 state,
                 eligible: fullyReceived || (propsValue.includePartial === true && partiallyReceived),
+                eventTime: sellercloudPoller.toEventTime({ tenantLocal: po.LastRevisedOn ?? po.CreatedOn }),
                 data: sellercloudRecords.flattenPurchaseOrder({ po }),
             };
         });
+        return { truncated: page.truncated, nextPage: page.nextPage, items };
     };
+}
+
+// Whether partial receipts are reported only filters emissions; the remembered receiving
+// state is the same either way, so it is left out.
+function fingerprint({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string {
+    return sellercloudPoller.fingerprintOf({
+        trigger: 'purchase_order_received',
+        settings: {
+            warehouses: (propsValue.warehouses ?? []).map(Number).sort(),
+            companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
+        },
+    });
 }
 
 const PO_STATUS_RECEIVED = 3;

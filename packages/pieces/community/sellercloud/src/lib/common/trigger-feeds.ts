@@ -1,76 +1,83 @@
 import { SellercloudAuthProps, sellercloudClient } from './client';
-import { sellercloudListing } from './listing';
+import { ListPagesResult, sellercloudListing } from './listing';
 import { SellercloudOrder, SellercloudPurchaseOrder, SellercloudRma } from './records';
 import { tenantTime } from './tenant-time';
 
 // Data sources for the polling triggers. Each returns the records SellerCloud reports for
-// a window starting at `since`; dedupe happens in the poller.
+// a window starting at `since` (from `startPage` on), and whether more pages remain;
+// dedupe and resuming a truncated window happen in the poller.
 
-async function orders({ auth, store, since, dateField, channels, companies, maxPages }: OrdersParams): Promise<SellercloudOrder[]> {
+async function orders({ auth, store, since, dateField, channels, companies, maxPages, startPage }: OrdersParams): Promise<ListPagesResult<SellercloudOrder>> {
     const token = await sellercloudClient.getToken({ auth, store });
-    const { items } = await sellercloudListing.listPages<SellercloudOrder>({
+    return sellercloudListing.listPages<SellercloudOrder>({
         auth,
         token,
         path: '/Orders',
         query: { [dateField === 'created' ? 'model.createdOnFrom' : 'model.lastUpdatedFrom']: tenantTime.toFilterValue({ date: since }) },
         arrayQuery: { 'model.channel': channels, 'model.companyID': companies },
         maxPages,
+        startPage,
     });
-    return items;
 }
 
-async function returns({ auth, store, since, channels, companies, maxPages }: ScopedParams): Promise<SellercloudRma[]> {
+async function returns({ auth, store, since, channels, companies, maxPages, startPage }: ScopedParams): Promise<ListPagesResult<SellercloudRma>> {
     const token = await sellercloudClient.getToken({ auth, store });
-    const { items } = await sellercloudListing.listPages<SellercloudRma>({
+    return sellercloudListing.listPages<SellercloudRma>({
         auth,
         token,
         path: '/Rma',
         query: { 'model.dateFrom': tenantTime.toFilterValue({ date: since }) },
         arrayQuery: { 'model.orderSources': channels, 'model.companyIDList': companies },
         maxPages,
+        startPage,
     });
-    return items;
 }
 
-async function receivedPurchaseOrders({ auth, store, since, companies, warehouses, maxPages }: PurchaseOrderParams): Promise<SellercloudPurchaseOrder[]> {
+async function receivedPurchaseOrders({ auth, store, since, companies, warehouses, maxPages, startPage }: PurchaseOrderParams): Promise<ListPagesResult<SellercloudPurchaseOrder>> {
     const token = await sellercloudClient.getToken({ auth, store });
-    const { items } = await sellercloudListing.listPages<SellercloudPurchaseOrder>({
+    return sellercloudListing.listPages<SellercloudPurchaseOrder>({
         auth,
         token,
         path: '/PurchaseOrders',
         query: { 'model.receiveDateFrom': tenantTime.toFilterValue({ date: since }) },
         arrayQuery: { 'model.companyIDList': companies, 'model.receiveWarehouseID': warehouses },
         maxPages,
+        startPage,
     });
-    return items;
 }
 
 // With SKUs: the current quantity of each, read 50 at a time. With only a warehouse: the
 // products updated since `since` that are at or below the threshold. SellerCloud requires
 // a quantity range whenever a warehouse filter is sent.
-async function inventory({ auth, store, since, skus, warehouseId, companies, maxQty, maxPages }: InventoryParams): Promise<InventoryRecord[]> {
+async function inventory({ auth, store, since, skus, warehouseId, companies, maxQty, maxPages, startPage }: InventoryParams): Promise<ListPagesResult<InventoryRecord>> {
     const token = await sellercloudClient.getToken({ auth, store });
-    const warehouseQuery = warehouseId === null ? {} : { 'model.physicalQtyFrom': MIN_QTY, 'model.physicalQtyTo': maxQty ?? MAX_QTY };
     const arrayQuery = { 'model.warehouse': warehouseId === null ? undefined : [warehouseId], 'model.companyID': companies };
     if (skus.length === 0) {
-        const { items } = await sellercloudListing.listPages<InventoryRecord>({
+        return sellercloudListing.listPages<InventoryRecord>({
             auth,
             token,
             path: '/Inventory',
-            query: { ...warehouseQuery, 'model.lastUpdatedFrom': tenantTime.toFilterValue({ date: since }) },
+            query: { ...warehouseRange({ warehouseId, maxQty }), 'model.lastUpdatedFrom': tenantTime.toFilterValue({ date: since }) },
             arrayQuery,
             maxPages,
+            startPage,
         });
-        return items;
     }
+    const items = await inventoryBySku({ auth, token, skus, warehouseId, companies });
+    return { items, total: items.length, truncated: false, nextPage: 1 };
+}
+
+// The current quantity of specific products, whatever their level.
+async function inventoryBySku({ auth, token, skus, warehouseId, companies }: InventoryBySkuParams): Promise<InventoryRecord[]> {
     const chunks = Array.from({ length: Math.ceil(skus.length / SKUS_PER_REQUEST) }, (_, index) => skus.slice(index * SKUS_PER_REQUEST, (index + 1) * SKUS_PER_REQUEST));
+    const arrayQuery = { 'model.warehouse': warehouseId === null ? undefined : [warehouseId], 'model.companyID': companies };
     const pages = [];
     for (const chunk of chunks) {
         const { items } = await sellercloudListing.listPages<InventoryRecord>({
             auth,
             token,
             path: '/Inventory',
-            query: { ...warehouseQuery, 'model.inventoryID': chunk.join(',') },
+            query: { ...warehouseRange({ warehouseId, maxQty: null }), 'model.inventoryID': chunk.join(',') },
             arrayQuery,
             maxPages: 2,
         });
@@ -79,11 +86,15 @@ async function inventory({ auth, store, since, skus, warehouseId, companies, max
     return pages.flat();
 }
 
+function warehouseRange({ warehouseId, maxQty }: { warehouseId: number | null; maxQty: number | null }): Record<string, number> {
+    return warehouseId === null ? {} : { 'model.physicalQtyFrom': MIN_QTY, 'model.physicalQtyTo': maxQty ?? MAX_QTY };
+}
+
 const SKUS_PER_REQUEST = 50;
 const MIN_QTY = -1000000;
 const MAX_QTY = 1000000000;
 
-export const sellercloudFeeds = { orders, returns, receivedPurchaseOrders, inventory };
+export const sellercloudFeeds = { orders, returns, receivedPurchaseOrders, inventory, inventoryBySku };
 
 export type InventoryRecord = {
     ID: string;
@@ -109,6 +120,7 @@ type ScopedParams = {
     channels?: number[];
     companies?: number[];
     maxPages: number;
+    startPage?: number;
 };
 
 type OrdersParams = ScopedParams & { dateField: 'created' | 'updated' };
@@ -120,6 +132,7 @@ type PurchaseOrderParams = {
     companies?: number[];
     warehouses?: number[];
     maxPages: number;
+    startPage?: number;
 };
 
 type InventoryParams = {
@@ -131,4 +144,13 @@ type InventoryParams = {
     companies?: number[];
     maxQty: number | null;
     maxPages: number;
+    startPage?: number;
+};
+
+type InventoryBySkuParams = {
+    auth: SellercloudAuthProps;
+    token: string;
+    skus: string[];
+    warehouseId: number | null;
+    companies?: number[];
 };
