@@ -3,7 +3,8 @@
 #
 # No service reads .env wholesale (env_file): each gets only the variables it needs, so pieces
 # running inside the app never see GITHUB_TOKEN, ADMIN_PASSWORD or the backup keys. .env still
-# feeds the ${...} substitutions below. Extra AP_* settings for the app go in ./app.env (optional).
+# feeds the ${...} substitutions below. Extra AP_* settings for the app go in ./app.env (optional);
+# app.env cannot override a variable listed under environment: (that one wins), change it in .env.
 name: ${COMPOSE_PROJECT_NAME:-activepieces}
 
 services:
