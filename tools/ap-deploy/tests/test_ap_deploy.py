@@ -277,6 +277,37 @@ class InterruptedApplyTests(unittest.TestCase):
         self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'changed')
 
 
+class OverwriteTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.fid = flow_of(self.ap, 'a')['id']
+        self.ap.staff_edit(self.fid, 'return 99')
+
+    def code(self):
+        return self.ap.flow(self.fid)['version']['trigger']['nextAction']['settings']['sourceCode']['code']
+
+    def test_overwrite_token_lets_git_win_once(self):
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+        self.repo.deploy({'a': {'enabled': True, 'overwrite': '2026-11-02'}})
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        self.assertEqual(self.code(), 'return 1')
+        self.assertEqual(self.ap.flow(self.fid)['metadata']['overwriteApplied'], '2026-11-02')
+        self.ap.staff_edit(self.fid, 'return 100')  # same token still in deploy.json
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual(r['state'], 'drifted')
+        self.assertEqual(self.code(), 'return 100')
+
+    def test_overwrite_reenables_flow_stopped_in_ui(self):
+        self.ap.operate(self.fid, 'CHANGE_STATUS', {'status': 'DISABLED'})
+        self.repo.deploy({'a': {'enabled': True, 'overwrite': 'x1'}})
+        apply(self.ap, self.repo)
+        self.assertEqual(self.ap.flow(self.fid)['status'], 'ENABLED')
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+
 class KillSwitchTests(unittest.TestCase):
     def setUp(self):
         self.ap, self.repo = FakeAP(), Repo(self)

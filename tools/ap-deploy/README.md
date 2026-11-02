@@ -22,6 +22,8 @@ deploy.json                  # per server: which managed flows exist there, and 
 { "warehouse": { "vin-request-email": { "enabled": false } } }
 ```
 
+Optional per flow: `"overwrite": "<any new string>"` (see "To resolve a drifted flow").
+
 Each flow file holds `deployKey`, `displayName`, `schemaVersion`, `notes`, the `trigger` step tree,
 and the derived `pieces` (name + version) and `connections` (names) it uses. Ids, owners,
 timestamps and sample data are stripped; keys are sorted so diffs stay clean.
@@ -87,8 +89,14 @@ of flagging it as drifted. If the server rejects the import with an HTTP error, 
 imported and the pending hash is cleared at once; on a timeout or connection error it is kept,
 because the import may have gone through.
 
-To resolve a drifted flow: export it into git (accept the edit), or clear `deployHash` in its
-metadata (let git win on the next apply). For a flow turned off on the server, see above.
+To resolve a drifted flow without reaching the server:
+- **Keep the staff edit:** restore the latest Drive backup onto a local test stack on the Mac
+  (installer `restore`, with the warehouse's `BACKUP_PASSWORD`/`BACKUP_SALT` and
+  `AP_ENCRYPTION_KEY` in that stack's `.env`), run `ap_deploy.py export <key>` against it, commit.
+- **Discard it (let git win):** add a new `"overwrite"` token to the flow's deploy.json entry, e.g.
+  `{"enabled": true, "overwrite": "2026-11-02"}`, and push. The next pass re-imports the git
+  version once (also undoing a stop made in the UI) and records the token, so later edits are
+  flagged again; a new token is needed to overwrite again.
 
 ## Environment
 

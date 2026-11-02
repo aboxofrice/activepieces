@@ -359,9 +359,11 @@ def evaluate(client, repo, target):
         records.append(rec)
         try:
             entry = wanted[key]
-            if not isinstance(entry, dict) or not isinstance(entry.get('enabled', False), bool):
-                raise ValueError(f'{DEPLOY_FILE} entry must look like {{"enabled": true}}')
+            if not isinstance(entry, dict) or not isinstance(entry.get('enabled', False), bool) \
+                    or not isinstance(entry.get('overwrite', ''), str):
+                raise ValueError(f'{DEPLOY_FILE} entry must look like {{"enabled": true}} ("overwrite" is a string)')
             rec['desired'] = 'ENABLED' if entry.get('enabled') else 'DISABLED'
+            rec['overwrite'] = entry.get('overwrite') or None
             _classify(client, repo, rec, connections, piece_cache)
         except Exception as e:  # noqa: BLE001 - isolate one bad record from the rest
             rec.update(state='error', action='none', reason=f'{type(e).__name__}: {e}'[:300])
@@ -396,6 +398,12 @@ def _classify(client, repo, rec, connections, piece_cache):
     if drifted and _interrupted_apply(flow, meta, rec['sourceHash']):
         drifted = False
         rec['interrupted'] = True
+    # One-shot "let git win" from deploy.json: a new "overwrite" token replaces a drifted flow (and
+    # undoes a stop made in the UI) once; it is recorded so later staff edits are flagged again.
+    if rec['overwrite'] and flow and rec['overwrite'] != meta.get('overwriteApplied'):
+        drifted = False
+        rec['interrupted'] = True
+        meta = {**meta, 'deployedStatus': None}
     known_source = {rec['sourceHash']}
     if (meta.get('hashVersion') or 1) != HASH_VERSION:
         known_source.add(definition_hash(flow_def, meta.get('hashVersion') or 1))
@@ -541,7 +549,8 @@ def _apply_one(client, rec):
     fresh = client.flow(flow['id'])
     _update_metadata(client, fresh, {
         'deployKey': rec['key'], 'sourceHash': rec['sourceHash'], **_baseline(fresh),
-        'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds')},
+        'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        **({'overwriteApplied': rec['overwrite']} if rec.get('overwrite') else {})},
         drop=('applyingSourceHash', 'applyingHash'))
     return flow['id']
 
