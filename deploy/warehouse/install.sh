@@ -45,6 +45,7 @@ SECRETS_ACK=$DATA_DIR/.secrets-acknowledged
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
 # Settings an installer run may pass with -e and that must survive into .env for the helper services.
 PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES
 AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
@@ -308,6 +309,9 @@ attach_to_stack() {
 
 # api METHOD PATH [JSON] -> body; uses $TOKEN when set. The body goes in on stdin and the
 # Authorization header through a 0600 file, so neither the password nor the token shows up in `ps`.
+# Fails (non-zero) on an HTTP error, keeping the body for the caller's message, and on a timeout or
+# lost connection, which it reports itself. Callers check the body, so they call it with `|| true`.
+API_MAX_TIME=${API_MAX_TIME:-300}
 WORK_DIR=$(mktemp -d)
 chmod 700 "$WORK_DIR"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -315,7 +319,15 @@ api() {
     local hdr="$WORK_DIR/headers"
     ( umask 077; printf 'Content-Type: application/json\n' > "$hdr"
       [ -n "${TOKEN:-}" ] && printf 'Authorization: Bearer %s\n' "$TOKEN" >> "$hdr"; true )
-    printf '%s' "${3:-}" | curl -sS -X "$1" "$API_BASE$2" -H @"$hdr" ${3:+--data-binary @-}
+    local rc=0
+    printf '%s' "${3:-}" | curl -s --fail-with-body --connect-timeout 10 --max-time "$API_MAX_TIME" \
+        -X "$1" "$API_BASE$2" -H @"$hdr" ${3:+--data-binary @-} || rc=$?
+    case "$rc" in
+        0|22) ;;
+        28) printf 'ERROR: %s %s: no answer from Activepieces within %ss\n' "$1" "$2" "$API_MAX_TIME" >&2 ;;
+        *) printf 'ERROR: %s %s: could not reach Activepieces at %s (curl exit %s)\n' "$1" "$2" "$API_BASE" "$rc" >&2 ;;
+    esac
+    return "$rc"
 }
 
 json_field() {
@@ -346,9 +358,9 @@ print(json.dumps(out))' "$@"
 ensure_admin() {
     local res user_created
     ADMIN_EMAIL_V=$(env_get ADMIN_EMAIL); ADMIN_PASSWORD_V=$(env_get ADMIN_PASSWORD)
-    res=$(api POST /v1/authentication/sign-in "$(json_obj email=ADMIN_EMAIL_V password=ADMIN_PASSWORD_V)")
+    res=$(api POST /v1/authentication/sign-in "$(json_obj email=ADMIN_EMAIL_V password=ADMIN_PASSWORD_V)") || true
     if [ -z "$(printf '%s' "$res" | json_field token)" ]; then
-        user_created=$(api GET /v1/flags | json_field USER_CREATED)
+        user_created=$(api GET /v1/flags | json_field USER_CREATED) || true
         if [ "$user_created" = True ]; then
             die "Sign-in as $ADMIN_EMAIL_V failed, but this server already has a user, so no new admin is created.
   If the admin password was changed in the web UI, put the current password in ADMIN_PASSWORD in
@@ -359,7 +371,7 @@ ensure_admin() {
         fi
         log "Creating admin user $ADMIN_EMAIL_V"
         res=$(api POST /v1/authentication/sign-up "$(json_obj email=ADMIN_EMAIL_V password=ADMIN_PASSWORD_V \
-            firstName:='"Warehouse"' lastName:='"Admin"' trackEvents:=false newsLetter:=false)")
+            firstName:='"Warehouse"' lastName:='"Admin"' trackEvents:=false newsLetter:=false)") || true
     fi
     TOKEN=$(printf '%s' "$res" | json_field token)
     PLATFORM_ID=$(printf '%s' "$res" | json_field platformId)
@@ -368,7 +380,7 @@ ensure_admin() {
     # (no project); the platform is created in a second call, as the web onboarding does.
     if [ -z "$(printf '%s' "$res" | json_field projectId)" ]; then
         log "Creating the platform"
-        res=$(api POST /v1/platforms '{"name":"Warehouse"}')
+        res=$(api POST /v1/platforms '{"name":"Warehouse"}') || true
         TOKEN=$(printf '%s' "$res" | json_field token)
         PLATFORM_ID=$(printf '%s' "$res" | json_field platformId)
         [ -n "$(printf '%s' "$res" | json_field projectId)" ] || die "Could not create the platform: $res"
@@ -382,7 +394,7 @@ install_pieces() {
     while read -r PIECE_NAME PIECE_VERSION _; do
         case "$PIECE_NAME" in ''|\#*) continue ;; esac
         res=$(api POST /v1/pieces "$(json_obj packageType:='"REGISTRY"' scope:='"PLATFORM"' \
-            pieceName=PIECE_NAME pieceVersion=PIECE_VERSION)")
+            pieceName=PIECE_NAME pieceVersion=PIECE_VERSION)") || true
         if printf '%s' "$res" | grep -q '"name"'; then echo "  ok  $PIECE_NAME@$PIECE_VERSION"; else echo "  !!  $PIECE_NAME@$PIECE_VERSION: $res"; fi
     done < "$PIECES_FILE"
 }
@@ -393,19 +405,34 @@ install_pieces() {
 apply_hidden_pieces() {
     [ "$(env_get AP_EDITION)" = ee ] || return 0
     [ -f "$HIDDEN_PIECES_FILE" ] || return 0
-    [ -n "${PLATFORM_ID:-}" ] || die "No platform id from sign-in; cannot apply $HIDDEN_PIECES_FILE"
+    if [ -z "${PLATFORM_ID:-}" ]; then
+        warn "No platform id from sign-in; pieces were not hidden"
+        return 0
+    fi
     log "Hiding pieces listed in hidden-pieces.txt"
     local used="$WORK_DIR/used-pieces" body res count
     # A hidden piece cannot be loaded, so a flow using it would break: collect every piece any
-    # flow version on this server references (all versions, not only the published ones).
-    compose exec -T postgres psql -X -A -t -v ON_ERROR_STOP=1 \
-        -U "$(env_get AP_POSTGRES_USERNAME)" -d "$(env_get AP_POSTGRES_DATABASE)" -c \
-        "SELECT DISTINCT p #>> '{}' FROM flow_version, jsonb_path_query(trigger, 'lax \$.**.pieceName') AS p
-         WHERE trigger IS NOT NULL AND jsonb_typeof(p) = 'string'" </dev/null > "$used" \
-        || die "Could not list the pieces flows use; nothing was hidden"
-    body=$(python3 "$TEMPLATE_DIR/hidden_pieces.py" "$HIDDEN_PIECES_FILE" "$used") \
-        || die "Could not read $HIDDEN_PIECES_FILE"
-    res=$(api POST "/v1/platforms/$PLATFORM_ID" "$body")
+    # flow version of this platform references (all versions, not only the published ones, and
+    # flows made while the server ran Community too). The SQL goes in on stdin so psql's :'pid'
+    # quotes the id.
+    if ! compose exec -T postgres psql -X -A -t -v ON_ERROR_STOP=1 -v pid="$PLATFORM_ID" \
+        -U "$(env_get AP_POSTGRES_USERNAME)" -d "$(env_get AP_POSTGRES_DATABASE)" > "$used" <<'SQL'
+SELECT DISTINCT p #>> '{}'
+FROM flow_version fv
+JOIN flow f ON f.id = fv."flowId"
+JOIN project pr ON pr.id = f."projectId"
+CROSS JOIN LATERAL jsonb_path_query(fv.trigger, 'lax $.**.pieceName') AS p
+WHERE pr."platformId" = :'pid' AND fv.trigger IS NOT NULL AND jsonb_typeof(p) = 'string';
+SQL
+    then
+        warn "Could not list the pieces flows use; pieces were not hidden this run"
+        return 0
+    fi
+    if ! body=$(python3 "$TEMPLATE_DIR/hidden_pieces.py" "$HIDDEN_PIECES_FILE" "$used"); then
+        warn "Could not read $HIDDEN_PIECES_FILE; pieces were not hidden this run"
+        return 0
+    fi
+    res=$(api POST "/v1/platforms/$PLATFORM_ID" "$body") || true
     count=$(printf '%s' "$res" | python3 -c 'import json, sys
 try:
     d = json.load(sys.stdin)
@@ -413,7 +440,10 @@ except ValueError:
     d = None
 names = d.get("filteredPieceNames") if isinstance(d, dict) else None
 print(len(names) if isinstance(names, list) and d.get("filteredPieceBehavior") == "BLOCKED" else "")')
-    [ -n "$count" ] || die "Could not update the platform's hidden pieces: $res"
+    if [ -z "$count" ]; then
+        warn "Could not update the platform's hidden pieces (left as they were): $res"
+        return 0
+    fi
     echo "  $count pieces hidden"
 }
 
@@ -456,8 +486,10 @@ case "$cmd" in
         start_stack
         attach_to_stack
         ensure_admin
-        install_pieces
+        # First thing after sign-in: after a ce->ee switch an older filter may still name pieces
+        # that flows made on Community use; this re-computes it before anything else is done.
         apply_hidden_pieces
+        install_pieces
         finish
         ;;
     --show-secrets|show-secrets)

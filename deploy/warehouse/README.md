@@ -30,10 +30,14 @@ In EE mode every installer run sets the platform's piece filter (`filteredPieceN
   data folder is refreshed every run), so to show a piece again remove its line here, build a new
   installer image and re-run it.
 - The whole list is replaced on each run, so filter changes made in the UI are overwritten.
-- A piece referenced by any flow version on the server is never hidden (a hidden piece cannot be
-  loaded, so its flows would break). The installer logs each one it keeps visible.
-- Flows that ap-sync deploys later are not checked: if a new managed flow needs a listed piece,
-  remove it from the list and run the new installer before adding the flow to `deploy.json`.
+- A piece referenced by any flow version of the platform is never hidden (a hidden piece cannot be
+  loaded, so its flows would break), including flows made while the server ran Community. The
+  installer logs each one it keeps visible. It applies the list right after signing in, before
+  installing pieces.
+- ap-sync covers flows deployed later: before each apply it unhides exactly the pieces the flows in
+  `deploy.json` need (`unhid X (needed by flow Y)`). Once the flow exists, later installer runs keep
+  those pieces visible. If unhiding fails, only those flows are skipped (logged, retried next pass).
+- If the hide step fails, the installer warns and finishes; the filter stays as it was.
 - Community ignores the setting, so the list is not applied there.
 
 Managed flows (ap-sync) are created disabled unless `deploy.json` sets `"enabled": true`; see

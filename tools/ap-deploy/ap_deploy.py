@@ -63,6 +63,7 @@ class Client:
     def __init__(self, url, project_id=None, api_key=None, email=None, password=None):
         self.url = url.rstrip('/')
         self.project_id = project_id
+        self.platform_id = os.environ.get('AP_PLATFORM_ID') or None
         if api_key:
             self.token = api_key
         elif email and password:
@@ -79,6 +80,7 @@ class Client:
                 raise ApiError(f'{self.url}: sign-in returned no token')
             self.token = res['token']
             self.project_id = self.project_id or res.get('projectId')
+            self.platform_id = self.platform_id or res.get('platformId')
         else:
             raise ApiError(f'{self.url}: set an API key or email + password')
         if not self.project_id:
@@ -131,6 +133,22 @@ class Client:
 
     def connection_names(self):
         return {c['externalId'] for c in self.paged('/v1/app-connections')}
+
+    def hidden_pieces(self):
+        """Names the platform hides (EE filteredPieceNames with BLOCKED), or None when nothing can
+        be hidden here: Community (filtering is EE-only), an allow-list filter, or no platform id."""
+        if not self.platform_id:
+            return None
+        flags = self.request('GET', '/v1/flags')
+        if not isinstance(flags, dict) or flags.get('EDITION') != 'ee':
+            return None
+        platform = self.request('GET', f'/v1/platforms/{self.platform_id}')
+        if platform.get('filteredPieceBehavior') != 'BLOCKED':
+            return None
+        return set(platform.get('filteredPieceNames') or [])
+
+    def set_hidden_pieces(self, names):
+        self.request('POST', f'/v1/platforms/{self.platform_id}', {'filteredPieceNames': sorted(names)})
 
     def has_piece(self, name, version):
         try:
@@ -463,12 +481,61 @@ def _kill_switch(rec):
         rec.update(action='disable', disable_ids=on)
 
 
+def unhide_needed_pieces(client, repo, target, dry_run=False, log=print):
+    """A hidden piece cannot be loaded, so a managed flow using one would fail to import. Unhide
+    exactly the pieces the listed flows need (the user's rule: never hide a piece a flow uses).
+
+    Returns {deploy key: reason} for flows to skip because their pieces could not be unhidden."""
+    try:
+        hidden = client.hidden_pieces()
+    except ApiError as e:
+        log(f'could not read the platform piece filter ({e}); hidden pieces are not checked this pass')
+        return {}
+    if not hidden:
+        return {}
+    try:
+        wanted = load_deploy_config(repo, target)
+    except Exception:  # noqa: BLE001 - evaluate() reports a bad deploy.json
+        return {}
+    needed_by = {}
+    for key in sorted(wanted):
+        try:
+            flow_def = read_json(os.path.join(repo, MANAGED_DIR, f'{key}.json'))
+            names = {p['name'] for p in pieces_used(flow_def['trigger'])}
+        except Exception:  # noqa: BLE001 - evaluate() reports a broken flow file
+            continue
+        for name in sorted(names & hidden):
+            needed_by.setdefault(name, []).append(key)
+    if not needed_by:
+        return {}
+    if dry_run:
+        for name, keys in sorted(needed_by.items()):
+            log(f'would unhide {name} (needed by flow {", ".join(keys)})')
+        return {}
+    try:
+        client.set_hidden_pieces(hidden - set(needed_by))
+    except ApiError as e:
+        skip = {}
+        for name, keys in needed_by.items():
+            for key in keys:
+                skip.setdefault(key, []).append(name)
+        log(f'could not unhide {", ".join(sorted(needed_by))}: {e}')
+        return {key: f'needs hidden piece {", ".join(names)}; unhiding it failed' for key, names in skip.items()}
+    for name, keys in sorted(needed_by.items()):
+        log(f'unhid {name} (needed by flow {", ".join(keys)})')
+    return {}
+
+
 def apply(client, repo, target, dry_run=False, log=print):
     lock = None if dry_run else _apply_lock(client, log)
     try:
+        blocked = unhide_needed_pieces(client, repo, target, dry_run, log)
         records = evaluate(client, repo, target)
         for rec in records:
             key, action = rec['key'], rec['action']
+            if key in blocked and action != 'disable' and rec['state'] != 'unlisted':
+                rec.update(state='missing-deps', action='none', reason=blocked[key])
+                action = 'none'
             if action == 'none' or action == 'disable':
                 if rec['state'] not in ('in-sync', 'unlisted'):
                     log(f'skip {key}: {rec["state"]} - {rec["reason"]}')
