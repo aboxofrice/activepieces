@@ -5,8 +5,10 @@ import { FlatOrder, ORDER_STATUSES, SHIP_NODE_TYPES, walmartOrders } from '../co
 import { SAMPLE_ORDER } from '../common/sample-data';
 
 // Orders can surface in the API some time after their orderDate, so a plain "newer than
-// the last poll" cut-off would drop late arrivals. Each poll re-reads a lookback window
-// and emits only purchase orders not seen before; the seen set is pruned to the window.
+// the last poll" cut-off would drop late arrivals. Each poll re-reads the whole lookback
+// window and emits only purchase orders not seen before, oldest first; the seen set is
+// pruned to the window. A burst larger than one poll's emit limit is carried over: only
+// emitted orders are marked seen, so the rest go out on the next poll.
 export const newOrder = createTrigger({
     auth: walmartAuth,
     name: 'new_order',
@@ -54,8 +56,9 @@ export const newOrder = createTrigger({
         const orders = await fetchWindow({ auth: walmartAuthProps(context.auth), props: context.propsValue });
         const fresh = orders
             .filter((order) => order.purchase_order_id && previous[order.purchase_order_id] === undefined)
-            .sort((a, b) => (a.order_date_epoch_ms ?? 0) - (b.order_date_epoch_ms ?? 0));
-        await context.store.put(SEEN_KEY, seenFrom({ orders, previous, lookbackHours: lookbackOf({ props: context.propsValue }) }));
+            .sort((a, b) => (a.order_date_epoch_ms ?? 0) - (b.order_date_epoch_ms ?? 0))
+            .slice(0, MAX_EMITTED_PER_POLL);
+        await context.store.put(SEEN_KEY, seenFrom({ orders: fresh, previous, lookbackHours: lookbackOf({ props: context.propsValue }) }));
         return fresh;
     },
 });
@@ -65,8 +68,12 @@ async function fetchWindow({ auth, props }: { auth: WalmartAuthProps; props: Tri
     const orders = await walmartOrders.listOrders({
         auth,
         filters: { createdStartDate: start, status: props.status ?? undefined, shipNodeType: props.shipNodeType ?? undefined },
-        maxOrders: MAX_ORDERS_PER_POLL,
+        maxOrders: MAX_ORDERS_PER_WINDOW + 1,
     });
+    // Emitting from a truncated window could skip orders for good, so fail loudly instead.
+    if (orders.length > MAX_ORDERS_PER_WINDOW) {
+        throw new Error(`More than ${MAX_ORDERS_PER_WINDOW} Walmart orders in the ${lookbackOf({ props })}-hour lookback window; lower the Lookback Window or narrow the Status filter.`);
+    }
     return orders.map((order) => walmartOrders.flattenOrder({ order }));
 }
 
@@ -89,7 +96,8 @@ const HOUR_MS = 60 * 60 * 1000;
 const SEEN_GRACE_MS = 6 * HOUR_MS;
 const DEFAULT_LOOKBACK_HOURS = 24;
 const MAX_LOOKBACK_HOURS = 24 * 7;
-const MAX_ORDERS_PER_POLL = 2000;
+const MAX_ORDERS_PER_WINDOW = 10000;
+const MAX_EMITTED_PER_POLL = 500;
 const TEST_ORDER_COUNT = 5;
 
 type SeenOrders = Record<string, number>;
