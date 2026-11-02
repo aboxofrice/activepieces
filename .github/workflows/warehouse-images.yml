@@ -1,0 +1,177 @@
+# Builds and pushes the warehouse images to GHCR (private: the app contains EE code, whose license
+# forbids distribution). See "Images and release" in deploy/warehouse/README.md.
+#   ghcr.io/aboxofrice/activepieces   app (root Dockerfile)
+#   ghcr.io/aboxofrice/ap-sync        tools/ap-deploy
+#   ghcr.io/aboxofrice/ap-backup      deploy/warehouse/backup
+#   ghcr.io/aboxofrice/ap-installer   deploy/warehouse (AP_IMAGE = the app image built here, by digest)
+# Tags: the version (warehouse-v1.2.0 -> 1.2.0, or the dispatch input) and sha-<short>. Never latest.
+# Optional next step: sign the pushed digests with cosign (sigstore/cosign-installer + `cosign sign`
+# keyless, needs `id-token: write`) and verify them in the installer before `compose up`.
+name: Warehouse images
+
+on:
+  push:
+    tags:
+      - 'warehouse-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image version tag, e.g. 1.2.0 (empty: only sha-<short>)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: warehouse-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/aboxofrice
+
+jobs:
+  version:
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve version
+        id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then version=${REF_NAME#warehouse-v}; else version=$INPUT_VERSION; fi
+          if [ -n "$version" ] && ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::version '$version' is not X.Y.Z"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # The compose files pin the helper tags; a release whose version differs would ship an
+      # installer that runs other helper images than the ones built here.
+      - name: Check the compose files pin this version
+        if: steps.v.outputs.version != ''
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          grep -qF "ghcr.io/aboxofrice/ap-sync:$VERSION}" deploy/warehouse/compose.ap-sync.yml \
+            || { echo "::error::compose.ap-sync.yml does not pin ap-sync:$VERSION; bump it first"; exit 1; }
+          grep -qF "ghcr.io/aboxofrice/ap-backup:$VERSION}" deploy/warehouse/compose.backup.yml \
+            || { echo "::error::compose.backup.yml does not pin ap-backup:$VERSION; bump it first"; exit 1; }
+
+  app:
+    needs: version
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    outputs:
+      image: ghcr.io/aboxofrice/activepieces@${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/activepieces
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.version != '' }}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version || format('sha-{0}', github.sha) }}
+      # amd64 only: the warehouse server is amd64 and an arm64 app build under QEMU takes hours.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=warehouse-app
+          cache-to: type=gha,mode=max,scope=warehouse-app
+      - name: Vulnerability scan (report only)
+        uses: aquasecurity/trivy-action@0.35.0
+        continue-on-error: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/activepieces@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
+  helpers:
+    needs: [version, app]
+    if: github.repository == 'aboxofrice/activepieces'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: ap-sync
+            context: tools/ap-deploy
+            file: tools/ap-deploy/Dockerfile
+          - name: ap-backup
+            context: deploy/warehouse/backup
+            file: deploy/warehouse/backup/Dockerfile
+          - name: ap-installer
+            context: deploy/warehouse
+            file: deploy/warehouse/installer/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.version != '' }}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.version=${{ needs.version.outputs.version || format('sha-{0}', github.sha) }}
+      # REVISION feeds the labels the installer checks (helpers) and its HELPER_REVISION default
+      # (installer): all built from this commit. AP_IMAGE is used by the installer only.
+      # Small images, so arm64 too (Apple Silicon test runs).
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REVISION=${{ github.sha }}
+            AP_IMAGE=${{ needs.app.outputs.image }}
+          cache-from: type=gha,scope=warehouse-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=warehouse-${{ matrix.name }}
+      - name: Vulnerability scan (report only)
+        uses: aquasecurity/trivy-action@0.35.0
+        continue-on-error: true
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
