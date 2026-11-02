@@ -26,23 +26,31 @@ async function runInventoryCheck({ store, now, deadline, filter, includeEta, rea
     const seen = new Map(buckets.filter((entry) => entry.hour >= oldestHour).flatMap((entry) => [...entry.entries]));
     const changes = detectChanges({ rows: rows.filter((row) => filter === null || filter.has(row.id)), seen, includeEta, now, truncated });
     const hours = await writeBuckets({ store, buckets, changes, now, window });
+    // Finishing the scan the enable-time seed could not complete: those rows may predate enabling.
+    const unsure = state.unsure === true && resume !== null;
     const nextState: InventoryState = nextPage === null
         ? { lastPollAt: scanStartedAt, buckets: hours }
-        : { lastPollAt: state.lastPollAt, resume: { window, nextPage, scanStartedAt }, buckets: hours };
+        : { lastPollAt: state.lastPollAt, resume: { window, nextPage, scanStartedAt }, buckets: hours, ...(unsure ? { unsure: true } : {}) };
     await store.put(STATE_KEY, nextState);
     if (nextPage !== null || truncated) {
         console.warn(`[turn14] Inventory Changed: ${truncated ? `last check was ${lagMinutes} minutes ago, beyond Turn14's ${MAX_WINDOW_MINUTES}-minute limit, so older changes were missed. ` : ''}${nextPage !== null ? `Window of ${window} minutes not finished; the next check continues at page ${nextPage}.` : ''}`);
     }
-    return { outputs: changes.map((change) => change.output), truncated, finished: nextPage === null };
+    return { outputs: changes.map((change) => ({ ...change.output, possibly_before_enable: unsure })), truncated, finished: nextPage === null };
 }
 
-// Records everything Turn14 currently reports as already seen, so only later changes fire.
+// Records everything Turn14 currently reports as already seen, so only later changes fire. If the
+// window cannot be read in full, its cursor is kept and the first polls finish it; rows have no
+// timestamp, so those rows fire flagged possibly_before_enable rather than being swallowed.
 async function seedInventoryState({ store, now, deadline, filter, includeEta, readUpdates }: InventoryCheckParams): Promise<void> {
     await clearInventoryState({ store });
-    const { rows } = await readUpdates({ window: UPDATE_WINDOWS_MINUTES[0], startPage: 1, deadline });
+    const window = UPDATE_WINDOWS_MINUTES[0];
+    const { rows, nextPage } = await readUpdates({ window, startPage: 1, deadline });
     const changes = detectChanges({ rows: rows.filter((row) => filter === null || filter.has(row.id)), seen: new Map(), includeEta, now, truncated: false });
-    const hours = await writeBuckets({ store, buckets: [], changes, now, window: UPDATE_WINDOWS_MINUTES[0] });
-    await store.put(STATE_KEY, { lastPollAt: now, buckets: hours });
+    const hours = await writeBuckets({ store, buckets: [], changes, now, window });
+    const state: InventoryState = nextPage === null
+        ? { lastPollAt: now, buckets: hours }
+        : { lastPollAt: now, resume: { window, nextPage, scanStartedAt: now }, buckets: hours, unsure: true };
+    await store.put(STATE_KEY, state);
 }
 
 async function hasInventoryState({ store }: { store: Store }): Promise<boolean> {
@@ -143,7 +151,7 @@ function isState(value: unknown): value is InventoryState {
     const resume = value['resume'];
     const buckets = value['buckets'];
     const resumeValid = resume === undefined || (turn14Client.isRecord(resume) && turn14Polling.isNumber(resume['window']) && turn14Polling.isNumber(resume['nextPage']) && turn14Polling.isNumber(resume['scanStartedAt']));
-    return resumeValid && (buckets === undefined || (Array.isArray(buckets) && buckets.every(turn14Polling.isNumber)));
+    return resumeValid && (value['unsure'] === undefined || typeof value['unsure'] === 'boolean') && (buckets === undefined || (Array.isArray(buckets) && buckets.every(turn14Polling.isNumber)));
 }
 
 // Turn14 only accepts these window sizes for /v1/inventory/updates.
@@ -168,7 +176,7 @@ export type SeenEntry = { hash: string; at: number; quantity: number };
 
 export type InventoryChange = { id: string; entry: SeenEntry; output: Record<string, unknown> };
 
-type InventoryState = { lastPollAt: number; resume?: { window: number; nextPage: number; scanStartedAt: number }; buckets?: number[] };
+type InventoryState = { lastPollAt: number; resume?: { window: number; nextPage: number; scanStartedAt: number }; buckets?: number[]; unsure?: boolean };
 
 type SeenBucket = { hour: number; entries: Map<string, SeenEntry> };
 

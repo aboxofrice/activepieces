@@ -50,6 +50,8 @@ export const priceChanged = createTrigger({
         price_map: 37.95,
         price_retail: 39.95,
         error: null,
+        truncated: false,
+        possibly_before_enable: false,
     },
     async onEnable(context) {
         const now = Date.now();
@@ -69,7 +71,7 @@ export const priceChanged = createTrigger({
         const now = Date.now();
         const deadline = now + turn14Polling.POLL_BUDGET_MS;
         const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue, deadline });
-        const dates = turn14PriceCheck.datesToCheck({ now }).reverse();
+        const dates = turn14PriceCheck.datesToCheck({ now });
         const found = await dates.reduce<Promise<{ itemId: string; date: string }[]>>(async (previous, date) => {
             const collected = await previous;
             if (collected.length >= TEST_LIMIT) {
@@ -82,8 +84,8 @@ export const priceChanged = createTrigger({
         const sample = found.slice(0, TEST_LIMIT);
         const priced = context.propsValue.includePricing === false ? [] : await priceItemsFetcher({ auth })({ itemIds: sample.map((change) => change.itemId), deadline });
         const rows = sample.map((change, index) => (index < priced.length
-            ? { item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index], truncated: false }
-            : { item_id: change.itemId, change_date: change.date, pricing_included: false, truncated: false }));
+            ? { item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index], truncated: false, possibly_before_enable: false }
+            : { item_id: change.itemId, change_date: change.date, pricing_included: false, truncated: false, possibly_before_enable: false }));
         return context.propsValue.emitMode === 'batch' ? [batchOf({ rows, deferredCount: 0, truncated: false })] : rows;
     },
     async run(context) {

@@ -58,7 +58,7 @@ export const turn14 = createPiece({
                 turn14CustomCall.assertAllowed({ propsValue });
                 return { Authorization: `Bearer ${await turn14Client.getToken({ auth: turn14AuthProps(auth) })}` };
             },
-            description: 'Call any Turn14 endpoint, e.g. GET /items/data/brand/{brand_id}. The path is relative to /v1. Writes to /quote and /order* are refused here: use Create Shipping Quote / Place Order From Quote, which carry the Testing/Production guard, the live-order confirmation and the duplicate-order checks. A failed request may log its body.',
+            description: 'Call any Turn14 endpoint, e.g. GET /items/data/brand/{brand_id}. The path is relative to /v1. Read-only: only GET is sent; every other method is refused. Use Create Shipping Quote / Place Order From Quote for quotes and orders, which carry the Testing/Production guard, the live-order confirmation and the duplicate-order checks.',
         }),
     ],
     triggers: [inventoryChanged, priceChanged, newInvoice, orderShipped],

@@ -10,21 +10,23 @@ import { Turn14Order } from './orders';
 // lookup and re-read after a short pause, so of two runs racing for one quote only the last writer
 // goes on. This narrows the race; it cannot close it, since the store has no compare-and-set.
 // Nothing has been sent to Turn14 when this throws, and a refused claim is cleared again.
-async function claimOrder({ store, auth, quoteId, poNumber, environment, refuseRepeatQuote, refuseOpenPo, listOpenOrders, settleMs = CLAIM_SETTLE_MS }: GuardParams): Promise<OrderClaim> {
-    if (refuseRepeatQuote) {
-        const attempt = await readAttempt({ store, auth, quoteId });
-        if (attempt !== null) {
-            throw new Error(describeAttempt({ quoteId, attempt }));
-        }
+// With "Refuse a Second Order for This Quote" off, no claim is made and an existing record is left
+// exactly as it is, so a later guarded run still sees an earlier order.
+async function claimOrder({ store, auth, quoteId, poNumber, environment, refuseRepeatQuote, refuseOpenPo, clearStuckClaim = false, listOpenOrders, settleMs = CLAIM_SETTLE_MS }: GuardParams): Promise<OrderClaim> {
+    const claim: OrderClaim = { token: randomUUID(), at: new Date().toISOString(), owned: refuseRepeatQuote };
+    if (!refuseRepeatQuote) {
+        await assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders });
+        return claim;
     }
-    const claim: OrderClaim = { token: randomUUID(), at: new Date().toISOString() };
+    const existing = await readAttempt({ store, auth, quoteId });
+    if (existing !== null && !(clearStuckClaim && existing.status !== 'placed')) {
+        throw new Error(describeAttempt({ quoteId, attempt: existing, clearStuckClaim }));
+    }
     await recordAttempt({ store, auth, quoteId, attempt: { status: 'sending', token: claim.token, at: claim.at, poNumber, environment, orderId: null } });
-    if (refuseRepeatQuote) {
-        await sleep({ ms: settleMs });
-        const current = await readAttempt({ store, auth, quoteId });
-        if (current?.token !== claim.token) {
-            throw new Error(`Another run claimed quote ${quoteId} at the same moment, so this run sent nothing. Check List Open Orders / Get Order for PO "${poNumber}".`);
-        }
+    await sleep({ ms: settleMs });
+    const current = await readAttempt({ store, auth, quoteId });
+    if (current?.token !== claim.token) {
+        throw new Error(`Another run claimed quote ${quoteId} at the same moment, so this run sent nothing. Check List Open Orders / Get Order for PO "${poNumber}".`);
     }
     const { error } = await tryCatch(() => assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders }));
     if (error) {
@@ -34,7 +36,14 @@ async function claimOrder({ store, auth, quoteId, poNumber, environment, refuseR
     return claim;
 }
 
-async function assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders }: Omit<GuardParams, 'refuseRepeatQuote' | 'settleMs'>): Promise<void> {
+// Records an order made without a claim, but only where no record exists yet.
+async function recordIfAbsent({ store, auth, quoteId, attempt }: { store: Store; auth: Turn14AuthProps; quoteId: string; attempt: AttemptRecord }): Promise<void> {
+    if (await readAttempt({ store, auth, quoteId }) === null) {
+        await recordAttempt({ store, auth, quoteId, attempt });
+    }
+}
+
+async function assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders }: Omit<GuardParams, 'refuseRepeatQuote' | 'settleMs' | 'clearStuckClaim'>): Promise<void> {
     const quote = await readQuote({ store, auth, quoteId });
     if (quote !== null && quote.environment !== environment) {
         throw new Error(`Quote ${quoteId} was created with Order Environment "${quote.environment}" but this order asks for "${environment}". A quote can only be ordered in the environment it was created in - create a new quote instead.`);
@@ -85,11 +94,12 @@ async function recordQuote({ store, auth, quoteId, quote }: { store: Store; auth
     await store.put(quoteKey({ auth, quoteId }), quote, StoreScope.PROJECT);
 }
 
-function describeAttempt({ quoteId, attempt }: { quoteId: string; attempt: AttemptRecord }): string {
-    const outcome = attempt.status === 'placed'
-        ? `it was placed${attempt.orderId ? ` as Turn14 order ${attempt.orderId}` : ''}`
-        : 'its outcome is unknown (the run stopped or Turn14 did not answer clearly)';
-    return `An order for quote ${quoteId} (PO "${attempt.poNumber}") was already sent at ${attempt.at} and ${outcome}, so it was not sent again. Check List Open Orders / Get Order. To order it anyway, untick "Refuse a Second Order for This Quote".`;
+function describeAttempt({ quoteId, attempt, clearStuckClaim }: { quoteId: string; attempt: AttemptRecord; clearStuckClaim: boolean }): string {
+    const sent = `An order for quote ${quoteId} (PO "${attempt.poNumber}") was already sent at ${attempt.at}`;
+    if (attempt.status === 'placed') {
+        return `${sent} and was placed${attempt.orderId ? ` as Turn14 order ${attempt.orderId}` : ''}, so it was not sent again.${clearStuckClaim ? ' "Clear Stuck Claim for This Quote" does not apply to a placed order.' : ''} To order it again anyway, untick "Refuse a Second Order for This Quote".`;
+    }
+    return `${sent} and its outcome is unknown (the run stopped or Turn14 did not answer clearly), so it was not sent again. Check PO "${attempt.poNumber}" in Turn14 (List Open Orders / Get Order). If no order exists there, tick "Clear Stuck Claim for This Quote" and run again.`;
 }
 
 // Store keys are project-wide so a retried or duplicated flow run sees them; they include the host
@@ -136,6 +146,7 @@ const CLAIM_SETTLE_MS = 1500;
 export const turn14OrderGuards = {
     claimOrder,
     releaseClaim,
+    recordIfAbsent,
     findOpenOrderWithPo,
     readAttempt,
     recordAttempt,
@@ -152,7 +163,7 @@ export type AttemptRecord = {
     orderId: string | null;
 };
 
-export type OrderClaim = { token: string; at: string };
+export type OrderClaim = { token: string; at: string; owned: boolean };
 
 export type QuoteRecord = {
     environment: OrderEnvironment;
@@ -168,6 +179,7 @@ type GuardParams = {
     environment: OrderEnvironment;
     refuseRepeatQuote: boolean;
     refuseOpenPo: boolean;
+    clearStuckClaim?: boolean;
     listOpenOrders: () => Promise<{ orders: Turn14Order[]; complete: boolean }>;
     settleMs?: number;
 };

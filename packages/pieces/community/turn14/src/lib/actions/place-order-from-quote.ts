@@ -46,6 +46,12 @@ export const placeOrderFromQuote = createAction({
             required: false,
             defaultValue: true,
         }),
+        clearStuckClaim: Property.Checkbox({
+            displayName: 'Clear Stuck Claim for This Quote',
+            description: 'Only after checking the PO in Turn14 (List Open Orders / Get Order) and finding no order: replaces an earlier attempt whose outcome is unknown, so the quote can be ordered. Never clears an attempt recorded as placed. Untick it again afterwards.',
+            required: false,
+            defaultValue: false,
+        }),
     },
     async run(context) {
         const auth = turn14AuthProps(context.auth);
@@ -72,6 +78,7 @@ export const placeOrderFromQuote = createAction({
                 acknowledgeEpa: p.acknowledgeEpa === true,
                 refuseOpenPo: p.refuseOpenPo !== false,
                 refuseRepeatQuote: p.refuseRepeatQuote !== false,
+                clearStuckClaim: p.clearStuckClaim === true,
             },
         });
     },

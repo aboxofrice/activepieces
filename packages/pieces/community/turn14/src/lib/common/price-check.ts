@@ -10,6 +10,8 @@ import { FlatPricing } from './pricing';
 // first share of the time budget and the price lookups the rest, so carried-over lookups always
 // make progress. Nothing is saved until the lookups are done, so a run that fails part-way is
 // simply repeated. Changes that were due a lookup but did not get one are carried to the next poll.
+// Today is read first; yesterday, once read to the end, is only re-swept every 30 minutes, so
+// today's changes never wait behind a full re-read of yesterday.
 async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems, includePricing, maxLookups }: PriceCheckParams): Promise<PriceCheckResult> {
     const dates = datesToCheck({ now });
     const listDeadline = now + Math.floor((deadline - now) * LIST_SHARE);
@@ -20,6 +22,12 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
         const collected = await previous;
         const startPage = state?.cursors?.[date] ?? 1;
         const seeding = state?.seeding?.includes(date) ?? false;
+        const unsure = state?.unsure?.includes(date) ?? false;
+        const sweptAt = state?.sweptAt?.[date] ?? null;
+        const recentlySwept = date !== dates[0] && startPage === 1 && sweptAt !== null && now - sweptAt < RESWEEP_MS && !seeding && !unsure;
+        if (recentlySwept) {
+            return [...collected, { date, seen: new Set<string>(), fresh: [], seededIds: [], startPage, nextPage: null, seeding: false, unsure: false, sweptAt, skipped: true }];
+        }
         const { itemIds, nextPage } = await fetchChangedIds({ date, startPage, deadline: listDeadline });
         const seen = await turn14Polling.readIdSet({ store, prefix: seenPrefix({ date }) });
         const unseen = itemIds.filter((itemId) => !seen.has(itemId) && !pendingKeys.has(changeKey({ change: { itemId, date } })));
@@ -31,6 +39,9 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
             startPage,
             nextPage,
             seeding: seeding && nextPage !== null,
+            unsure: unsure && nextPage !== null,
+            sweptAt: nextPage === null ? now : sweptAt,
+            skipped: false,
         }];
     }, Promise.resolve([]));
     const candidates = [...pending, ...perDate.flatMap((scan) => scan.fresh)];
@@ -39,12 +50,16 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
     const priced = toPrice.length > 0 ? await priceItems({ itemIds: toPrice.map((change) => change.itemId), deadline }) : [];
     const deferred = toPrice.slice(priced.length);
     const truncated = perDate.some((scan) => scan.nextPage !== null);
+    // Turn14's change rows carry no timestamp, so on the day the trigger was enabled a change read
+    // after enabling may predate it; such rows fire (rather than being swallowed) and say so.
+    const unsureDates = new Set(state?.unsure ?? []);
+    const flags = (change: Change) => ({ truncated, possibly_before_enable: unsureDates.has(change.date) });
     const rows = [
-        ...toPrice.slice(0, priced.length).map((change, index) => ({ item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index], truncated })),
-        ...candidates.slice(lookupCap).map((change) => ({ item_id: change.itemId, change_date: change.date, pricing_included: false, truncated })),
+        ...toPrice.slice(0, priced.length).map((change, index) => ({ item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index], ...flags(change) })),
+        ...candidates.slice(lookupCap).map((change) => ({ item_id: change.itemId, change_date: change.date, pricing_included: false, ...flags(change) })),
     ];
     const emittedKeys = new Set(rows.map((row) => changeKey({ change: { itemId: row.item_id, date: row.change_date } })));
-    await Promise.all(perDate.map(async (scan) => {
+    await Promise.all(perDate.filter((scan) => !scan.skipped).map(async (scan) => {
         const emitted = candidates.filter((change) => change.date === scan.date && emittedKeys.has(changeKey({ change })) && !scan.seen.has(change.itemId)).map((change) => change.itemId);
         const added = [...emitted, ...scan.seededIds];
         if (added.length > 0 || state === null) {
@@ -61,9 +76,11 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
     return { rows, deferredCount: deferred.length, truncated };
 }
 
-// Marks every change Turn14 currently lists as seen, so only later changes fire. A day too long to
-// read in one go keeps its cursor and stays in seeding mode: later polls keep marking its changes
-// as seen, without firing, until that day has been read to the end once.
+// Marks every change Turn14 currently lists as seen, so only later changes fire. Today is read first
+// so it gets the time. A day too long to read in one go keeps its cursor: yesterday stays in
+// seeding mode (all of it predates enabling, so later polls mark it seen without firing until it
+// has been read to the end once), while today's remaining changes fire flagged
+// possibly_before_enable, since newly landed changes cannot be told apart from older ones.
 async function seedPriceState({ store, now, deadline, fetchChangedIds }: { store: Store; now: number; deadline: number; fetchChangedIds: FetchChangedIds }): Promise<void> {
     await clearPriceState({ store });
     const dates = datesToCheck({ now });
@@ -71,7 +88,9 @@ async function seedPriceState({ store, now, deadline, fetchChangedIds }: { store
         const collected = await previous;
         const { itemIds, nextPage } = await fetchChangedIds({ date, startPage: 1, deadline });
         await turn14Polling.writeIdSet({ store, prefix: seenPrefix({ date }), ids: itemIds });
-        return [...collected, { date, seen: new Set<string>(), fresh: [], seededIds: [], startPage: 1, nextPage, seeding: nextPage !== null }];
+        const incomplete = nextPage !== null;
+        const isEnableDay = date === dates[0];
+        return [...collected, { date, seen: new Set<string>(), fresh: [], seededIds: [], startPage: 1, nextPage, seeding: incomplete && !isEnableDay, unsure: incomplete && isEnableDay, sweptAt: incomplete ? null : now, skipped: false }];
     }, Promise.resolve([]));
     await store.put(STATE_KEY, stateAfter({ dates, perDate }));
 }
@@ -92,13 +111,15 @@ function stateAfter({ dates, perDate }: { dates: string[]; perDate: DateScan[] }
         dates,
         cursors: Object.fromEntries(perDate.map((scan) => [scan.date, scan.nextPage ?? 1])),
         seeding: perDate.filter((scan) => scan.seeding).map((scan) => scan.date),
+        unsure: perDate.filter((scan) => scan.unsure).map((scan) => scan.date),
+        sweptAt: Object.fromEntries(perDate.flatMap((scan) => (scan.sweptAt === null ? [] : [[scan.date, scan.sweptAt]]))),
     };
 }
 
 // Turn14 dates its changes by day. Yesterday is re-checked so late-posted changes and the gap
-// between Turn14's timezone and UTC are not missed.
+// between Turn14's timezone and UTC are not missed. Today comes first.
 function datesToCheck({ now }: { now: number }): string[] {
-    return [turn14Orders.isoDate({ epochMs: now - turn14Orders.DAY_MS }), turn14Orders.isoDate({ epochMs: now })];
+    return [turn14Orders.isoDate({ epochMs: now }), turn14Orders.isoDate({ epochMs: now - turn14Orders.DAY_MS })];
 }
 
 function parseChanges({ entries }: { entries: string[] }): Change[] {
@@ -121,8 +142,10 @@ function isState(value: unknown): value is PriceState {
         return false;
     }
     const cursors = value['cursors'];
-    const cursorsValid = cursors === undefined || (turn14Client.isRecord(cursors) && Object.values(cursors).every(turn14Polling.isNumber));
-    return cursorsValid && (value['seeding'] === undefined || isStringList(value['seeding']));
+    const sweptAt = value['sweptAt'];
+    const numberMap = (map: unknown) => map === undefined || (turn14Client.isRecord(map) && Object.values(map).every(turn14Polling.isNumber));
+    const stringList = (list: unknown) => list === undefined || isStringList(list);
+    return numberMap(cursors) && numberMap(sweptAt) && stringList(value['seeding']) && stringList(value['unsure']);
 }
 
 function isStringList(value: unknown): value is string[] {
@@ -133,6 +156,7 @@ const STATE_KEY = 'turn14_price_changed_state';
 const PENDING_PREFIX = 'turn14_price_pending';
 const MAX_LOOKUPS_PER_POLL = 100;
 const LIST_SHARE = 0.6;
+const RESWEEP_MS = 30 * 60 * 1000;
 
 export const turn14PriceCheck = { runPriceCheck, seedPriceState, hasPriceState, clearPriceState, datesToCheck, MAX_LOOKUPS_PER_POLL };
 
@@ -146,9 +170,9 @@ export type PriceCheckResult = { rows: PriceRow[]; deferredCount: number; trunca
 
 export type PriceRow = { item_id: string; change_date: string; pricing_included: boolean; truncated: boolean } & Record<string, unknown>;
 
-type DateScan = { date: string; seen: Set<string>; fresh: Change[]; seededIds: string[]; startPage: number; nextPage: number | null; seeding: boolean };
+type DateScan = { date: string; seen: Set<string>; fresh: Change[]; seededIds: string[]; startPage: number; nextPage: number | null; seeding: boolean; unsure: boolean; sweptAt: number | null; skipped: boolean };
 
-type PriceState = { dates: string[]; cursors?: Record<string, number>; seeding?: string[] };
+type PriceState = { dates: string[]; cursors?: Record<string, number>; seeding?: string[]; unsure?: string[]; sweptAt?: Record<string, number> };
 
 type PriceCheckParams = {
     store: Store;

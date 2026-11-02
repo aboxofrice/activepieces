@@ -2,7 +2,7 @@ import { Store } from '@activepieces/pieces-framework';
 import { tryCatch } from '@activepieces/shared';
 import { Turn14AuthProps, turn14Client } from './client';
 import { turn14Environment } from './environment';
-import { turn14OrderGuards } from './order-guards';
+import { AttemptRecord, turn14OrderGuards } from './order-guards';
 import { turn14Orders } from './orders';
 import { turn14Quotes } from './quotes';
 
@@ -20,6 +20,7 @@ async function placeOrder({ store, auth, input, settleMs }: { store: Store; auth
         environment,
         refuseRepeatQuote: input.refuseRepeatQuote,
         refuseOpenPo: input.refuseOpenPo,
+        clearStuckClaim: input.clearStuckClaim,
         settleMs,
         listOpenOrders: async () => {
             const { rows, truncated } = await turn14Orders.listOrders({ auth, maxPages: MAX_OPEN_ORDER_PAGES });
@@ -27,6 +28,10 @@ async function placeOrder({ store, auth, input, settleMs }: { store: Store; auth
         },
     });
     const record = { token: claim.token, at: claim.at, poNumber, environment };
+    // Only this run's own claim may be overwritten or removed; without a claim, nothing existing is touched.
+    const save = (attempt: AttemptRecord) => (claim.owned
+        ? turn14OrderGuards.recordAttempt({ store, auth, quoteId, attempt })
+        : turn14OrderGuards.recordIfAbsent({ store, auth, quoteId, attempt }));
     const { data: response, error } = await tryCatch(() => turn14Quotes.placeOrderFromQuote({
         auth,
         order: {
@@ -40,15 +45,17 @@ async function placeOrder({ store, auth, input, settleMs }: { store: Store; auth
     }));
     if (error) {
         if (error instanceof turn14Client.Turn14OutcomeUnknownError) {
-            await tryCatch(() => turn14OrderGuards.recordAttempt({ store, auth, quoteId, attempt: { ...record, status: 'unknown', orderId: null } }));
+            await tryCatch(() => save({ ...record, status: 'unknown', orderId: null }));
             throw new Error(`${error.message} (PO "${poNumber}", quote ${quoteId})`);
         }
         // Turn14 answered and refused (or the request never left), so nothing was ordered.
-        await tryCatch(() => turn14OrderGuards.releaseClaim({ store, auth, quoteId, token: claim.token }));
+        if (claim.owned) {
+            await tryCatch(() => turn14OrderGuards.releaseClaim({ store, auth, quoteId, token: claim.token }));
+        }
         throw error;
     }
     const orderId = orderIdOf({ response });
-    const { error: recordError } = await tryCatch(() => turn14OrderGuards.recordAttempt({ store, auth, quoteId, attempt: { ...record, status: 'placed', orderId } }));
+    const { error: recordError } = await tryCatch(() => save({ ...record, status: 'placed', orderId }));
     const warnings = [
         ...(recordError ? [`The order was placed but could not be recorded (${recordError.message}); the claim for quote ${quoteId} stays "sending", so a re-run is still refused.`] : []),
         ...(response === null ? [`Turn14 accepted the request but sent no body. Check List Open Orders for PO "${poNumber}".`] : []),
@@ -80,6 +87,7 @@ export type PlaceOrderInput = {
     acknowledgeEpa: boolean;
     refuseOpenPo: boolean;
     refuseRepeatQuote: boolean;
+    clearStuckClaim: boolean;
 };
 
 export type PlaceOrderResult = {

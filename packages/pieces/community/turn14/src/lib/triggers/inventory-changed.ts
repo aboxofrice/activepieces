@@ -55,6 +55,7 @@ export const inventoryChanged = createTrigger({
         eta_location_59: null,
         detected_at: '2026-11-01T15:05:00.000Z',
         truncated: false,
+        possibly_before_enable: false,
     },
     async onEnable(context) {
         const now = Date.now();
