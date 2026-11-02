@@ -255,6 +255,11 @@ ADMIN_PASSWORD=$(given_or ADMIN_PASSWORD "$(rand_pw 24)")
 BACKUP_PASSWORD=$(given_or BACKUP_PASSWORD "$(rand_pw 32)")
 BACKUP_SALT=$(given_or BACKUP_SALT "$(rand_pw 32)")
 EOF
+        # Command substitutions inside the heredoc are not covered by set -e: never save an empty secret.
+        local key
+        for key in AP_ENCRYPTION_KEY AP_JWT_SECRET AP_POSTGRES_PASSWORD ADMIN_EMAIL ADMIN_PASSWORD BACKUP_PASSWORD BACKUP_SALT; do
+            grep -Eq "^$key=.+" "$ENV_FILE.tmp" || { rm -f "$ENV_FILE.tmp"; die "Could not generate $key; nothing was saved. Re-run the installer."; }
+        done
         record_given_secrets
         mv "$ENV_FILE.tmp" "$ENV_FILE"
     else

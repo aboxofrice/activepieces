@@ -79,8 +79,12 @@ jobs:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           for name in activepieces ap-installer ap-sync ap-backup; do
-            if docker buildx imagetools inspect "$REGISTRY/$name:$VERSION" >/dev/null 2>&1; then
+            if out=$(docker buildx imagetools inspect "$REGISTRY/$name:$VERSION" 2>&1); then
               echo "::error::$REGISTRY/$name:$VERSION already exists; release a new version instead"; exit 1
+            fi
+            # Only "not found" means unpushed; an auth or network error must not let a version be overwritten.
+            if ! printf '%s' "$out" | grep -qiE 'not found|manifest unknown|name unknown'; then
+              echo "::error::Could not check $REGISTRY/$name:$VERSION: $out"; exit 1
             fi
           done
 

@@ -34,7 +34,8 @@ Release flow:
    them as `X.Y.Z` and `sha-<short>` (never `latest`), with OCI revision/source/version labels,
    then runs a report-only vulnerability scan. It can also be started by hand (Actions, "Warehouse
    images", optional version). After the first push, check each package is **Private** under the
-   account's Packages settings.
+   account's Packages settings. A version is never pushed twice: if a release run fails partway,
+   use "Re-run failed jobs" (not "Re-run all jobs", which stops on the images already pushed).
 3. On the warehouse, re-run the new installer and move the app image:
    `... -e AP_IMAGE=ghcr.io/aboxofrice/activepieces:X.Y.Z ghcr.io/aboxofrice/ap-installer:X.Y.Z`
    (`.env` keeps its `AP_IMAGE` otherwise; the installer's built-in default only applies to a
