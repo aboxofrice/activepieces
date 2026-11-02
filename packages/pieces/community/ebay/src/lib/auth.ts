@@ -5,7 +5,7 @@ export const ebayAuth = PieceAuth.CustomAuth({
     description: `Connect one eBay seller account with a user refresh token.
 
 1. **App ID / Cert ID** — from [developer.ebay.com](https://developer.ebay.com/my/keys) → Application Keys (the Production keyset for live stores).
-2. **Refresh Token** — a user refresh token for this store, obtained by running the eBay consent flow with your app's RuName. The token must have been granted every scope the actions you use need — e.g. \`https://api.ebay.com/oauth/api_scope/commerce.message\` for Message actions and \`commerce.identity.readonly\` for the New Message trigger.
+2. **Refresh Token** — a user refresh token for this store, obtained by running the eBay consent flow with your app's RuName. The token must have been granted every scope the actions you use need — e.g. \`https://api.ebay.com/oauth/api_scope/commerce.message\` for Message actions, \`commerce.identity.readonly\` for the New Message trigger, \`sell.fulfillment\` (or \`.readonly\`) for Order actions and \`sell.finances\` for Get Fees. Inventory actions use the Trading API and need no extra scope.
 3. Refresh tokens last ~18 months; reconnect with a new one before it expires.`,
     required: true,
     props: {
