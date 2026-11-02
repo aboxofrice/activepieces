@@ -1,25 +1,27 @@
 import { HttpMethod } from '@activepieces/pieces-common';
 import { tryCatch } from '@activepieces/shared';
 import { EbayAuthProps, ebayClient } from './client';
+import { xmlUtils } from './xml';
 
 async function getListingFitment({ auth, itemId }: { auth: EbayAuthProps; itemId: string }): Promise<ListingFitment> {
     const xml = await ebayClient.tradingCall({
         auth,
         callName: 'GetItem',
-        innerXml: `<ItemID>${escapeXml({ text: itemId })}</ItemID><IncludeItemCompatibilityList>true</IncludeItemCompatibilityList>`,
+        innerXml: `<ItemID>${xmlUtils.escapeXml({ text: itemId })}</ItemID><IncludeItemCompatibilityList>true</IncludeItemCompatibilityList>`,
+        readOnly: true,
     });
-    const ack = firstTag({ xml, tag: 'Ack' });
+    const ack = xmlUtils.firstTag({ xml, tag: 'Ack' });
     if (ack !== 'Success' && ack !== 'Warning') {
-        return { found: false, title: null, listingStatus: null, error: firstTag({ xml, tag: 'LongMessage' }), rows: [] };
+        return { found: false, title: null, listingStatus: null, error: xmlUtils.firstTag({ xml, tag: 'LongMessage' }), rows: [] };
     }
     const rows = [...xml.matchAll(/<Compatibility>([\s\S]*?)<\/Compatibility>/g)].map((match) => Object.fromEntries(
         [...match[1].matchAll(/<Name>([\s\S]*?)<\/Name>\s*<Value>([\s\S]*?)<\/Value>/g)]
-            .map((pair) => [unescapeXml({ text: pair[1] }), unescapeXml({ text: pair[2] })]),
+            .map((pair) => [xmlUtils.unescapeXml({ text: pair[1] }), xmlUtils.unescapeXml({ text: pair[2] })]),
     ));
     return {
         found: true,
-        title: firstTag({ xml, tag: 'Title' }),
-        listingStatus: firstTag({ xml, tag: 'ListingStatus' }),
+        title: xmlUtils.firstTag({ xml, tag: 'Title' }),
+        listingStatus: xmlUtils.firstTag({ xml, tag: 'ListingStatus' }),
         error: null,
         rows,
     };
@@ -87,24 +89,6 @@ function words({ value }: { value: string | null | undefined }): string {
 
 function isNilOrEmpty({ value }: { value: string | number | null | undefined }): boolean {
     return value === null || value === undefined || String(value).trim() === '';
-}
-
-function firstTag({ xml, tag }: { xml: string; tag: string }): string | null {
-    const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-    return match ? unescapeXml({ text: match[1] }) : null;
-}
-
-function unescapeXml({ text }: { text: string }): string {
-    return text
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, '\'')
-        .replace(/&amp;/g, '&');
-}
-
-function escapeXml({ text }: { text: string }): string {
-    return text.replace(/[<>&'"]/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
 const MAX_CANDIDATES = 5;

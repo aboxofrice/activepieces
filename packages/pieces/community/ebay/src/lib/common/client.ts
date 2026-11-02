@@ -2,8 +2,14 @@ import { HttpError, HttpMethod, QueryParams, httpClient } from '@activepieces/pi
 import { tryCatch } from '@activepieces/shared';
 
 async function getAccessToken({ auth }: { auth: EbayAuthProps }): Promise<string> {
+    // Paginated actions make many calls per run; reuse the 2-hour user token instead of minting one per request.
+    const cacheKey = `${auth.environment ?? 'production'}:${auth.appId}:${auth.refreshToken}`;
+    const cached = userTokenCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.token;
+    }
     // Omitting `scope` makes eBay return a token carrying every scope the refresh token was granted.
-    const response = await httpClient.sendRequest<{ access_token: string }>({
+    const response = await httpClient.sendRequest<{ access_token: string; expires_in?: number }>({
         method: HttpMethod.POST,
         url: `${hosts({ auth }).api}/identity/v1/oauth2/token`,
         headers: {
@@ -15,6 +21,8 @@ async function getAccessToken({ auth }: { auth: EbayAuthProps }): Promise<string
             refresh_token: auth.refreshToken,
         }).toString(),
     });
+    const lifetimeMs = (response.body.expires_in ?? DEFAULT_TOKEN_LIFETIME_SECONDS) * 1000;
+    userTokenCache.set(cacheKey, { token: response.body.access_token, expiresAt: Date.now() + lifetimeMs - TOKEN_EXPIRY_MARGIN_MS });
     return response.body.access_token;
 }
 
@@ -40,19 +48,21 @@ async function tryGetAccessToken({ auth }: { auth: EbayAuthProps }): Promise<{ e
     return { error: error ? describeError({ error }) : null };
 }
 
-async function request<T>({ auth, method, path, queryParams, body, host = 'api', tokenType = 'user' }: EbayRequest): Promise<T> {
+async function request<T>({ auth, method, path, queryParams, body, host = 'api', tokenType = 'user', authScheme = 'Bearer' }: EbayRequest): Promise<T> {
     const accessToken = tokenType === 'application' ? await getApplicationToken({ auth }) : await getAccessToken({ auth });
-    const { data, error } = await tryCatch(() => httpClient.sendRequest<T>({
+    // Only reads are retried: replaying a POST could double-send a message or double-apply a change.
+    const attempts = method === HttpMethod.GET ? MAX_READ_ATTEMPTS : 1;
+    const { data, error } = await withRetry({ attempts, fn: () => httpClient.sendRequest<T>({
         method,
         url: `${hosts({ auth })[host]}${path}`,
         headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `${authScheme} ${accessToken}`,
             'Content-Type': 'application/json',
             'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
         },
         queryParams: compactQuery({ queryParams }),
         body,
-    }));
+    }) });
     if (error) {
         throw new Error(`eBay ${method} ${path} failed: ${describeError({ error })}`);
     }
@@ -60,9 +70,9 @@ async function request<T>({ auth, method, path, queryParams, body, host = 'api',
 }
 
 // Some seller data (e.g. a Trading-created listing's fitment chart) has no REST equivalent, so call the Trading XML API with the OAuth user token.
-async function tradingCall({ auth, callName, innerXml }: { auth: EbayAuthProps; callName: string; innerXml: string }): Promise<string> {
+async function tradingCall({ auth, callName, innerXml, readOnly = false }: { auth: EbayAuthProps; callName: string; innerXml: string; readOnly?: boolean }): Promise<string> {
     const accessToken = await getAccessToken({ auth });
-    const { data, error } = await tryCatch(() => httpClient.sendRequest<string>({
+    const { data, error } = await withRetry({ attempts: readOnly ? MAX_READ_ATTEMPTS : 1, fn: () => httpClient.sendRequest<string>({
         method: HttpMethod.POST,
         url: `${hosts({ auth }).api}/ws/api.dll`,
         headers: {
@@ -74,7 +84,7 @@ async function tradingCall({ auth, callName, innerXml }: { auth: EbayAuthProps; 
         },
         body: `<?xml version="1.0" encoding="utf-8"?><${callName}Request xmlns="urn:ebay:apis:eBLBaseComponents">${innerXml}</${callName}Request>`,
         responseType: 'text',
-    }));
+    }) });
     if (error) {
         throw new Error(`eBay Trading ${callName} failed: ${describeError({ error })}`);
     }
@@ -89,6 +99,22 @@ async function getUsername({ auth }: { auth: EbayAuthProps }): Promise<string> {
         host: 'apiz',
     });
     return user.username;
+}
+
+async function withRetry<T>({ attempts, fn }: { attempts: number; fn: () => Promise<T> }): Promise<{ data: T; error: null } | { data: null; error: Error }> {
+    const result = await tryCatch(fn);
+    if (!result.error || attempts <= 1 || !isRetryable({ error: result.error })) {
+        return result;
+    }
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * (MAX_READ_ATTEMPTS - attempts + 1)));
+    return withRetry({ attempts: attempts - 1, fn });
+}
+
+function isRetryable({ error }: { error: Error }): boolean {
+    if (!(error instanceof HttpError)) {
+        return true;
+    }
+    return RETRYABLE_STATUSES.includes(error.response.status);
 }
 
 function basicCredentials({ auth }: { auth: EbayAuthProps }): string {
@@ -117,6 +143,12 @@ function describeError({ error }: { error: Error }): string {
 }
 
 const TRADING_COMPATIBILITY_LEVEL = '1331';
+const DEFAULT_TOKEN_LIFETIME_SECONDS = 7200;
+const TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1000;
+const MAX_READ_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1500;
+const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+const userTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 export const ebayClient = {
     getAccessToken,
@@ -145,4 +177,6 @@ type EbayRequest = {
     body?: unknown;
     host?: EbayHost;
     tokenType?: 'user' | 'application';
+    // The Post-Order API (cancellations, returns) takes the OAuth user token as `IAF <token>`.
+    authScheme?: 'Bearer' | 'IAF';
 };
