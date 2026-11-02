@@ -47,6 +47,7 @@ export const updateListingQuantity = createAction({
             marketplaceId,
             productType,
             currentAttributes: current.attributes,
+            fulfillmentChannels: current.fulfillmentChannels,
             quantity: Math.max(0, Math.floor(quantity)),
             handlingTime: handlingTime ?? undefined,
             validationOnly: validationOnly ?? false,

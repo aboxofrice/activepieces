@@ -11,7 +11,7 @@ async function getListing({ auth, sellerId, sku, marketplaceId, includedData }: 
     });
 }
 
-async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, currentAttributes, ...target }: SetQuantityParams): Promise<ListingSubmission> {
+async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, currentAttributes, fulfillmentChannels, ...target }: SetQuantityParams): Promise<ListingSubmission> {
     return patchListing({
         ...target,
         marketplaceId,
@@ -19,7 +19,7 @@ async function setFulfillmentQuantity({ quantity, handlingTime, marketplaceId, c
             {
                 op: 'replace',
                 path: '/attributes/fulfillment_availability',
-                value: listingPatches.fulfillmentAvailability({ current: currentAttributes['fulfillment_availability'], marketplaceId, quantity, handlingTime }),
+                value: listingPatches.fulfillmentAvailability({ current: currentAttributes['fulfillment_availability'], liveChannels: fulfillmentChannels, marketplaceId, quantity, handlingTime }),
             },
         ],
     });
@@ -56,11 +56,12 @@ async function patchListing({ auth, sellerId, sku, marketplaceId, productType, p
 // A patch replaces whole attributes, so writes start from the listing's current attributes.
 // Amazon also validates a patch against the product type's schema, so the listing's real type
 // is sent; "PRODUCT" is the generic type Amazon accepts for offer-only attributes.
-async function readForUpdate({ auth, sellerId, sku, marketplaceId }: ListingTarget): Promise<{ productType: string; attributes: Record<string, unknown> }> {
-    const listing = await getListing({ auth, sellerId, sku, marketplaceId, includedData: ['summaries', 'attributes'] });
+async function readForUpdate({ auth, sellerId, sku, marketplaceId }: ListingTarget): Promise<ListingForUpdate> {
+    const listing = await getListing({ auth, sellerId, sku, marketplaceId, includedData: ['summaries', 'attributes', 'fulfillmentAvailability'] });
     return {
         productType: flattenListing({ listing, marketplaceId }).product_type ?? 'PRODUCT',
         attributes: listing.attributes ?? {},
+        fulfillmentChannels: (listing.fulfillmentAvailability ?? []).map((entry) => entry.fulfillmentChannelCode),
     };
 }
 
@@ -166,6 +167,12 @@ export type FlatListing = {
     attributes: Record<string, unknown> | null;
 };
 
+type ListingForUpdate = {
+    productType: string;
+    attributes: Record<string, unknown>;
+    fulfillmentChannels: string[];
+};
+
 type FlatIssue = { code: string | null; severity: string | null; message: string | null };
 
 type ListingIssue = { code?: string; message?: string; severity?: string; attributeNames?: string[] };
@@ -196,6 +203,7 @@ type PatchListingParams = WriteTarget & {
 
 type SetQuantityParams = WriteTarget & {
     currentAttributes: Record<string, unknown>;
+    fulfillmentChannels: string[];
     quantity: number;
     handlingTime?: number;
 };

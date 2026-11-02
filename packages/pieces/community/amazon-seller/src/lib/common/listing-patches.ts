@@ -1,11 +1,13 @@
 // A Listings Items `replace` swaps the whole attribute, so the new value is built from the
 // listing's current one: fields and entries the user did not set are carried forward.
 
-function fulfillmentAvailability({ current, marketplaceId, quantity, handlingTime }: FulfillmentParams): Record<string, unknown>[] {
+function fulfillmentAvailability({ current, liveChannels = [], marketplaceId, quantity, handlingTime }: FulfillmentParams): Record<string, unknown>[] {
     const entries = recordsOf({ value: current });
     const index = entries.findIndex((entry) => entry['fulfillment_channel_code'] === MFN_CHANNEL_CODE);
-    // Adding a DEFAULT entry to an FBA-only listing could switch it to merchant-fulfilled.
-    const fbaChannels = entries.map((entry) => entry['fulfillment_channel_code']).filter((code): code is string => typeof code === 'string' && code.startsWith('AMAZON_'));
+    // Adding a DEFAULT entry to an FBA-only listing could switch it to merchant-fulfilled. The
+    // attribute can omit the FBA channel, so the listing's fulfillmentAvailability counts too.
+    const channelCodes = [...entries.map((entry) => entry['fulfillment_channel_code']), ...liveChannels];
+    const fbaChannels = [...new Set(channelCodes.filter((code): code is string => typeof code === 'string' && code.startsWith('AMAZON_')))];
     if (index === -1 && fbaChannels.length > 0) {
         throw new Error(`This is an FBA listing (${fbaChannels.join(', ')}); its quantity is managed by Amazon and cannot be set here.`);
     }
@@ -69,6 +71,7 @@ export const MFN_CHANNEL_CODE = 'DEFAULT';
 
 type FulfillmentParams = {
     current: unknown;
+    liveChannels?: string[];
     marketplaceId: string;
     quantity: number;
     handlingTime?: number;

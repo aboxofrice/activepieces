@@ -30,6 +30,10 @@ describe('listingPatches.fulfillmentAvailability', () => {
         expect(() => listingPatches.fulfillmentAvailability({ current: [{ fulfillment_channel_code: 'AMAZON_NA' }], marketplaceId: US, quantity: 5 })).toThrow(/FBA listing.*managed by Amazon/);
     });
 
+    it('treats an AMAZON_* channel in the listing fulfillmentAvailability as FBA', () => {
+        expect(() => listingPatches.fulfillmentAvailability({ current: undefined, liveChannels: ['AMAZON_NA'], marketplaceId: US, quantity: 5 })).toThrow(/FBA listing \(AMAZON_NA\)/);
+    });
+
     it('creates the merchant entry when the listing has none', () => {
         const result = listingPatches.fulfillmentAvailability({ current: undefined, marketplaceId: US, quantity: 5 });
         expect(result).toEqual([{ fulfillment_channel_code: 'DEFAULT', quantity: 5, marketplace_id: US }]);
