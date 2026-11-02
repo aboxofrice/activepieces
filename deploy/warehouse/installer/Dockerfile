@@ -11,7 +11,9 @@ ENV DEFAULT_AP_IMAGE=${AP_IMAGE} \
     TEMPLATE_DIR=/opt/installer \
     DATA_DIR=/data
 
+# restore.sh / backup-setup.sh are run from here (`... ap-installer:<tag> restore`), never from the
+# data folder: scripts that drive the Docker socket must not come from a writable host directory.
 COPY *.yml pieces.txt install.sh restore.sh backup-setup.sh /opt/installer/
-RUN chmod +x /opt/installer/*.sh
+RUN chmod 755 /opt/installer/*.sh
 
 ENTRYPOINT ["/opt/installer/install.sh"]
