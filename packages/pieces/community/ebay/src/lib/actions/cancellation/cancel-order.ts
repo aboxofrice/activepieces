@@ -1,6 +1,9 @@
 import { HttpMethod } from '@activepieces/pieces-common';
 import { createAction, Property } from '@activepieces/pieces-framework';
+import { tryCatch } from '@activepieces/shared';
 import { ebayAuth } from '../../auth';
+import { EbayAuthProps } from '../../common/client';
+import { orderCommon } from '../../common/order';
 import { postOrderCommon } from '../../common/post-order';
 
 export const cancelOrder = createAction({
@@ -30,12 +33,42 @@ export const cancelOrder = createAction({
     },
     async run(context) {
         const orderId = context.propsValue.orderId.trim();
+        const payment = await paymentInfo({ auth: context.auth.props, orderId });
+
+// The Post-Order docs make buyerPaid conditional on payment ("include it, true if the buyer
+// has paid, false if not") and buyerPaidDate required when paid. Read both from the order.
+// The Fulfillment read needs the sell.fulfillment scope; without it the request goes out
+// as before, without the fields.
+async function paymentInfo({ auth, orderId }: { auth: EbayAuthProps; orderId: string }): Promise<{ buyerPaid: boolean; buyerPaidDate: string | null } | null> {
+    const { data: order, error } = await tryCatch(() => orderCommon.getOrder({ auth, orderId }));
+    if (error) {
+        return null;
+    }
+    const buyerPaid = PAID_STATUSES.includes(order.orderPaymentStatus ?? '');
+    const paidDates = (order.paymentSummary?.payments ?? [])
+        .map((payment) => payment.paymentDate)
+        .filter((date): date is string => typeof date === 'string' && !Number.isNaN(Date.parse(date)))
+        .sort((a, b) => Date.parse(a) - Date.parse(b));
+    return { buyerPaid, buyerPaidDate: buyerPaid && paidDates[0] ? new Date(paidDates[0]).toISOString() : null };
+}
+
+const PAID_STATUSES = ['PAID', 'PARTIALLY_REFUNDED', 'FULLY_REFUNDED'];
         const response = await postOrderCommon.request<{ cancelId?: string }>({
             auth: context.auth.props,
             method: HttpMethod.POST,
             path: '/cancellation',
-            body: { legacyOrderId: orderId, cancelReason: context.propsValue.reason },
+            body: {
+                legacyOrderId: orderId,
+                cancelReason: context.propsValue.reason,
+                ...(payment === null ? {} : { buyerPaid: payment.buyerPaid }),
+                ...(payment?.buyerPaidDate ? { buyerPaidDate: { value: payment.buyerPaidDate } } : {}),
+            },
         });
-        return { order_id: orderId, cancel_id: response.cancelId ?? null, reason: context.propsValue.reason };
+        return {
+            order_id: orderId,
+            cancel_id: response.cancelId ?? null,
+            reason: context.propsValue.reason,
+            buyer_paid: payment?.buyerPaid ?? null,
+        };
     },
 });

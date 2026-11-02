@@ -69,7 +69,7 @@ export const updateListingQuantity = createAction({
             method: method === 'ReviseItem' ? 'ReviseItem' : 'ReviseInventoryStatus',
             isVariation: isVariation === true,
         });
-        if (result.ack === 'Failure' && failOnError !== false && !inventoryCommon.hasOnlyKnownListingIssues({ errors: result.errors })) {
+        if (!inventoryCommon.isSuccess({ ack: result.ack }) && failOnError !== false && !inventoryCommon.hasOnlyKnownListingIssues({ errors: result.errors })) {
             throw new Error(`eBay ${result.call} failed: ${result.errors.map((error) => `${error.code} ${error.message ?? ''}`.trim()).join(' | ') || 'unknown error'}`);
         }
         return result;

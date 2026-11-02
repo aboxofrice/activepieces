@@ -57,19 +57,21 @@ export const getOrderFees = createAction({
             transactionType !== 'ALL' ? `transactionType:{${transactionType}}` : null,
             orderId ? `orderId:{${orderId.trim()}}` : null,
         ].filter((part): part is string => part !== null).join(',');
-        const transactions = await fetchTransactions({ auth: context.auth.props, filter, offset: 0, pagesLeft: MAX_PAGES });
+        const { transactions, truncated } = await fetchTransactions({ auth: context.auth.props, filter, offset: 0, pagesLeft: MAX_PAGES });
         const rows = transactions
             .filter((transaction) => !feeType || transaction.feeType === feeType)
             .map((transaction) => flattenTransaction({ transaction }));
         return {
             count: rows.length,
             total_amount: Math.round(rows.reduce((sum, row) => sum + (row.amount ?? 0), 0) * 100) / 100,
+            // More transactions matched than the 10 pages read; narrow the date range.
+            truncated,
             transactions: rows,
         };
     },
 });
 
-async function fetchTransactions({ auth, filter, offset, pagesLeft }: { auth: EbayAuthProps; filter: string; offset: number; pagesLeft: number }): Promise<EbayTransaction[]> {
+async function fetchTransactions({ auth, filter, offset, pagesLeft }: { auth: EbayAuthProps; filter: string; offset: number; pagesLeft: number }): Promise<{ transactions: EbayTransaction[]; truncated: boolean }> {
     const page = await ebayClient.request<EbayTransactionsPage>({
         auth,
         method: HttpMethod.GET,
@@ -78,10 +80,14 @@ async function fetchTransactions({ auth, filter, offset, pagesLeft }: { auth: Eb
         queryParams: { filter, limit: PAGE_SIZE, offset },
     });
     const transactions = page.transactions ?? [];
-    if (!page.next || transactions.length === 0 || pagesLeft <= 1) {
-        return transactions;
+    if (!page.next || transactions.length === 0) {
+        return { transactions, truncated: false };
     }
-    return [...transactions, ...await fetchTransactions({ auth, filter, offset: offset + transactions.length, pagesLeft: pagesLeft - 1 })];
+    if (pagesLeft <= 1) {
+        return { transactions, truncated: true };
+    }
+    const rest = await fetchTransactions({ auth, filter, offset: offset + transactions.length, pagesLeft: pagesLeft - 1 });
+    return { transactions: [...transactions, ...rest.transactions], truncated: rest.truncated };
 }
 
 function flattenTransaction({ transaction }: { transaction: EbayTransaction }): FlatTransaction {
