@@ -360,7 +360,14 @@ ensure_admin() {
     ADMIN_EMAIL_V=$(env_get ADMIN_EMAIL); ADMIN_PASSWORD_V=$(env_get ADMIN_PASSWORD)
     res=$(api POST /v1/authentication/sign-in "$(json_obj email=ADMIN_EMAIL_V password=ADMIN_PASSWORD_V)") || true
     if [ -z "$(printf '%s' "$res" | json_field token)" ]; then
-        user_created=$(api GET /v1/flags | json_field USER_CREATED) || true
+        # USER_CREATED is stored only once the first user exists: absent on a fresh server means
+        # False. Only flags that cannot be read at all are an error.
+        user_created=$(api GET /v1/flags | python3 -c 'import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = None
+print("" if not isinstance(d, dict) else "True" if d.get("USER_CREATED") is True else "False")') || true
         [ -n "$user_created" ] || die "Sign-in as $ADMIN_EMAIL_V failed and the server flags could not be read. Server said: $res"
         if [ "$user_created" = True ]; then
             die "Sign-in as $ADMIN_EMAIL_V failed, but this server already has a user, so no new admin is created.
