@@ -1,8 +1,8 @@
 import { createTrigger, Property, Store, TriggerStrategy } from '@activepieces/pieces-framework';
 import { turn14Auth, turn14AuthProps } from '../auth';
-import { Turn14AuthProps, turn14Client } from '../common/client';
+import { Turn14AuthProps } from '../common/client';
 import { turn14Inventory } from '../common/inventory';
-import { turn14Orders } from '../common/orders';
+import { FetchChangedIds, PriceItems, turn14PriceCheck } from '../common/price-check';
 import { turn14Polling } from '../common/polling';
 import { turn14Pricing } from '../common/pricing';
 import { turn14Props } from '../common/props';
@@ -11,7 +11,7 @@ export const priceChanged = createTrigger({
     auth: turn14Auth,
     name: 'price_changed',
     displayName: 'Price Changed',
-    description: 'Fires when Turn14 reports a pricing change for an item (from /v1/pricing/changes, which is tracked per day). Without an item or brand filter this can be 20,000+ items on a busy day - use the filters or the batch mode.',
+    description: 'Fires when Turn14 reports a pricing change for an item (from /v1/pricing/changes, which is tracked per day). Without an item or brand filter this can be 20,000+ items on a busy day - use the filters or the batch mode. Each check is time-limited; work it cannot finish is carried to the next check. State survives a republish; after the flow has been off for more than 15 minutes it starts fresh and only later changes fire.',
     props: {
         itemIds: turn14Props.itemIdsProperty({ displayName: 'Only These Item IDs', required: false }),
         brandId: turn14Props.brandDropdown({ required: false, description: 'Only items of this brand.' }),
@@ -23,7 +23,7 @@ export const priceChanged = createTrigger({
         }),
         maxPricingLookups: Property.Number({
             displayName: 'Max Price Lookups per Check',
-            description: 'Items beyond this are still reported, with pricing_included = false.',
+            description: 'At most 100. Items beyond this are still reported, with pricing_included = false. Lookups that do not fit in the check\'s time limit are carried to the next check.',
             required: false,
             defaultValue: 50,
         }),
@@ -52,107 +52,91 @@ export const priceChanged = createTrigger({
         error: null,
     },
     async onEnable(context) {
-        const auth = turn14AuthProps(context.auth);
         const now = Date.now();
-        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue });
-        const dates = datesToCheck({ now });
-        await Promise.all(dates.map(async (date) => {
-            const ids = await changedIds({ auth, date, filter });
-            await turn14Polling.writeIdSet({ store: context.store, prefix: seenPrefix({ date }), ids });
-        }));
-        await context.store.put(STATE_KEY, { dates });
+        if (await turn14Polling.resumeAfterRepublish({ store: context.store, now }) && await turn14PriceCheck.hasPriceState({ store: context.store })) {
+            return;
+        }
+        const auth = turn14AuthProps(context.auth);
+        const deadline = now + turn14Polling.POLL_BUDGET_MS;
+        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue, deadline });
+        await turn14PriceCheck.seedPriceState({ store: context.store, now, deadline, fetchChangedIds: changedIdsFetcher({ auth, filter }) });
     },
     async onDisable(context) {
-        const state = await turn14Polling.readState({ store: context.store, key: STATE_KEY, isValid: isState });
-        await Promise.all((state?.dates ?? []).map((date) => turn14Polling.deleteIdSet({ store: context.store, prefix: seenPrefix({ date }) })));
-        await context.store.delete(STATE_KEY);
-        await turn14Polling.clearBrandCache({ store: context.store });
+        await turn14Polling.markDisabled({ store: context.store, now: Date.now() });
     },
     async test(context) {
         const auth = turn14AuthProps(context.auth);
-        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue });
-        const dates = datesToCheck({ now: Date.now() }).reverse();
+        const now = Date.now();
+        const deadline = now + turn14Polling.POLL_BUDGET_MS;
+        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue, deadline });
+        const dates = turn14PriceCheck.datesToCheck({ now }).reverse();
         const found = await dates.reduce<Promise<{ itemId: string; date: string }[]>>(async (previous, date) => {
             const collected = await previous;
             if (collected.length >= TEST_LIMIT) {
                 return collected;
             }
             // A filtered test has to read the whole day to find a match; an unfiltered one needs one page.
-            const ids = await changedIds({ auth, date, filter, maxPages: filter === null ? 1 : MAX_PAGES });
-            return [...collected, ...ids.map((itemId) => ({ itemId, date }))];
+            const { itemIds } = await changedIds({ auth, date, filter, deadline, maxPages: filter === null ? 1 : MAX_PAGES });
+            return [...collected, ...itemIds.map((itemId) => ({ itemId, date }))];
         }, Promise.resolve([]));
-        const rows = await enrich({ auth, changes: found.slice(0, TEST_LIMIT), propsValue: context.propsValue });
-        return context.propsValue.emitMode === 'batch' ? [batchOf({ rows })] : rows;
+        const sample = found.slice(0, TEST_LIMIT);
+        const priced = context.propsValue.includePricing === false ? [] : await priceItemsFetcher({ auth })({ itemIds: sample.map((change) => change.itemId), deadline });
+        const rows = sample.map((change, index) => (index < priced.length
+            ? { item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index], truncated: false }
+            : { item_id: change.itemId, change_date: change.date, pricing_included: false, truncated: false }));
+        return context.propsValue.emitMode === 'batch' ? [batchOf({ rows, deferredCount: 0, truncated: false })] : rows;
     },
     async run(context) {
         const auth = turn14AuthProps(context.auth);
         const now = Date.now();
-        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue });
-        const state = await turn14Polling.readState({ store: context.store, key: STATE_KEY, isValid: isState });
-        const dates = datesToCheck({ now });
-        const perDate = await dates.reduce<Promise<{ itemId: string; date: string }[]>>(async (previous, date) => {
-            const collected = await previous;
-            const ids = await changedIds({ auth, date, filter });
-            const seen = await turn14Polling.readIdSet({ store: context.store, prefix: seenPrefix({ date }) });
-            await turn14Polling.writeIdSet({ store: context.store, prefix: seenPrefix({ date }), ids: [...new Set([...seen, ...ids])] });
-            return [...collected, ...ids.filter((id) => !seen.has(id)).map((itemId) => ({ itemId, date }))];
-        }, Promise.resolve([]));
-        const expired = (state?.dates ?? []).filter((date) => !dates.includes(date));
-        await Promise.all(expired.map((date) => turn14Polling.deleteIdSet({ store: context.store, prefix: seenPrefix({ date }) })));
-        await context.store.put(STATE_KEY, { dates });
-        if (perDate.length === 0) {
+        const deadline = now + turn14Polling.POLL_BUDGET_MS;
+        const filter = await filterFor({ auth, store: context.store, propsValue: context.propsValue, deadline });
+        const { rows, deferredCount, truncated } = await turn14PriceCheck.runPriceCheck({
+            store: context.store,
+            now,
+            deadline,
+            fetchChangedIds: changedIdsFetcher({ auth, filter }),
+            priceItems: priceItemsFetcher({ auth }),
+            includePricing: context.propsValue.includePricing !== false,
+            maxLookups: context.propsValue.maxPricingLookups ?? DEFAULT_LOOKUPS,
+        });
+        if (rows.length === 0) {
             return [];
         }
-        const rows = await enrich({ auth, changes: perDate, propsValue: context.propsValue });
-        return context.propsValue.emitMode === 'batch' ? [batchOf({ rows })] : rows;
+        return context.propsValue.emitMode === 'batch' ? [batchOf({ rows, deferredCount, truncated })] : rows;
     },
 });
 
-async function filterFor({ auth, store, propsValue }: { auth: Turn14AuthProps; store: Store; propsValue: PriceProps }): Promise<Set<string> | null> {
+async function filterFor({ auth, store, propsValue, deadline }: { auth: Turn14AuthProps; store: Store; propsValue: PriceProps; deadline: number }): Promise<Set<string> | null> {
     return turn14Polling.resolveItemFilter({
         auth,
         store,
         itemIds: turn14Inventory.parseIdList({ values: propsValue.itemIds }),
         brandId: propsValue.brandId ? String(propsValue.brandId) : undefined,
+        deadline,
     });
 }
 
-async function changedIds({ auth, date, filter, maxPages = MAX_PAGES }: { auth: Turn14AuthProps; date: string; filter: Set<string> | null; maxPages?: number }): Promise<string[]> {
-    const { itemIds } = await turn14Pricing.getPriceChanges({ auth, startDate: date, endDate: date, maxPages });
-    return filter === null ? itemIds : itemIds.filter((id) => filter.has(id));
+async function changedIds({ auth, date, filter, deadline, maxPages = MAX_PAGES }: { auth: Turn14AuthProps; date: string; filter: Set<string> | null; deadline: number; maxPages?: number }): Promise<{ itemIds: string[]; truncated: boolean }> {
+    const { itemIds, truncated } = await turn14Pricing.getPriceChanges({ auth, startDate: date, endDate: date, maxPages, deadline });
+    return { itemIds: filter === null ? itemIds : itemIds.filter((id) => filter.has(id)), truncated };
 }
 
-async function enrich({ auth, changes, propsValue }: { auth: Turn14AuthProps; changes: { itemId: string; date: string }[]; propsValue: PriceProps }): Promise<Record<string, unknown>[]> {
-    const lookups = propsValue.includePricing === false ? 0 : Math.max(0, Math.floor(propsValue.maxPricingLookups ?? DEFAULT_LOOKUPS));
-    const toPrice = changes.slice(0, lookups);
-    const priced = toPrice.length > 0 ? turn14Pricing.flattenPricing({ results: await turn14Pricing.getPricing({ auth, itemIds: toPrice.map((change) => change.itemId) }) }) : [];
-    return changes.map((change, index) => (index < priced.length
-        ? { item_id: change.itemId, change_date: change.date, pricing_included: true, ...priced[index] }
-        : { item_id: change.itemId, change_date: change.date, pricing_included: false }));
+function changedIdsFetcher({ auth, filter }: { auth: Turn14AuthProps; filter: Set<string> | null }): FetchChangedIds {
+    return ({ date, deadline }) => changedIds({ auth, date, filter, deadline });
 }
 
-function batchOf({ rows }: { rows: Record<string, unknown>[] }): Record<string, unknown> {
-    return { changed_count: rows.length, item_ids: rows.map((row) => row['item_id']), items: rows };
+function priceItemsFetcher({ auth }: { auth: Turn14AuthProps }): PriceItems {
+    return async ({ itemIds, deadline }) => turn14Pricing.flattenPricing({ results: await turn14Pricing.getPricing({ auth, itemIds, deadline }) });
 }
 
-// Turn14 dates its changes by day. Yesterday is re-checked so late-posted changes and the gap
-// between Turn14's timezone and UTC are not missed.
-function datesToCheck({ now }: { now: number }): string[] {
-    return [turn14Orders.isoDate({ epochMs: now - turn14Orders.DAY_MS }), turn14Orders.isoDate({ epochMs: now })];
-}
-
-function seenPrefix({ date }: { date: string }): string {
-    return `turn14_price_seen_${date}`;
-}
-
-function isState(value: unknown): value is { dates: string[] } {
-    return turn14Client.isRecord(value) && Array.isArray(value['dates']) && value['dates'].every((date) => typeof date === 'string');
+function batchOf({ rows, deferredCount, truncated }: { rows: Record<string, unknown>[]; deferredCount: number; truncated: boolean }): Record<string, unknown> {
+    return { changed_count: rows.length, item_ids: rows.map((row) => row['item_id']), items: rows, deferred_to_next_check: deferredCount, truncated };
 }
 
 const MAX_PAGES = 60;
 const DEFAULT_LOOKUPS = 50;
 const TEST_LIMIT = 5;
-const STATE_KEY = 'turn14_price_changed_state';
 
 type PriceProps = {
     itemIds?: unknown[];

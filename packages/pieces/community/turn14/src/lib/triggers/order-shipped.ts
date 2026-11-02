@@ -9,7 +9,7 @@ export const orderShipped = createTrigger({
     auth: turn14Auth,
     name: 'order_shipped',
     displayName: 'Order Shipped',
-    description: 'Fires once per new Turn14 tracking number (from /v1/tracking), with the carrier service, Turn14 order/invoice and your PO number. Use the PO number to match the shipment back to your marketplace or SellerCloud order.',
+    description: 'Fires once per new Turn14 tracking number (from /v1/tracking), with the carrier service, Turn14 order/invoice and your PO number. Use the PO number to match the shipment back to your marketplace or SellerCloud order. State survives a republish; after the flow has been off for more than 15 minutes it starts fresh.',
     props: {
         includeOrderDetails: Property.Checkbox({
             displayName: 'Include Order Details',
@@ -31,11 +31,14 @@ export const orderShipped = createTrigger({
     },
     async onEnable(context) {
         const now = Date.now();
+        if (await turn14Polling.resumeAfterRepublish({ store: context.store, now }) && await turn14Polling.readState({ store: context.store, key: STATE_KEY, isValid: isState }) !== null) {
+            return;
+        }
         const shipments = await recentShipments({ auth: turn14AuthProps(context.auth), now });
         await context.store.put(STATE_KEY, { seen: Object.fromEntries(shipments.map((shipment) => [keyOf({ shipment }), now])) });
     },
     async onDisable(context) {
-        await context.store.delete(STATE_KEY);
+        await turn14Polling.markDisabled({ store: context.store, now: Date.now() });
     },
     async test(context) {
         const auth = turn14AuthProps(context.auth);

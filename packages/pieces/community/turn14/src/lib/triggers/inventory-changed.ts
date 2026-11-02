@@ -1,7 +1,8 @@
 import { createTrigger, Property, Store, TriggerStrategy } from '@activepieces/pieces-framework';
-import { turn14Auth, turn14AuthProps } from '../auth';
+import { turn14Auth, turn14AuthProps, Turn14AuthValue } from '../auth';
 import { Turn14AuthProps, turn14Client } from '../common/client';
 import { Turn14Inventory, turn14Inventory } from '../common/inventory';
+import { ReadUpdates, turn14InventoryCheck } from '../common/inventory-check';
 import { turn14Polling } from '../common/polling';
 import { turn14Props } from '../common/props';
 
@@ -9,7 +10,7 @@ export const inventoryChanged = createTrigger({
     auth: turn14Auth,
     name: 'inventory_changed',
     displayName: 'Inventory Changed',
-    description: 'Fires once per item whose Turn14 stock changed since the last check (from Turn14\'s inventory update feed). Optionally limit it to a list of items or one brand.',
+    description: 'Fires once per item whose Turn14 stock changed since the last check (from Turn14\'s inventory update feed). Optionally limit it to a list of items or one brand. Turn14 posts most updates in one daily burst; a check that cannot read it all in time continues where it stopped on the next check. Turn14 keeps one day of updates, so after more than 24 hours without a check older changes are lost (outputs carry truncated = true). State survives a republish; after the flow has been off for more than 15 minutes it starts fresh.',
     props: {
         itemIds: turn14Props.itemIdsProperty({ displayName: 'Only These Item IDs', required: false }),
         brandId: turn14Props.brandDropdown({ required: false, description: 'Only items of this brand.' }),
@@ -18,6 +19,17 @@ export const inventoryChanged = createTrigger({
             description: 'By default only quantity changes (Turn14 warehouses and manufacturer stock) fire.',
             required: false,
             defaultValue: false,
+        }),
+        emitMode: Property.StaticDropdown({
+            displayName: 'Output',
+            required: true,
+            defaultValue: 'per_item',
+            options: {
+                options: [
+                    { label: 'One flow run per changed item', value: 'per_item' },
+                    { label: 'One flow run per check, with all changed items', value: 'batch' },
+                ],
+            },
         }),
     },
     type: TriggerStrategy.POLLING,
@@ -42,105 +54,65 @@ export const inventoryChanged = createTrigger({
         on_order_location_59: 0,
         eta_location_59: null,
         detected_at: '2026-11-01T15:05:00.000Z',
+        truncated: false,
     },
     async onEnable(context) {
-        const auth = turn14AuthProps(context.auth);
         const now = Date.now();
-        const { changes, seen } = await detectChanges({ auth, store: context.store, propsValue: context.propsValue, state: { lastPollAt: now, seen: {} }, now });
-        await context.store.put(STATE_KEY, { lastPollAt: now, seen: { ...seen, ...Object.fromEntries(changes.map((change) => [change.id, change.entry])) } });
+        if (await turn14Polling.resumeAfterRepublish({ store: context.store, now }) && await turn14InventoryCheck.hasInventoryState({ store: context.store })) {
+            return;
+        }
+        await turn14InventoryCheck.seedInventoryState(await checkParams({ context, now }));
     },
     async onDisable(context) {
-        await context.store.delete(STATE_KEY);
-        await turn14Polling.clearBrandCache({ store: context.store });
+        await turn14Polling.markDisabled({ store: context.store, now: Date.now() });
     },
     async test(context) {
-        const auth = turn14AuthProps(context.auth);
         const now = Date.now();
-        const { changes } = await detectChanges({ auth, store: context.store, propsValue: context.propsValue, state: { lastPollAt: now - 60 * 60 * 1000, seen: {} }, now });
-        return changes.slice(0, TEST_LIMIT).map((change) => change.output);
+        const params = await checkParams({ context, now });
+        const { rows } = await params.readUpdates({ window: TEST_WINDOW_MINUTES, startPage: 1, deadline: params.deadline });
+        const changes = turn14InventoryCheck.detectChanges({ rows: rows.filter((row) => params.filter === null || params.filter.has(row.id)), seen: new Map(), includeEta: params.includeEta, now, truncated: false });
+        const outputs = changes.slice(0, TEST_LIMIT).map((change) => change.output);
+        return context.propsValue.emitMode === 'batch' ? [batchOf({ outputs, truncated: false, finished: true })] : outputs;
     },
     async run(context) {
-        const auth = turn14AuthProps(context.auth);
-        const now = Date.now();
-        const state = (await turn14Polling.readState({ store: context.store, key: STATE_KEY, isValid: isState })) ?? { lastPollAt: now - 15 * 60 * 1000, seen: {} };
-        const { changes, seen } = await detectChanges({ auth, store: context.store, propsValue: context.propsValue, state, now });
-        const merged = { ...seen, ...Object.fromEntries(changes.map((change) => [change.id, change.entry])) };
-        await context.store.put(STATE_KEY, { lastPollAt: now, seen: capEntries({ seen: merged }) });
-        return changes.map((change) => change.output);
+        const result = await turn14InventoryCheck.runInventoryCheck(await checkParams({ context, now: Date.now() }));
+        if (result.outputs.length === 0) {
+            return [];
+        }
+        return context.propsValue.emitMode === 'batch' ? [batchOf(result)] : result.outputs;
     },
 });
 
-async function detectChanges({ auth, store, propsValue, state, now }: DetectParams): Promise<{ changes: Change[]; seen: Record<string, SeenEntry> }> {
-    const minutesSinceLastPoll = Math.ceil((now - state.lastPollAt) / 60000) + WINDOW_OVERLAP_MINUTES;
-    const window = UPDATE_WINDOWS_MINUTES.find((minutes) => minutes >= minutesSinceLastPoll) ?? UPDATE_WINDOWS_MINUTES[UPDATE_WINDOWS_MINUTES.length - 1];
+async function checkParams({ context, now }: { context: TriggerContext; now: number }) {
+    const auth = turn14AuthProps(context.auth);
+    const deadline = now + turn14Polling.POLL_BUDGET_MS;
     const filter = await turn14Polling.resolveItemFilter({
         auth,
-        store,
-        itemIds: turn14Inventory.parseIdList({ values: propsValue.itemIds }),
-        brandId: propsValue.brandId ? String(propsValue.brandId) : undefined,
+        store: context.store,
+        itemIds: turn14Inventory.parseIdList({ values: context.propsValue.itemIds }),
+        brandId: context.propsValue.brandId ? String(context.propsValue.brandId) : undefined,
+        deadline,
     });
-    const { rows } = await turn14Client.fetchPages<Turn14Inventory>({ auth, path: '/v1/inventory/updates', queryParams: { minutes: window }, maxPages: MAX_PAGES });
-    const relevant = rows.filter((row) => filter === null || filter.has(row.id));
-    // Entries only need to outlive the next window, which overlaps this one.
-    const keepAfter = now - (window + WINDOW_OVERLAP_MINUTES * 2) * 60000;
-    const seen = Object.fromEntries(Object.entries(state.seen).filter(([, entry]) => entry[1] >= keepAfter));
-    const flat = turn14Inventory.flattenInventory({ rows: relevant });
-    const changes = relevant.flatMap((row, index) => {
-        const hash = turn14Polling.fingerprint({ value: fingerprintSource({ row, includeEta: propsValue.includeEtaChanges === true }) });
-        const previous = seen[row.id];
-        if (previous && previous[0] === hash) {
-            return [];
-        }
-        const totalQuantity = Number(flat[index]['total_quantity'] ?? 0);
-        const entry: SeenEntry = [hash, now, totalQuantity];
-        return [{
-            id: row.id,
-            entry,
-            output: { ...flat[index], previous_total_quantity: previous ? previous[2] : null, detected_at: new Date(now).toISOString() },
-        }];
-    });
-    return { changes, seen };
+    return { store: context.store, now, deadline, filter, includeEta: context.propsValue.includeEtaChanges === true, readUpdates: updatesReader({ auth }) };
 }
 
-function fingerprintSource({ row, includeEta }: { row: Turn14Inventory; includeEta: boolean }): unknown {
-    const inventory = row.attributes?.inventory ?? {};
-    const sortedInventory = Object.keys(inventory).sort().map((key) => [key, inventory[key]]);
-    return includeEta
-        ? [sortedInventory, row.attributes?.manufacturer?.stock ?? null, row.attributes?.eta ?? null, row.attributes?.manufacturer?.esd ?? null]
-        : [sortedInventory, row.attributes?.manufacturer?.stock ?? null];
+function updatesReader({ auth }: { auth: Turn14AuthProps }): ReadUpdates {
+    return async ({ window, startPage, deadline }) => {
+        const { rows, nextPage } = await turn14Client.fetchPages<Turn14Inventory>({ auth, path: '/v1/inventory/updates', queryParams: { minutes: window }, maxPages: MAX_PAGES_PER_CHECK, startPage, deadline });
+        return { rows, nextPage };
+    };
 }
 
-function capEntries({ seen }: { seen: Record<string, SeenEntry> }): Record<string, SeenEntry> {
-    const entries = Object.entries(seen);
-    if (entries.length <= MAX_SEEN_ENTRIES) {
-        return seen;
-    }
-    return Object.fromEntries([...entries].sort((left, right) => right[1][1] - left[1][1]).slice(0, MAX_SEEN_ENTRIES));
+function batchOf({ outputs, truncated, finished }: { outputs: Record<string, unknown>[]; truncated: boolean; finished: boolean }): Record<string, unknown> {
+    return { changed_count: outputs.length, item_ids: outputs.map((output) => output['item_id']), items: outputs, truncated, more_pending: !finished };
 }
 
-function isState(value: unknown): value is InventoryState {
-    return turn14Client.isRecord(value) && typeof value['lastPollAt'] === 'number' && turn14Client.isRecord(value['seen']);
-}
-
-// Turn14 only accepts these window sizes for /v1/inventory/updates.
-const UPDATE_WINDOWS_MINUTES = [15, 30, 60, 240, 480, 1440];
-const WINDOW_OVERLAP_MINUTES = 5;
-const MAX_PAGES = 100;
-const MAX_SEEN_ENTRIES = 5000;
+const MAX_PAGES_PER_CHECK = 150;
+const TEST_WINDOW_MINUTES = 60;
 const TEST_LIMIT = 5;
-const STATE_KEY = 'turn14_inventory_changed_state';
 
-// [fingerprint, detected at (epoch ms), total quantity]
-type SeenEntry = [string, number, number];
-
-type InventoryState = { lastPollAt: number; seen: Record<string, SeenEntry> };
-
-type Change = { id: string; entry: SeenEntry; output: Record<string, unknown> };
-
-type DetectParams = {
-    auth: Turn14AuthProps;
+type TriggerContext = {
+    auth: Turn14AuthValue;
     store: Store;
     propsValue: { itemIds?: unknown[]; brandId?: unknown; includeEtaChanges?: boolean };
-    state: InventoryState;
-    now: number;
 };
