@@ -65,6 +65,7 @@ describe('walmartLineMath partial refunds', () => {
         expect(() => walmartLineMath.parsePartialRefund({ value: { lineNumber: '', itemAmount: 5 }, index: 0 })).toThrow(/Row 1 has no Line Number/);
         expect(() => walmartLineMath.parsePartialRefund({ value: { itemAmount: 5 }, index: 2 })).toThrow(/Row 3 has no Line Number/);
         expect(() => walmartLineMath.parsePartialRefund({ value: { lineNumber: '1', itemAmount: -5 }, index: 0 })).toThrow(/positive number/);
+        expect(() => walmartLineMath.parsePartialRefund({ value: { lineNumber: '1', itemTax: 2 }, index: 0 })).toThrow(/Item Tax without an Item Amount/);
         expect(walmartLineMath.parsePartialRefund({ value: { lineNumber: '1', itemAmount: '5' }, index: 0 })).toEqual({ lineNumber: '1', itemAmount: 5, itemTax: 0, shippingAmount: 0 });
     });
 

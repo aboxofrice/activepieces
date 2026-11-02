@@ -72,6 +72,10 @@ function parsePartialRefund({ value, index }: { value: unknown; index: number })
     if (row.itemAmount + row.itemTax + row.shippingAmount <= 0) {
         throw new Error(`Refund row ${index + 1} (line ${lineNumber}) has no amount to refund.`);
     }
+    // Item tax is refunded on the item charge, so it cannot go out without an item amount.
+    if (row.itemTax > 0 && row.itemAmount <= 0) {
+        throw new Error(`Refund row ${index + 1} (line ${lineNumber}) refunds Item Tax without an Item Amount; Walmart refunds tax together with the item price, so set Item Amount too.`);
+    }
     return row;
 }
 
