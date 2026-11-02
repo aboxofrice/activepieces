@@ -1,6 +1,7 @@
 import { gunzipSync } from 'zlib';
 import { HttpMethod, httpClient } from '@activepieces/pieces-common';
 import { AmazonSellerAuthProps, spApiClient } from './client';
+import { REQUEST_TIMEOUT_MS } from './retry';
 
 async function submitFeed({ auth, feedType, marketplaceId, content, contentType }: SubmitFeedParams): Promise<string> {
     const document = await spApiClient.request<{ feedDocumentId: string; url: string }>({
@@ -15,6 +16,7 @@ async function submitFeed({ auth, feedType, marketplaceId, content, contentType 
         url: document.url,
         headers: { 'Content-Type': contentType },
         body: content,
+        timeout: REQUEST_TIMEOUT_MS,
     });
     const feed = await spApiClient.request<{ feedId: string }>({
         auth,
@@ -92,7 +94,7 @@ async function downloadReport({ auth, reportDocumentId }: { auth: AmazonSellerAu
 }
 
 async function download({ document }: { document: DocumentLink }): Promise<string> {
-    const response = await httpClient.sendRequest<ArrayBuffer>({ method: HttpMethod.GET, url: document.url, responseType: 'arraybuffer' });
+    const response = await httpClient.sendRequest<ArrayBuffer>({ method: HttpMethod.GET, url: document.url, responseType: 'arraybuffer', timeout: REQUEST_TIMEOUT_MS });
     const bytes = Buffer.from(response.body);
     return (document.compressionAlgorithm === 'GZIP' ? gunzipSync(bytes) : bytes).toString('utf8');
 }

@@ -1,4 +1,5 @@
 import { HttpMethod, httpClient } from '@activepieces/pieces-common';
+import { REQUEST_TIMEOUT_MS } from './retry';
 import { AmazonSellerAuthProps, spApiClient } from './client';
 
 async function searchProductTypes({ auth, marketplaceId, keywords, itemName }: SearchParams): Promise<{ name: string; display_name: string | null }[]> {
@@ -36,7 +37,7 @@ async function getDefinition({ auth, marketplaceId, productType, requirements, i
         return summary;
     }
     // The schema lives behind a short-lived pre-signed S3 link that Amazon returns above.
-    const schema = (await httpClient.sendRequest<JsonSchema>({ method: HttpMethod.GET, url: summary.schema_url })).body;
+    const schema = (await httpClient.sendRequest<JsonSchema>({ method: HttpMethod.GET, url: summary.schema_url, timeout: REQUEST_TIMEOUT_MS })).body;
     const required = schema.required ?? [];
     return {
         ...summary,
