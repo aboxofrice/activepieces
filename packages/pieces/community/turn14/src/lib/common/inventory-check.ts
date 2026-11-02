@@ -26,8 +26,9 @@ async function runInventoryCheck({ store, now, deadline, filter, includeEta, rea
     const seen = new Map(buckets.filter((entry) => entry.hour >= oldestHour).flatMap((entry) => [...entry.entries]));
     const changes = detectChanges({ rows: rows.filter((row) => filter === null || filter.has(row.id)), seen, includeEta, now, truncated });
     const hours = await writeBuckets({ store, buckets, changes, now, window });
-    // Finishing the scan the enable-time seed could not complete: those rows may predate enabling.
-    const unsure = state.unsure === true && resume !== null;
+    // Until one scan has been read to the end after an incomplete enable-time seed (resumed or
+    // restarted at page 1), rows may predate enabling.
+    const unsure = state.unsure === true;
     const nextState: InventoryState = nextPage === null
         ? { lastPollAt: scanStartedAt, buckets: hours }
         : { lastPollAt: state.lastPollAt, resume: { window, nextPage, scanStartedAt }, buckets: hours, ...(unsure ? { unsure: true } : {}) };

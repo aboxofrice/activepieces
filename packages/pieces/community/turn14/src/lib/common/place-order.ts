@@ -20,7 +20,7 @@ async function placeOrder({ store, auth, input, settleMs }: { store: Store; auth
         environment,
         refuseRepeatQuote: input.refuseRepeatQuote,
         refuseOpenPo: input.refuseOpenPo,
-        clearStuckClaim: input.clearStuckClaim,
+        clearClaim: input.clearClaim,
         settleMs,
         listOpenOrders: async () => {
             const { rows, truncated } = await turn14Orders.listOrders({ auth, maxPages: MAX_OPEN_ORDER_PAGES });
@@ -87,7 +87,7 @@ export type PlaceOrderInput = {
     acknowledgeEpa: boolean;
     refuseOpenPo: boolean;
     refuseRepeatQuote: boolean;
-    clearStuckClaim: boolean;
+    clearClaim?: string;
 };
 
 export type PlaceOrderResult = {

@@ -26,7 +26,9 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
         const sweptAt = state?.sweptAt?.[date] ?? null;
         const recentlySwept = date !== dates[0] && startPage === 1 && sweptAt !== null && now - sweptAt < RESWEEP_MS && !seeding && !unsure;
         if (recentlySwept) {
-            return [...collected, { date, seen: new Set<string>(), fresh: [], seededIds: [], startPage, nextPage: null, seeding: false, unsure: false, sweptAt, skipped: true }];
+            // Not re-read, but its seen set is still needed: pending items of this date may be emitted.
+            const seenSkipped = await turn14Polling.readIdSet({ store, prefix: seenPrefix({ date }) });
+            return [...collected, { date, seen: seenSkipped, fresh: [], seededIds: [], startPage, nextPage: null, seeding: false, unsure: false, sweptAt, skipped: true }];
         }
         const { itemIds, nextPage } = await fetchChangedIds({ date, startPage, deadline: listDeadline });
         const seen = await turn14Polling.readIdSet({ store, prefix: seenPrefix({ date }) });
@@ -59,10 +61,10 @@ async function runPriceCheck({ store, now, deadline, fetchChangedIds, priceItems
         ...candidates.slice(lookupCap).map((change) => ({ item_id: change.itemId, change_date: change.date, pricing_included: false, ...flags(change) })),
     ];
     const emittedKeys = new Set(rows.map((row) => changeKey({ change: { itemId: row.item_id, date: row.change_date } })));
-    await Promise.all(perDate.filter((scan) => !scan.skipped).map(async (scan) => {
+    await Promise.all(perDate.map(async (scan) => {
         const emitted = candidates.filter((change) => change.date === scan.date && emittedKeys.has(changeKey({ change })) && !scan.seen.has(change.itemId)).map((change) => change.itemId);
         const added = [...emitted, ...scan.seededIds];
-        if (added.length > 0 || state === null) {
+        if (added.length > 0 || (state === null && !scan.skipped)) {
             await turn14Polling.writeIdSet({ store, prefix: seenPrefix({ date: scan.date }), ids: [...scan.seen, ...added] });
         }
     }));

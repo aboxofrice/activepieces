@@ -10,7 +10,7 @@ export const inventoryChanged = createTrigger({
     auth: turn14Auth,
     name: 'inventory_changed',
     displayName: 'Inventory Changed',
-    description: 'Fires once per item whose Turn14 stock changed since the last check (from Turn14\'s inventory update feed). Optionally limit it to a list of items or one brand. Turn14 posts most updates in one daily burst; a check that cannot read it all in time continues where it stopped on the next check. Turn14 keeps one day of updates, so after more than 24 hours without a check older changes are lost (outputs carry truncated = true). State survives a republish; after the flow has been off for more than 15 minutes it starts fresh.',
+    description: 'Fires once per item whose Turn14 stock changed since the last check (from Turn14\'s inventory update feed). Optionally limit it to a list of items or one brand. Turn14 posts most updates in one daily burst; a check that cannot read it all in time continues where it stopped on the next check. Turn14 keeps one day of updates, so after more than 24 hours without a check older changes are lost (outputs carry truncated = true). State survives a republish; after the flow has been off for more than 15 minutes it starts fresh. Right after the trigger is enabled, changes that may predate enabling (Turn14 gives no timestamp) fire with possibly_before_enable = true: add a filter step on it, or use the batch output to review them together.',
     props: {
         itemIds: turn14Props.itemIdsProperty({ displayName: 'Only These Item IDs', required: false }),
         brandId: turn14Props.brandDropdown({ required: false, description: 'Only items of this brand.' }),

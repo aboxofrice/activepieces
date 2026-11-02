@@ -46,11 +46,10 @@ export const placeOrderFromQuote = createAction({
             required: false,
             defaultValue: true,
         }),
-        clearStuckClaim: Property.Checkbox({
-            displayName: 'Clear Stuck Claim for This Quote',
-            description: 'Only after checking the PO in Turn14 (List Open Orders / Get Order) and finding no order: replaces an earlier attempt whose outcome is unknown, so the quote can be ordered. Never clears an attempt recorded as placed. Untick it again afterwards.',
+        clearClaim: Property.ShortText({
+            displayName: 'Stuck Claim Token to Clear',
+            description: 'One-shot escape for an attempt whose outcome is unknown. First check the PO in Turn14 (List Open Orders / Get Order); if there is no order, paste the token shown in the error message. Only that exact claim is cleared, never one recorded as placed or one younger than 15 minutes, and only with "Refuse if an Open Order Has This PO" on.',
             required: false,
-            defaultValue: false,
         }),
     },
     async run(context) {
@@ -78,7 +77,7 @@ export const placeOrderFromQuote = createAction({
                 acknowledgeEpa: p.acknowledgeEpa === true,
                 refuseOpenPo: p.refuseOpenPo !== false,
                 refuseRepeatQuote: p.refuseRepeatQuote !== false,
-                clearStuckClaim: p.clearStuckClaim === true,
+                clearClaim: p.clearClaim ?? undefined,
             },
         });
     },
