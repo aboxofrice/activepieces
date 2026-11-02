@@ -23,7 +23,8 @@
 #   GHCR_USER / GHCR_TOKEN   registry login for private images
 #   COMPOSE_PROJECT_NAME     stack name (default activepieces); lets a test copy run beside it
 #   Optional, saved to .env when given (first run or re-run; see compose.ap-sync.yml / compose.backup.yml):
-#     GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES EXPORT_HOUR
+#     GITHUB_TOKEN (fine-grained, read-only "Contents: Read" on the flows repo; ap-sync only pulls)
+#     FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES SYNC_HEALTHCHECK_URL
 #     AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
 #     BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL
 set -euo pipefail
@@ -40,7 +41,7 @@ SECRETS_ACK=$DATA_DIR/.secrets-acknowledged
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # Settings an installer run may pass with -e and that must survive into .env for the helper services.
-PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES EXPORT_HOUR
+PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES
 AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
 BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
 # AP_* keys docker-compose.yml passes to the app; any other AP_* key in .env is ignored there.

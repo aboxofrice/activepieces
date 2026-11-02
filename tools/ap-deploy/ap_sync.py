@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """
 ap-sync: the server-side helper. Every SYNC_INTERVAL_MINUTES it pulls the flows repo and applies
-managed flows to this server; once a night (after EXPORT_HOUR, local time per TZ) it exports staff
-flows to warehouse-made/, commits and pushes.
+managed flows to this server. Pull-only: it never commits or pushes, so the GitHub token only needs
+read access (Contents: Read) to the flows repo. Staff flows are protected by the database backups.
 
 Usage:
     ap_sync.py                 # loop forever
     ap_sync.py --once          # one pull + apply, then exit
-    ap_sync.py --export-now    # also run the nightly export on this pass
-    ap_sync.py --no-push       # commit locally, never push (testing)
 
-Env: FLOWS_REPO_URL, FLOWS_BRANCH (main), FLOWS_DIR (/data/flows), STATE_FILE (/data/ap-sync-state.json),
-     SYNC_INTERVAL_MINUTES (5), EXPORT_HOUR (2), GITHUB_TOKEN, GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL,
-     AP_DEPLOY_TARGET, AP_URL, AP_PROJECT_ID, AP_EMAIL + AP_PASSWORD (or AP_API_KEY),
-     BACKUP_STATUS_FILE (/backup-status/status, read-only mount of the backup service's status).
+Env: FLOWS_REPO_URL, FLOWS_BRANCH (main), FLOWS_DIR (/data/flows), SYNC_INTERVAL_MINUTES (5),
+     GITHUB_TOKEN (read-only), AP_DEPLOY_TARGET, AP_URL, AP_PROJECT_ID, AP_EMAIL + AP_PASSWORD
+     (or AP_API_KEY), SYNC_HEALTHCHECK_URL.
 """
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -24,14 +20,13 @@ import time
 import traceback
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 
 import ap_deploy
 
 REPO_URL = os.environ.get('FLOWS_REPO_URL', 'https://github.com/aboxofrice/activepieces-flows.git')
 BRANCH = os.environ.get('FLOWS_BRANCH', 'main')
 FLOWS_DIR = os.environ.get('FLOWS_DIR', '/data/flows')
-STATE_FILE = os.environ.get('STATE_FILE', '/data/ap-sync-state.json')
 
 
 def _env_number(name, default, cast, low, high):
@@ -50,20 +45,15 @@ def _env_number(name, default, cast, low, high):
 
 
 INTERVAL = _env_number('SYNC_INTERVAL_MINUTES', 5.0, float, 0.1, 1440) * 60
-EXPORT_HOUR = _env_number('EXPORT_HOUR', 2, int, 0, 23)
 # Optional healthchecks.io-style URL: GET after every good pass, <url>/fail after a failed one.
 SYNC_HEALTHCHECK_URL = os.environ.get('SYNC_HEALTHCHECK_URL', '').strip()
 TARGET = os.environ.get('AP_DEPLOY_TARGET', 'warehouse')
-BACKUP_STATUS_FILE = os.environ.get('BACKUP_STATUS_FILE', '/backup-status/status')
-STATUS_DIR = 'status'
 # The token is handed to git by a credential helper reading the environment, so it never lands
 # in .git/config, the remote URL, or a log line. The helper is scoped to the flows repo's host so
 # git never offers the token to any other server (submodules, redirects, a changed URL).
 CRED_HELPER = '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
 # Last flag logged per deploy key, so an unresolved skip is logged once, not every pass.
 _flags = {}
-# State of every managed flow after the last apply, for status/<target>.json.
-_last_states = {}
 
 
 def log(msg):
@@ -96,7 +86,7 @@ def _safe_url(url):
 
 
 def pull():
-    """Bring FLOWS_DIR to origin/BRANCH, keeping any unpushed export commit on top."""
+    """Bring FLOWS_DIR to exactly origin/BRANCH (the checkout is never edited here)."""
     if not os.path.isdir(os.path.join(FLOWS_DIR, '.git')):
         os.makedirs(os.path.dirname(FLOWS_DIR) or '.', exist_ok=True)
         git('clone', '--branch', BRANCH, REPO_URL, FLOWS_DIR)
@@ -104,16 +94,9 @@ def pull():
     elif git('remote', 'get-url', 'origin', check=False).stdout.strip() != REPO_URL:
         git('remote', 'set-url', 'origin', REPO_URL)
         log(f'git origin is now {_safe_url(REPO_URL)} (FLOWS_REPO_URL changed)')
-    git('config', 'user.name', os.environ.get('GIT_AUTHOR_NAME', 'ap-sync'))
-    git('config', 'user.email', os.environ.get('GIT_AUTHOR_EMAIL', 'ap-sync@localhost'))
     before = git('rev-parse', 'HEAD').stdout.strip()
     git('fetch', '--quiet', 'origin', BRANCH)
-    # warehouse-made/ is only ever written here, so a failed rebase means someone edited it by
-    # hand upstream: let git win, tonight's export regenerates it.
-    if git('rebase', f'origin/{BRANCH}', check=False).returncode != 0:
-        git('rebase', '--abort', check=False)
-        git('reset', '--hard', f'origin/{BRANCH}')
-        log('git rebase conflict: dropped the local export commit, will re-export tonight')
+    git('reset', '--quiet', '--hard', f'origin/{BRANCH}')
     after = git('rev-parse', 'HEAD').stdout.strip()
     if before != after:
         log(f'git pull {before[:7]}..{after[:7]}')
@@ -124,16 +107,13 @@ def apply_managed():
     client = ap_deploy.Client.from_env()
     records = ap_deploy.apply(client, FLOWS_DIR, TARGET, log=_log_apply)
     changed = sum(1 for r in records if r.get('applied'))
-    _last_states.clear()
     for r in records:
         flag = r['reason'] if r['state'] in ap_deploy.FLAGGED_STATES else None
-        _last_states[r['key']] = {'state': r['state'], **({'reason': r['reason']} if flag else {})}
         if _flags.get(r['key']) and not flag:
             log(f'apply {r["key"]}: no longer flagged ({r["state"]})')
         _flags[r['key']] = flag
     if changed:
         log(f'apply done: {changed} applied, {sum(1 for f in _flags.values() if f)} flagged, {len(records)} managed')
-    return client
 
 
 def _log_apply(msg):
@@ -143,76 +123,15 @@ def _log_apply(msg):
     log(f'apply {msg}')
 
 
-def nightly_export(client, push=True):
-    ap_deploy.export_staff(client, FLOWS_DIR, log=log)
-    write_status_file()
-    # With no staff flows the folder may not exist (on disk or in git), and `git add` on a path
-    # that matches nothing fails.
-    for folder in (ap_deploy.STAFF_DIR, STATUS_DIR):
-        if os.path.isdir(os.path.join(FLOWS_DIR, folder)) or git('ls-files', folder).stdout.strip():
-            git('add', '-A', folder)
-    if git('diff', '--cached', '--quiet', check=False).returncode == 0:
-        log('export-staff: nothing to commit')
-    else:
-        git('commit', '--quiet', '-m', f'warehouse-made: nightly export {datetime.now():%Y-%m-%d}')
-        log(f'git commit {git("rev-parse", "--short", "HEAD").stdout.strip()}')
-    if push and git('rev-list', '--count', f'origin/{BRANCH}..HEAD').stdout.strip() != '0':
-        git('push', '--quiet', 'origin', f'HEAD:{BRANCH}')
-        log(f'git push origin {BRANCH}')
-
-
-def read_backup_status(path=None):
-    """key=value status the backup service writes (last_success, last_failure, ...); {} if none."""
-    try:
-        with open(path or BACKUP_STATUS_FILE, encoding='utf-8') as f:
-            lines = f.read().splitlines()
-    except OSError:
-        return {}
-    return {k: v for k, _, v in (line.partition('=') for line in lines) if k and v}
-
-
-def write_status_file():
-    """status/<target>.json: committed with the nightly export so the server's health is visible in
-    the repo even though nobody can reach the server itself."""
-    backup = read_backup_status()
-    status = {
-        'target': TARGET,
-        'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-        'backup': {k: backup.get(k) for k in ('last_result', 'last_success', 'last_success_file',
-                                                'last_failure', 'last_failure_reason')} if backup else None,
-        'managed': dict(sorted(_last_states.items())),
-    }
-    ap_deploy.write_json(os.path.join(FLOWS_DIR, STATUS_DIR, f'{TARGET}.json'), status)
-
-
 def check_release_upgrade(repo, target):
     """Hook for release.json image upgrades (backup, pull, restart). Not implemented yet: no-op."""
     return None
 
 
-def load_state():
-    try:
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def save_state(state):
-    os.makedirs(os.path.dirname(STATE_FILE) or '.', exist_ok=True)
-    with open(STATE_FILE, 'w') as f:
-        json.dump(state, f)
-
-
-def tick(export_now=False, push=True):
-    state = load_state()
+def tick():
     pull()
     check_release_upgrade(FLOWS_DIR, TARGET)
-    client = apply_managed()
-    today = datetime.now().strftime('%Y-%m-%d')
-    if export_now or (datetime.now().hour >= EXPORT_HOUR and state.get('lastExport') != today):
-        nightly_export(client, push=push)
-        save_state({**state, 'lastExport': today})
+    apply_managed()
 
 
 def ping_health(suffix=''):
@@ -228,14 +147,12 @@ def ping_health(suffix=''):
 def main():
     p = argparse.ArgumentParser(description='ap-sync helper loop')
     p.add_argument('--once', action='store_true')
-    p.add_argument('--export-now', action='store_true')
-    p.add_argument('--no-push', action='store_true')
     args = p.parse_args()
     log(f'ap-sync start: target={TARGET} repo={_safe_url(REPO_URL)} branch={BRANCH} every {INTERVAL / 60:g} min')
     last_error, repeats = None, 0
     while True:
         try:
-            tick(export_now=args.export_now, push=not args.no_push)
+            tick()
             if last_error:
                 log('recovered from the previous error')
             last_error, repeats = None, 0
@@ -254,7 +171,6 @@ def main():
                 return 1
         if args.once:
             return 0
-        args.export_now = False
         time.sleep(INTERVAL)
 
 

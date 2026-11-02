@@ -50,6 +50,6 @@ services:
 volumes:
   # rclone.conf (Drive token + obscured crypt passwords), mode 600, root only.
   backup_config:
-  # status file: last_success / last_failure timestamps, readable by other services.
+  # status file (last_success / last_failure, see `backup status`) and the backup/restore lock.
   backup_status:
   backup_local:

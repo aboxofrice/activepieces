@@ -4,13 +4,16 @@ Git-driven flow deploys. Flows built on the Mac are exported to the flows repo
 (`aboxofrice/activepieces-flows`); `ap-sync` on the server pulls the repo and applies them.
 Python 3 stdlib only.
 
+ap-sync is **pull-only**: it never commits or pushes, so its GitHub token needs read access only
+(fine-grained, Contents: Read on the flows repo). Flows staff build on the server are not exported
+to git; they live in the database and are protected by the encrypted Drive backups
+(`deploy/warehouse/compose.backup.yml`).
+
 ## Flows repo layout
 
 ```
 managed/<deploy-key>.json    # exported by `ap_deploy.py export`; git is the source of truth
-warehouse-made/<slug>.json   # staff flows, written nightly by ap-sync (read-only copy)
 deploy.json                  # per server: which managed flows exist there, and on/off
-status/<target>.json         # written nightly by ap-sync: backup last success/failure, managed flow states
 ```
 
 `deploy.json`:
@@ -22,19 +25,6 @@ status/<target>.json         # written nightly by ap-sync: backup last success/f
 Each flow file holds `deployKey`, `displayName`, `schemaVersion`, `notes`, the `trigger` step tree,
 and the derived `pieces` (name + version) and `connections` (names) it uses. Ids, owners,
 timestamps and sample data are stripped; keys are sorted so diffs stay clean.
-Staff exports add `warehouseFlowId` and `status`, with `deployKey: null`.
-
-Staff exports are **redacted** before they are committed: values that look like credentials are
-replaced with `<redacted-by-ap-sync>`: fields whose name ends in a credential word (`apiKey`,
-`accessToken`, `client_secret`, `X-SC-Pass`, `Authorization`; not `maxTokens`, `secretName`,
-`passwordResetUrl`), `Bearer …`/`Basic …` values, `?api_key=`/`?key=`/`?token=` query values,
-`user:password@` in URLs, `password = "…"` in code, known token formats (`sk-…`, `ghp_…`, `shpat_…`,
-`AKIA…`, `AIza…`), 32+ hex characters and other long random-looking strings. Kept: template
-references like `{{connections['x']}}`, ids that are the whole value of an id-named field
-(`orderId`, `spreadsheetId`, `folder_id`), and Google Sheets/Docs/Drive ids inside their URLs. The file then lists the touched fields under `redacted`, and
-ap-sync logs a `WARNING export-staff …` line naming the flow and step. A redacted export is history,
-not a working copy: move the credential into a connection on the server.
-
 ## Commands
 
 ```bash
@@ -48,10 +38,9 @@ python3 ap_deploy.py --repo ~/activepieces-flows export vin-request-email pdc-in
 python3 ap_deploy.py --repo <checkout> plan          # what apply would do
 python3 ap_deploy.py --repo <checkout> apply
 python3 ap_deploy.py --repo <checkout> status        # table: state, on/off, wanted, flow id
-python3 ap_deploy.py --repo <checkout> export-staff  # flows without a deployKey -> warehouse-made/
 
 # Helper loop (normally the ap-sync container)
-python3 ap_sync.py [--once] [--export-now] [--no-push]
+python3 ap_sync.py [--once]
 ```
 
 Exit codes: `0` ok, `1` something skipped/flagged/failed, `2` fatal (auth, missing deploy.json).
@@ -82,7 +71,7 @@ key `error`; a deploy.json that is not valid JSON stops the pass (logged, retrie
 | State | Meaning | Apply does |
 |---|---|---|
 | `new` | listed, not on the server | create in folder "Managed (from git)", import, publish, set on/off (default off) |
-| `changed` | file differs from `sourceHash`, or a previous apply did not finish | import, publish, set on/off |
+| `changed` | file differs from `sourceHash`, or a previous apply did not finish (see below) | import, publish, set on/off |
 | `in-sync` | nothing changed | only fixes on/off if it differs from deploy.json |
 | `drifted` | flow on the server no longer matches `deployHash` (edited there), or was turned off there | skips and flags; never overwrites, never turns back on |
 | `missing-deps` | a piece version or connection name is not on the server | skips and flags |
@@ -90,6 +79,13 @@ key `error`; a deploy.json that is not valid JSON stops the pass (logged, retrie
 | `error` | file missing or not a flow, bad deploy.json entry or key, or two flows share a deployKey | skips and flags |
 
 Any flagged flow that deploy.json wants off is still turned off (`pending: disable`).
+
+Interrupted applies: apply writes `applyingSourceHash` before IMPORT_FLOW and `applyingHash` (the
+imported version's hash) right after it, and clears both when the apply completes. If publish
+fails, the next pass sees a flow that still matches `applyingHash` and finishes the apply instead
+of flagging it as drifted. If the server rejects the import with an HTTP error, nothing was
+imported and the pending hash is cleared at once; on a timeout or connection error it is kept,
+because the import may have gone through.
 
 To resolve a drifted flow: export it into git (accept the edit), or clear `deployHash` in its
 metadata (let git win on the next apply). For a flow turned off on the server, see above.
@@ -106,12 +102,11 @@ metadata (let git win on the next apply). For a flow turned off on the server, s
 | `AP_DEPLOY_TARGET` | plan/apply/status, ap-sync | key in deploy.json (ap-sync default `warehouse`) |
 | `AP_FLOWS_REPO` | ap_deploy.py | repo checkout (default `.`); `--repo` overrides |
 | `FLOWS_REPO_URL`, `FLOWS_BRANCH` | ap-sync | HTTPS clone URL, default branch `main` |
-| `GITHUB_TOKEN` | ap-sync | fine-grained token, contents read/write on the flows repo only; passed by a credential helper scoped to the `FLOWS_REPO_URL` host, never written to `.git/config` |
+| `GITHUB_TOKEN` | ap-sync | fine-grained token, **read-only** (Contents: Read) on the flows repo; passed by a credential helper scoped to the `FLOWS_REPO_URL` host, never written to `.git/config`. Empty for a public repo |
 | `SYNC_HEALTHCHECK_URL` | ap-sync | optional healthchecks.io-style URL: GET after every good pass, `<url>/fail` after a failed one (separate check from the backup's `HEALTHCHECK_URL`) |
-| `BACKUP_STATUS_FILE` | ap-sync | default `/backup-status/status` (backup service's status volume, read-only) |
-| `FLOWS_DIR`, `STATE_FILE` | ap-sync | default `/data/flows`, `/data/ap-sync-state.json` (named volume) |
-| `SYNC_INTERVAL_MINUTES` | ap-sync | default 5 (an invalid value logs a warning and uses the default; so does `EXPORT_HOUR`) |
-| `EXPORT_HOUR`, `TZ` | ap-sync | nightly staff export runs on the first pass at/after this local hour |
+| `FLOWS_DIR` | ap-sync | checkout, default `/data/flows` (named volume); reset to `origin/<branch>` every pass |
+| `SYNC_INTERVAL_MINUTES` | ap-sync | default 5 (an invalid value logs a warning and uses the default) |
+| `TZ` | ap-sync | log timestamps only |
 
 ## Container
 
@@ -133,5 +128,5 @@ Tests (no server needed): `cd tools/ap-deploy && python3 -m unittest discover -s
   invitation flow). If someone changes the admin password in the UI, ap-sync logs
   `sign-in as … was rejected` until `ADMIN_PASSWORD` in the server `.env` is updated and the
   installer is re-run (Community has no password reset).
-- Redaction is pattern-based: it errs on the side of hiding values, and can still miss a secret in
-  an unusual shape. Keep credentials in connections.
+- Staff-built flows have no git history; to see or recover an older version, restore a backup
+  (onto a test instance if only one flow is needed).

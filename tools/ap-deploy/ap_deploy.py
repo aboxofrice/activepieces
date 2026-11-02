@@ -4,7 +4,7 @@ Git-driven flow deploys for Activepieces.
 
 Flows Vu builds on the Mac are exported to `managed/<deploy-key>.json` in a checkout of the flows
 repo; a target server applies them from there, matching flows by `metadata.deployKey`. Flows without
-a deploy key belong to staff: apply never touches them, export-staff copies them to `warehouse-made/`.
+a deploy key belong to staff: apply never touches them (they are protected by the database backups).
 
 Usage:
     ap_deploy.py export <deploy-key> --flow-id <id> | --name "<display name>"   # first export
@@ -12,7 +12,6 @@ Usage:
     ap_deploy.py plan                      # what apply would do on AP_DEPLOY_TARGET
     ap_deploy.py apply                     # do it
     ap_deploy.py status                    # state of every managed flow on the target
-    ap_deploy.py export-staff              # target flows without a deploy key -> warehouse-made/
 
 Env (target):  AP_URL, AP_PROJECT_ID, and AP_API_KEY or AP_EMAIL + AP_PASSWORD; AP_DEPLOY_TARGET.
 Env (source, export only): AP_SOURCE_URL / AP_SOURCE_API_KEY / AP_SOURCE_EMAIL / AP_SOURCE_PASSWORD /
@@ -24,7 +23,6 @@ import copy
 import fcntl
 import hashlib
 import json
-import math
 import os
 import re
 import sys
@@ -36,7 +34,6 @@ import urllib.request
 from datetime import datetime, timezone
 
 MANAGED_DIR = 'managed'
-STAFF_DIR = 'warehouse-made'
 DEPLOY_FILE = 'deploy.json'
 MANAGED_FOLDER = 'Managed (from git)'
 SCHEMA_VERSION = '22'
@@ -50,11 +47,15 @@ KEY_RE = re.compile(r'[a-z0-9][a-z0-9-]*')
 HASH_VERSION = 2
 # States that need a human; status exits 1 and ap-sync logs them.
 FLAGGED_STATES = ('error', 'drifted', 'missing-deps')
-REDACTED = '<redacted-by-ap-sync>'
 
 
 class ApiError(Exception):
-    pass
+    """status is the HTTP status when the server answered with an error; None when the request
+    may not have reached it or its answer was lost (connection error, timeout, unreadable body)."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 class Client:
@@ -101,9 +102,11 @@ class Client:
         except ValueError:
             raise ApiError(f'{method} {path.split("?")[0]}: response is not JSON (proxy or error page?)') from None
         except urllib.error.HTTPError as e:
-            raise ApiError(f'{method} {path.split("?")[0]} -> {e.code}: {e.read().decode(errors="replace")[:500]}') from None
+            raise ApiError(f'{method} {path.split("?")[0]} -> {e.code}: {e.read().decode(errors="replace")[:500]}', status=e.code) from None
         except urllib.error.URLError as e:
             raise ApiError(f'{method} {self.url}: {e.reason}') from None
+        except OSError as e:  # timeouts and resets while reading the response
+            raise ApiError(f'{method} {self.url}: {type(e).__name__}: {e}') from None
 
     def paged(self, path, **query):
         query = {'projectId': self.project_id, 'limit': 100, **query}
@@ -284,10 +287,6 @@ def load_deploy_config(repo, target):
     if not isinstance(config[target], dict):
         raise ApiError(f'{DEPLOY_FILE} "{target}" must be an object of deploy keys')
     return config[target]
-
-
-def slugify(text):
-    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-') or 'flow'
 
 
 # ---------- export (source instance) ----------
@@ -526,10 +525,13 @@ def _apply_one(client, rec):
         _update_metadata(client, client.flow(flow['id']), pending)
     try:
         client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
-    except Exception:
-        # Nothing was imported, so there is no half-applied version to finish. Leaving the pending
-        # hash would let a later staff edit be mistaken for our import and overwritten.
-        _update_metadata(client, client.flow(flow['id']), {}, drop=('applyingSourceHash', 'applyingHash'))
+    except ApiError as e:
+        # The server answered with an error, so nothing was imported: drop the pending hash, or a
+        # later staff edit could be mistaken for our import and overwritten. On a timeout or
+        # connection error (no status) the import may have gone through, so keep it: the next pass
+        # then finishes the apply instead of flagging our own import as drift.
+        if e.status is not None:
+            _update_metadata(client, client.flow(flow['id']), {}, drop=('applyingSourceHash', 'applyingHash'))
         raise
     imported = client.flow(flow['id'])
     _update_metadata(client, imported, {'applyingHash': target_hash(imported)})
@@ -583,158 +585,6 @@ def _any_flagged(records):
     return any(r.get('error') or r['state'] in FLAGGED_STATES for r in records)
 
 
-# ---------- export-staff (target instance) ----------
-
-def export_staff(client, repo, log=print):
-    """Mirror every flow without a deploy key into warehouse-made/; returns the paths changed."""
-    out_dir = os.path.join(repo, STAFF_DIR)
-    flows = sorted((f for f in client.flows() if not (f.get('metadata') or {}).get('deployKey')),
-                   key=lambda f: (f['created'], f['id']))
-    used, changed, keep = set(), [], set()
-    for f in flows:
-        slug = slugify(f['version']['displayName'])
-        if slug in used:
-            slug = f'{slug}-{f["id"][:6].lower()}'
-        used.add(slug)
-        flow_def = normalize_flow(f['version'], None)
-        flow_def['trigger'], found = redact_secrets(flow_def['trigger'])
-        flow_def['notes'], found_notes = redact_secrets(flow_def['notes'])
-        found += found_notes
-        if found:
-            flow_def['redacted'] = sorted({f'{step}: {where}' for step, where in found})
-            log(f'WARNING export-staff {slug}: redacted {len(found)} value(s) that look like credentials '
-                f'(flow "{f["version"]["displayName"]}": {", ".join(flow_def["redacted"])}); '
-                'they should live in a connection')
-        flow_def.update(warehouseFlowId=f['id'], status=f['status'])
-        path = os.path.join(out_dir, f'{slug}.json')
-        keep.add(path)
-        if write_json(path, flow_def):
-            changed.append(path)
-            log(f'export-staff {slug}: written')
-    if os.path.isdir(out_dir):
-        for name in sorted(os.listdir(out_dir)):
-            path = os.path.join(out_dir, name)
-            if name.endswith('.json') and path not in keep:
-                os.remove(path)
-                changed.append(path)
-                log(f'export-staff {name[:-5]}: removed (flow gone or now managed)')
-    log(f'export-staff: {len(flows)} staff flows, {len(changed)} files changed')
-    return changed
-
-
-def redact_secrets(obj):
-    """Copy of obj with values that look like credentials replaced by REDACTED.
-
-    Staff paste API keys straight into step inputs (HTTP headers, URLs, code); the nightly export
-    must not push them to GitHub. Returns (copy, [(step name, field path), ...]). Template
-    references such as {{connections['x']}} or {{trigger.body.token}} are not secrets and are kept."""
-    found = []
-
-    def visit(value, step, path, key):
-        if isinstance(value, dict):
-            if isinstance(value.get('name'), str) and 'type' in value and 'settings' in value:
-                step, path = value['name'], ''
-            return {k: visit(v, step, f'{path}.{k}' if path else k, k) for k, v in value.items()}
-        if isinstance(value, list):
-            return [visit(v, step, f'{path}[{i}]', key) for i, v in enumerate(value)]
-        if not isinstance(value, str) or not value:
-            return value
-        if isinstance(key, str) and _is_secret_key(key) and not _only_templates(value):
-            found.append((step, path))
-            return REDACTED
-        if isinstance(key, str) and ID_KEY_RE.search(key) and ID_VALUE_RE.fullmatch(value) \
-                and not KNOWN_TOKEN_RE.fullmatch(value):
-            return value  # a record id (order, sheet, folder, ...) in an id-named field
-        cleaned = _redact_text(value)
-        if cleaned != value:
-            found.append((step, path))
-        return cleaned
-
-    return visit(copy.deepcopy(obj), 'flow', '', None), found
-
-
-def _is_secret_key(key):
-    """Field names whose last word is a credential noun: apiKey, X-SC-Pass, client_secret,
-    accessToken. Not maxTokens, tokenLimit, secretName or passwordResetUrl."""
-    words = [w.lower() for w in KEY_WORD_RE.findall(key)]
-    if not words:
-        return False
-    last, prev = words[-1], (words[-2] if len(words) > 1 else '')
-    return last in SECRET_LAST_WORDS or (last == 'key' and prev in KEY_PREFIXES) or ''.join(words[-2:]) in SECRET_LAST_WORDS
-
-
-def _is_secret_param(name):
-    """Query parameter names judged by their last word, like field names (api_token, apiToken,
-    refresh_token, auth_key), plus bare credential names (key, sig); not keyword or monkey."""
-    words = [w.lower() for w in KEY_WORD_RE.findall(name)]
-    return bool(words) and (words[-1] in BARE_SECRET_PARAMS or words[-1] in SECRET_LAST_WORDS or _is_secret_key(name))
-
-
-def _only_templates(value):
-    rest = TEMPLATE_RE.sub('', value)
-    return not re.sub(r'(?i)\b(bearer|basic|token)\b', '', rest).strip()
-
-
-def _redact_text(text):
-    text = BEARER_RE.sub(lambda m: m.group(1) + REDACTED, text)
-    text = URL_USERINFO_RE.sub(lambda m: m.group(1) + REDACTED + '@', text)
-    text = QUERY_PARAM_RE.sub(lambda m: m.group(1) + REDACTED if _is_secret_param(m.group(2)) else m.group(0), text)
-    text = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + REDACTED + m.group(2), text)
-    text = KNOWN_TOKEN_RE.sub(REDACTED, text)
-    keep = [m.span(2) for m in GOOGLE_ID_RE.finditer(text)]
-    text = AWS_SECRET_RE.sub(lambda m: m.group(0) if any(a <= m.start() < b for a, b in keep) else REDACTED, text)
-    keep = [m.span(2) for m in GOOGLE_ID_RE.finditer(text)]
-
-    def long_token(m):
-        if any(a <= m.start() < b for a, b in keep):
-            return m.group(0)
-        return REDACTED if _looks_random(m.group(0)) else m.group(0)
-    return LONG_TOKEN_RE.sub(long_token, text)
-
-
-def _looks_random(s):
-    if HEX_RE.fullmatch(s):
-        return True  # 32+ hex chars in free text: API keys and webhook secrets look like this
-    if not (re.search(r'[0-9]', s) and re.search(r'[A-Za-z]', s)):
-        return False
-    parts = re.split(r'[-_]', s)
-    if len(parts) > 2 and max(len(p) for p in parts) < 16:
-        return False  # SKUs, slugs, part numbers, UUIDs: short dash/underscore-separated words
-    classes = sum(bool(re.search(c, s)) for c in ('[a-z]', '[A-Z]', '[0-9]'))
-    if classes < 3 and len(s) < 40:
-        return False
-    counts = {c: s.count(c) for c in set(s)}
-    entropy = -sum(n / len(s) * math.log2(n / len(s)) for n in counts.values())
-    return entropy >= 3.5
-
-
-KEY_WORD_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+')
-SECRET_LAST_WORDS = {'password', 'passwd', 'pass', 'pwd', 'passphrase', 'passcode', 'secret', 'token',
-                     'authorization', 'auth', 'credential', 'credentials', 'apikey', 'signature', 'privatekey', 'cookie'}
-KEY_PREFIXES = {'api', 'private', 'access', 'secret', 'app', 'client', 'license', 'subscription', 'signing', 'encryption', 'auth'}
-# Record ids are kept when they are the whole value of a field named like an id.
-ID_KEY_RE = re.compile(r'^(?:[Ii][Dd]s?|uuid|UUID)$|[_-](?:[Ii][Dd]s?|uuid|UUID)$|[a-z0-9](?:Id|ID|Ids|IDs|Uuid)$')
-ID_VALUE_RE = re.compile(r'[A-Za-z0-9_-]{8,}')
-TEMPLATE_RE = re.compile(r'\{\{.*?\}\}', re.S)
-BEARER_RE = re.compile(r'(?i)\b((?:bearer|basic)\s+)(?!\{\{)[A-Za-z0-9._~+/=-]{8,}')
-URL_USERINFO_RE = re.compile(r'''(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@'"{}]+:)(?!\{\{)[^@\s/'"]+@''')
-# Query parameters; the name decides (see _is_secret_param): ?key=, ?api_token=, ?apiToken=, ?refresh_token=.
-QUERY_PARAM_RE = re.compile(r'''([?&]([A-Za-z0-9_-]+)=)(?!\{\{)([^&#\s"']+)''')
-BARE_SECRET_PARAMS = {'key', 'sig', 'token', 'auth', 'secret', 'pass', 'password', 'pwd', 'signature'}
-# password = "..." / apiKey: '...' inside code steps or free text.
-ASSIGNED_SECRET_RE = re.compile(
-    r'''(?i)((?:passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*)(["'])(?!\{\{)[^"'\n]{4,}\2''')
-KNOWN_TOKEN_RE = re.compile(
-    r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}'
-    r'|AKIA[0-9A-Z]{16}|shp(?:at|ss|ca|pa)_[0-9a-fA-F]{32}|AIza[0-9A-Za-z_-]{35})\b')
-LONG_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])')
-# AWS secret access keys: exactly 40 chars of base64 alphabet (may contain / and +).
-AWS_SECRET_RE = re.compile(r'(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]*[0-9])(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])')
-HEX_RE = re.compile(r'[0-9a-fA-F]{32,}')
-# Google Sheets / Docs / Drive ids inside their URLs are document ids, not credentials.
-GOOGLE_ID_RE = re.compile(r'(https?://(?:docs|drive|sheets)\.google\.com/[^\s"\']*?(?:/d/|/folders/|[?&]id=))([A-Za-z0-9_-]{20,})')
-
-
 # ---------- CLI ----------
 
 def main(argv=None):
@@ -748,7 +598,6 @@ def main(argv=None):
     for name in ('plan', 'apply', 'status'):
         s = sub.add_parser(name)
         s.add_argument('--target', default=os.environ.get('AP_DEPLOY_TARGET'))
-    sub.add_parser('export-staff', help='target flows without a deploy key -> warehouse-made/')
     args = p.parse_args(argv)
     repo = os.path.abspath(args.repo)
     try:
@@ -756,9 +605,6 @@ def main(argv=None):
             export(Client.from_env('AP_SOURCE_'), repo, args.keys, args.flow_id, args.name)
             return 0
         client = Client.from_env()
-        if args.cmd == 'export-staff':
-            export_staff(client, repo)
-            return 0
         if not args.target:
             raise ApiError('set AP_DEPLOY_TARGET or --target')
         if args.cmd == 'status':

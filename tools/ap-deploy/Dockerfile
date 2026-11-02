@@ -5,6 +5,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY ap_deploy.py ap_sync.py ./
-ENV PYTHONUNBUFFERED=1 FLOWS_DIR=/data/flows STATE_FILE=/data/ap-sync-state.json
+ENV PYTHONUNBUFFERED=1 FLOWS_DIR=/data/flows
 VOLUME /data
 ENTRYPOINT ["python3", "/app/ap_sync.py"]

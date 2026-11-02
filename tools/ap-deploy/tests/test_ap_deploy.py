@@ -235,20 +235,40 @@ class InterruptedApplyTests(unittest.TestCase):
         self.ap.staff_edit(self.fid, 'return 99')
         self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
 
-    def test_failed_import_clears_pending_so_staff_edit_is_drift(self):
+    def test_http_error_on_import_clears_pending_so_staff_edit_is_drift(self):
+        self.failed = True  # this test is about IMPORT_FLOW failing, not publish
         real = self.ap.operate
 
-        def import_fails(flow_id, op_type, request):
+        def import_rejected(flow_id, op_type, request):
             if op_type == 'IMPORT_FLOW':
-                raise ap_deploy.ApiError('POST /v1/flows -> 500: import rejected')
+                raise ap_deploy.ApiError('POST /v1/flows -> 500: import rejected', status=500)
             return real(flow_id, op_type, request)
-        self.ap.operate = import_fails
+        self.ap.operate = import_rejected
         r = apply(self.ap, self.repo)['a']
         self.assertIn('import rejected', r['error'])
         self.assertNotIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
         self.ap.operate = real
         self.ap.staff_edit(self.fid, 'return 2')  # same content as the git version
         self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
+    def test_timeout_on_import_keeps_pending_and_finishes_next_pass(self):
+        self.failed = True  # this test is about IMPORT_FLOW failing, not publish
+        real = self.ap.operate
+
+        def import_then_timeout(flow_id, op_type, request):
+            result = real(flow_id, op_type, request)
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST http://fake: timed out')  # server imported, answer lost
+            return result
+        self.ap.operate = import_then_timeout
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('timed out', r['error'])
+        self.assertIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
 
     def test_died_between_import_and_recording_hash(self):
         apply(self.ap, self.repo)
@@ -366,121 +386,6 @@ class IsolationTests(unittest.TestCase):
         recs = apply(self.ap, self.repo)
         self.assertIn('boom', recs['good']['error'])
         self.assertTrue(recs['other'].get('applied'))
-
-
-class RedactionTests(unittest.TestCase):
-    def redact(self, step_input=None, code=None):
-        step = {'name': 'step_1', 'type': 'CODE' if code else 'PIECE',
-                'settings': {'input': step_input or {}, **({'sourceCode': {'code': code}} if code else {})}, 'nextAction': None}
-        return ap_deploy.redact_secrets(step)
-
-    def test_authorization_header(self):
-        out, found = self.redact({'headers': {'Authorization': 'Bearer abcDEF123456789xyz'}})
-        self.assertEqual(out['settings']['input']['headers']['Authorization'], ap_deploy.REDACTED)
-        self.assertEqual(found, [('step_1', 'settings.input.headers.Authorization')])
-
-    def test_secret_named_keys(self):
-        out, found = self.redact({'api_key': 'abc123', 'client_secret': 'x' * 10, 'Password': 'hunter2', 'name': 'keep me'})
-        inp = out['settings']['input']
-        self.assertEqual([inp['api_key'], inp['client_secret'], inp['Password']], [ap_deploy.REDACTED] * 3)
-        self.assertEqual(inp['name'], 'keep me')
-        self.assertEqual(len(found), 3)
-
-    def test_templates_kept(self):
-        inp = {'auth': "{{connections['smtp']}}", 'token': '{{trigger.body.token}}',
-               'headers': {'Authorization': "Bearer {{connections['api'].access_token}}"}}
-        out, found = self.redact(inp)
-        self.assertEqual(out['settings']['input'], inp)
-        self.assertEqual(found, [])
-
-    def test_code_and_free_text(self):
-        code = 'const apiKey = "sk-live-abcdefghijklmnop1234"; const n = 5; // 0b1c2d3e-1111-2222-3333-444455556666'
-        out, found = self.redact(code=code)
-        text = out['settings']['sourceCode']['code']
-        self.assertNotIn('sk-live', text)
-        self.assertIn('0b1c2d3e-1111-2222-3333-444455556666', text)  # UUIDs are ids, kept
-        self.assertEqual(len(found), 1)
-
-    def test_high_entropy_token_in_body(self):
-        out, found = self.redact({'body': 'key=Zk3q9XbT2mLpW8vR5nY1cJ7hF4dG6sA0 id=8f14e45fceea167a5a36dedd4bea2543'})
-        self.assertEqual(out['settings']['input']['body'], f'key={ap_deploy.REDACTED} id={ap_deploy.REDACTED}')
-
-    def test_ordinary_values_untouched(self):
-        inp = {'subject': 'VIN request for order 12345', 'to': 'buyer@example.com',
-               'url': 'https://api.example.com/v1/orders?status=open', 'sku': 'BRK-PAD-2019-FORD-F150-FRONT-CERAMIC'}
-        out, found = self.redact(inp)
-        self.assertEqual(out['settings']['input'], inp)
-        self.assertEqual(found, [])
-
-    def test_secrets_in_urls_and_odd_fields(self):
-        R = ap_deploy.REDACTED
-        hexkey = '8f14e45fceea167a5a36dedd4bea2543'
-        cases = {
-            'https://api.example.com/v1/items?api_key=abc123&limit=5': f'https://api.example.com/v1/items?api_key={R}&limit=5',
-            'https://maps.example.com/geo?q=x&key=AbC9xYz': f'https://maps.example.com/geo?q=x&key={R}',
-            'https://x.example.com/feed?token=s3cr3t#top': f'https://x.example.com/feed?token={R}#top',
-            'sftp://pdcuser:hunter2@sftp.example.com/inbox': f'sftp://pdcuser:{R}@sftp.example.com/inbox',
-            f'X-Shopify-Access-Token shpat_{hexkey}': f'X-Shopify-Access-Token {R}',
-            f'https://hooks.example.com/services/{hexkey}/run': f'https://hooks.example.com/services/{R}/run',
-        }
-        for text, want in cases.items():
-            out, found = self.redact({'url': text})
-            self.assertEqual(out['settings']['input']['url'], want, text)
-            self.assertEqual(len(found), 1, text)
-        for key in ('X-SC-Pass', 'x_api_key', 'APIKey', 'accessToken', 'client_secret', 'sftpPassword', 'auth'):
-            out, found = self.redact({'headers': {key: 'ab12'}})
-            self.assertEqual(out['settings']['input']['headers'][key], R, key)
-
-    def test_round3_leaks(self):
-        R = ap_deploy.REDACTED
-        for q in ('api_token', 'auth_token', 'apiToken', 'refresh_token', 'client_secret', 'x_sig'):
-            out, found = self.redact({'url': f'https://api.example.com/v1?a=1&{q}=v1&b=2'})
-            self.assertEqual(out['settings']['input']['url'], f'https://api.example.com/v1?a=1&{q}={R}&b=2', q)
-        for key in ('auth_key', 'Cookie', 'session-cookie'):
-            out, _ = self.redact({'headers': {key: 'abc'}})
-            self.assertEqual(out['settings']['input']['headers'][key], R, key)
-        aws = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
-        out, found = self.redact({'note': f'secret {aws} end'})
-        self.assertEqual(out['settings']['input']['note'], f'secret {R} end')
-
-    def test_round3_no_false_positives(self):
-        inp = {'url': 'https://example.com/search?keyword=pads&monkey=1&page=2',
-               'path': '/usr/src/app/cache/v11/common/node_modules/x/index.js'}
-        out, found = self.redact(inp)
-        self.assertEqual(out['settings']['input'], inp)
-
-    def test_no_false_positives(self):
-        hexid = '8f14e45fceea167a5a36dedd4bea2543'
-        sheet = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
-        inp = {
-            'maxTokens': '4096', 'tokenLimit': '1000', 'secretName': 'prod-db-creds',
-            'passwordResetUrl': 'https://example.com/reset', 'authType': 'none', 'bypass': 'yes',
-            'spreadsheetId': sheet, 'folder_id': '0B7_abcdEFGHijklMNOPqrstUVwxyz12', 'orderId': hexid,
-            'sheetUrl': f'https://docs.google.com/spreadsheets/d/{sheet}/edit#gid=0',
-            'driveUrl': f'https://drive.google.com/drive/folders/{sheet}',
-            'openUrl': f'https://drive.google.com/open?id={sheet}',
-            'webhook': 'https://example.com/hooks?keyword=brakes&page=2',
-            'valid': 'true',
-        }
-        out, found = self.redact(inp)
-        self.assertEqual(out['settings']['input'], inp)
-        self.assertEqual(found, [])
-
-    def test_hex_in_non_id_field_is_redacted(self):
-        out, found = self.redact({'note': '8f14e45fceea167a5a36dedd4bea2543'})
-        self.assertEqual(out['settings']['input']['note'], ap_deploy.REDACTED)
-
-    def test_export_staff_writes_redacted_and_lists_fields(self):
-        ap, repo = FakeAP(), Repo(self)
-        fid = ap.request('POST', '/v1/flows', {'displayName': 'Staff flow', 'metadata': None})['id']
-        ap._flows[fid]['version']['trigger']['nextAction']['settings']['input'] = {'apiKey': 'abcd1234secret'}
-        logs = []
-        ap_deploy.export_staff(ap, repo.path, log=logs.append)
-        data = ap_deploy.read_json(os.path.join(repo.path, ap_deploy.STAFF_DIR, 'staff-flow.json'))
-        self.assertEqual(data['trigger']['nextAction']['settings']['input']['apiKey'], ap_deploy.REDACTED)
-        self.assertEqual(data['redacted'], ['step_1: settings.input.apiKey'])
-        self.assertTrue(any('WARNING' in m and 'step_1' in m for m in logs))
-        self.assertNotIn('abcd1234secret', json.dumps(data))
 
 
 if __name__ == '__main__':
