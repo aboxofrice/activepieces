@@ -8,6 +8,9 @@ ENV LANG=en_US.UTF-8 \
 # Install all system dependencies in a single layer with cache mounts
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    # Bullseye security updates moved to archive.debian.org after its LTS ended (Aug 2026); the
+    # deb.debian.org index still lists them but the files 404.
+    sed -i 's|http://deb.debian.org/debian-security|http://archive.debian.org/debian-security|' /etc/apt/sources.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         openssh-client \
