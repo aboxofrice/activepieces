@@ -25,8 +25,43 @@ deploy.json                  # per server: which managed flows exist there, and 
 Optional per flow: `"overwrite": "<any new string>"` (see "To resolve a drifted flow").
 
 Each flow file holds `deployKey`, `displayName`, `schemaVersion`, `notes`, the `trigger` step tree,
-and the derived `pieces` (name + version) and `connections` (names) it uses. Ids, owners,
-timestamps and sample data are stripped; keys are sorted so diffs stay clean.
+and the derived `pieces` (name + version), `connections` (names) and `flowRefs` (deploy keys of
+other managed flows it references) it uses. Ids, owners, timestamps and sample data are stripped;
+keys are sorted so diffs stay clean.
+
+## Cross-flow references
+
+Flow ids differ per server, so a flow that calls another (the PDC orchestrator fires each worker at
+`<url>/api/v1/webhooks/<flow id>`; a subflows "Call Flow" step stores the callee's `externalId`)
+would break when apply creates the callee with a new id. Export therefore writes, in every string
+of the step tree:
+
+| Source value | Written as | Apply resolves to |
+|---|---|---|
+| id of a flow carrying a deployKey | `{{ap-flow:<key>}}` | that flow's id on the target |
+| externalId of such a flow | `{{ap-flow-external:<key>}}` | its externalId on the target |
+| the source's own URL (`AP_SOURCE_URL`, localhost = 127.0.0.1, plus any `--base-url`) | `{{ap-base-url}}` | `AP_DEPLOY_BASE_URL`, else `AP_URL` |
+
+Only whole tokens match (an id inside a longer word, or `http://localhost:80801`, is left alone).
+Export warns when a flow still contains the id of a source flow without a deployKey: export that
+flow first, then re-export the one referencing it.
+
+`{{ap-base-url}}` resolves to ap-sync's `AP_URL`, `http://activepieces:<port>`: the compose service
+name, which resolves from inside the app container where the engine runs. It is used rather than
+`AP_FRONTEND_URL` because the LAN address can change (DHCP) and the call never leaves the Docker
+network. Set `AP_DEPLOY_BASE_URL` to override.
+
+Apply:
+- creates every new flow (empty) before importing any, so flows that reference each other resolve
+  in one pass whatever the order, cycles included;
+- defers a flow whose reference names a key that is not on the server and not being created this
+  pass (not in deploy.json, or itself flagged): `missing-deps`, `references flow <key>, not on this
+  server yet ...`; flows referencing a deferred flow are deferred too. The next pass retries;
+- records what it resolved to (`deployRefs`, `deployBaseUrl` in the flow metadata) and hashes the
+  target flow in placeholder form (`hashVersion` 3), using both the current ids and the recorded
+  ones. So a referenced flow that is recreated with a new id, or a new base URL, is not drift: the
+  referencing flow shows `changed` (`a referenced flow or the base URL changed ...`) and is
+  re-imported with the new values. A staff edit of the flow is still drift.
 ## Commands
 
 ```bash
@@ -58,7 +93,7 @@ Hashes leave out `schemaVersion`. After an image upgrade Activepieces migrates f
 place (same version id, newer `schemaVersion`, sometimes a rewritten trigger); apply recognises
 that (same `deployVersionId`, newer schema) and re-records the baseline instead of flagging drift.
 A staff edit always creates a new version id, so it is still flagged. Metadata written by an older
-ap-deploy (`hashVersion` 1) is compared the old way once and then re-recorded.
+ap-deploy (`hashVersion` 1 or 2) is compared the old way once and then re-recorded.
 
 `"enabled": false` in deploy.json always wins: it turns the flow off even when the flow is
 drifted, missing deps or its file is broken. The other way round is not automatic: if a flow
@@ -117,6 +152,7 @@ To resolve a drifted flow without reaching the server:
 | `AP_PROJECT_ID` | target | optional with email/password (taken from sign-in); required with an API key |
 | `AP_SOURCE_*` | `export` | same names with `AP_SOURCE_` prefix; each falls back to the `AP_*` one |
 | `AP_DEPLOY_TARGET` | plan/apply/status, ap-sync | key in deploy.json (ap-sync default `warehouse`) |
+| `AP_DEPLOY_BASE_URL` | apply | what `{{ap-base-url}}` resolves to; default `AP_URL` (see "Cross-flow references") |
 | `AP_FLOWS_REPO` | ap_deploy.py | repo checkout (default `.`); `--repo` overrides |
 | `FLOWS_REPO_URL`, `FLOWS_BRANCH` | ap-sync | HTTPS clone URL, default branch `main` |
 | `GITHUB_TOKEN` | ap-sync | fine-grained token, **read-only** (Contents: Read) on the flows repo; passed by a credential helper scoped to the `FLOWS_REPO_URL` host, never written to `.git/config`. Empty for a public repo |

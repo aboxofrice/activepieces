@@ -72,7 +72,7 @@ class FakeAP:
         assert (method, path) == ('POST', '/v1/flows')
         fid = self._id('flow')
         vid = self._id('ver')
-        self._flows[fid] = {'id': fid, 'status': 'DISABLED', 'metadata': body.get('metadata'), 'publishedVersionId': None,
+        self._flows[fid] = {'id': fid, 'externalId': f'ext-{fid}', 'status': 'DISABLED', 'metadata': body.get('metadata'), 'publishedVersionId': None,
                             'created': '2026-01-01', 'version': {'id': vid, 'state': 'DRAFT', 'displayName': body['displayName'],
                                                                 'schemaVersion': '22', 'notes': [], 'trigger': make_trigger()}}
         self.calls.append(('create', fid))
@@ -102,6 +102,9 @@ class FakeAP:
         trigger = copy.deepcopy(f['version']['trigger'])
         trigger['nextAction']['settings']['sourceCode']['code'] = code
         f['version'] = dict(f['version'], id=self._id('ver'), state='DRAFT', trigger=trigger)
+
+    def delete(self, flow_id):
+        del self._flows[flow_id]
 
     def migrate_in_place(self, flow_id, new_schema='23'):
         """What flow-version-migration.service does on an image upgrade: same version row, new schema."""
@@ -523,3 +526,170 @@ class HiddenPieceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ---------- cross-flow references ----------
+
+def make_ref_def(key, code_input, display=None):
+    """A flow whose code step carries code_input (where placeholders go)."""
+    d = make_def(key)
+    d['displayName'] = display or key.title()
+    d['trigger']['nextAction']['settings']['input'] = code_input
+    d['flowRefs'] = ap_deploy.flow_refs_used(d['trigger'])
+    return d
+
+
+def code_input_of(ap, key):
+    return flow_of(ap, key)['version']['trigger']['nextAction']['settings']['input']
+
+
+class PlaceholderTests(unittest.TestCase):
+    def setUp(self):
+        self.flows = [
+            {'id': 'Spj2MffBKnLaiMwA4YU4G', 'externalId': '4I33ClMFWq52RZ1gFfLhJ', 'metadata': {'deployKey': 'orch'}},
+            {'id': 'aXW3xj7wPLlHItqIhNnmA', 'externalId': 'eJc9JrDzMtyzp428BWi01', 'metadata': {'deployKey': 'worker'}},
+            {'id': 'D628ea8nSzXlcB7x8VS8s', 'externalId': 'icD513dzEkNtgVADrah1v', 'metadata': None},
+        ]
+        self.refs = ap_deploy.source_refs(self.flows, ['http://localhost:8080/'])
+
+    def test_ids_externals_and_base_url_become_placeholders(self):
+        obj = {'apUrl': 'http://localhost:8080', 'url': 'http://127.0.0.1:8080/api/v1/webhooks/aXW3xj7wPLlHItqIhNnmA/sync',
+               'centers': [{'flowId': 'aXW3xj7wPLlHItqIhNnmA'}], 'flow': {'externalId': 'eJc9JrDzMtyzp428BWi01'},
+               'code': "fetch(`${base}/webhooks/aXW3xj7wPLlHItqIhNnmA`)"}
+        out = ap_deploy.to_placeholders(obj, self.refs)
+        self.assertEqual(out['apUrl'], '{{ap-base-url}}')
+        self.assertEqual(out['url'], '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}/sync')
+        self.assertEqual(out['centers'][0]['flowId'], '{{ap-flow:worker}}')
+        self.assertEqual(out['flow']['externalId'], '{{ap-flow-external:worker}}')
+        self.assertIn('{{ap-flow:worker}}', out['code'])
+        self.assertEqual(ap_deploy.flow_refs_used(out), ['worker'])
+
+    def test_partial_matches_and_unmanaged_flows_are_left_alone(self):
+        obj = {'a': 'xaXW3xj7wPLlHItqIhNnmA', 'b': 'http://localhost:80801/x', 'c': 'http://localhost:8080.example.com',
+               'd': 'D628ea8nSzXlcB7x8VS8s'}
+        self.assertEqual(ap_deploy.to_placeholders(obj, self.refs), obj)
+        self.assertEqual([f['id'] for f in ap_deploy.unmanaged_refs(obj, self.flows)], ['D628ea8nSzXlcB7x8VS8s'])
+
+    def test_resolve_round_trip_and_missing(self):
+        obj = {'u': '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}', 'e': '{{ap-flow-external:worker}}', 'm': '{{ap-flow:gone}}'}
+        refs = {'keys': {'worker': {'id': 'NEWID', 'externalId': 'NEWEXT'}}, 'base_url': 'http://activepieces:8080'}
+        out, missing = ap_deploy.resolve_placeholders(obj, refs)
+        self.assertEqual(out['u'], 'http://activepieces:8080/api/v1/webhooks/NEWID')
+        self.assertEqual(out['e'], 'NEWEXT')
+        self.assertEqual(out['m'], '{{ap-flow:gone}}')
+        self.assertEqual(missing, ['gone'])
+
+
+class ExportRefsTests(unittest.TestCase):
+    def test_export_rewrites_refs_and_warns_about_unmanaged(self):
+        src, repo = FakeAP(), Repo(self)
+        src.url = 'http://localhost:8080'
+        worker = src.request('POST', '/v1/flows', {'displayName': 'W', 'metadata': {'deployKey': 'worker'}})
+        loose = src.request('POST', '/v1/flows', {'displayName': 'Loose', 'metadata': {}})
+        orch = src.request('POST', '/v1/flows', {'displayName': 'O', 'metadata': {}})
+        src._flows[orch['id']]['version']['trigger']['nextAction']['settings']['input'] = {
+            'apUrl': 'http://localhost:8080', 'ids': [worker['id'], loose['id'], orch['id']]}
+        logs = []
+        ap_deploy.export(src, repo.path, ['orch'], flow_id=orch['id'], log=logs.append)
+        d = ap_deploy.read_json(os.path.join(repo.path, 'managed', 'orch.json'))
+        self.assertEqual(d['trigger']['nextAction']['settings']['input'],
+                         {'apUrl': '{{ap-base-url}}', 'ids': ['{{ap-flow:worker}}', loose['id'], '{{ap-flow:orch}}']})
+        self.assertEqual(d['flowRefs'], ['orch', 'worker'])
+        self.assertTrue(any('Loose' in m and 'no deployKey' in m for m in logs))
+
+
+class FlowRefApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.ap.base_url = 'http://activepieces:8080'
+        # "a-orch" sorts before "worker", so the worker has no id yet when the orchestrator is evaluated
+        self.repo.put('a-orch', make_ref_def('a-orch', {
+            'fire': '{{ap-base-url}}/api/v1/webhooks/{{ap-flow:worker}}', 'sub': {'externalId': '{{ap-flow-external:worker}}'}}))
+        self.repo.put('worker', make_def('worker'))
+        self.repo.deploy({'a-orch': {}, 'worker': {}})
+
+    def test_new_flows_resolve_to_target_ids_and_hash_in_placeholder_form(self):
+        recs = apply(self.ap, self.repo)
+        self.assertEqual({k: r['state'] for k, r in recs.items()}, {'a-orch': 'new', 'worker': 'new'})
+        worker = flow_of(self.ap, 'worker')
+        self.assertEqual(code_input_of(self.ap, 'a-orch'), {
+            'fire': f'http://activepieces:8080/api/v1/webhooks/{worker["id"]}', 'sub': {'externalId': worker['externalId']}})
+        meta = flow_of(self.ap, 'a-orch')['metadata']
+        self.assertEqual(meta['deployRefs'], {'worker': {'id': worker['id'], 'externalId': worker['externalId']}})
+        self.assertEqual(meta['deployBaseUrl'], 'http://activepieces:8080')
+        self.assertEqual(meta['deployHash'], meta['sourceHash'])
+        self.assertEqual({k: (r['state'], r['action']) for k, r in evaluate(self.ap, self.repo).items()},
+                         {'a-orch': ('in-sync', 'none'), 'worker': ('in-sync', 'none')})
+
+    def test_recreated_referenced_flow_is_not_drift_and_is_re_resolved(self):
+        apply(self.ap, self.repo)
+        old = flow_of(self.ap, 'worker')['id']
+        self.ap.delete(old)
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['worker']['state'], 'new')
+        self.assertEqual(recs['a-orch']['state'], 'changed')
+        new = flow_of(self.ap, 'worker')['id']
+        self.assertNotEqual(old, new)
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].endswith(new))
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'in-sync')
+
+    def test_deleted_referenced_flow_defers_without_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.delete(flow_of(self.ap, 'worker')['id'])
+        self.repo.deploy({'a-orch': {}})
+        r = evaluate(self.ap, self.repo)['a-orch']
+        self.assertEqual((r['state'], r['action']), ('missing-deps', 'none'))
+        self.assertIn('worker', r['reason'])
+
+    def test_staff_edit_of_referencing_flow_is_still_drift(self):
+        apply(self.ap, self.repo)
+        f = self.ap._flows[flow_of(self.ap, 'a-orch')['id']]
+        f['version'] = dict(f['version'], id='ver-staff', state='DRAFT')
+        f['version']['trigger']['nextAction']['settings']['input']['fire'] = 'http://elsewhere/hook'
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'drifted')
+
+    def test_base_url_change_reapplies_not_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.base_url = 'http://192.168.1.50:8080'
+        r = evaluate(self.ap, self.repo)['a-orch']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        apply(self.ap, self.repo)
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].startswith('http://192.168.1.50:8080/api/v1/webhooks/'))
+        self.assertEqual(evaluate(self.ap, self.repo)['a-orch']['state'], 'in-sync')
+
+    def test_reference_to_unlisted_flow_is_deferred_then_applied(self):
+        self.repo.deploy({'a-orch': {}})
+        logs = []
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', log=logs.append)}
+        self.assertEqual(recs['a-orch']['state'], 'missing-deps')
+        self.assertTrue(any(m.startswith('skip a-orch: missing-deps - references flow worker') for m in logs))
+        self.assertEqual(self.ap.flows(), [])
+        self.repo.deploy({'a-orch': {}, 'worker': {}})
+        recs = apply(self.ap, self.repo)
+        self.assertEqual(recs['a-orch']['state'], 'new')
+
+    def test_deferral_cascades_through_dependents(self):
+        self.repo.put('b-mid', make_ref_def('b-mid', {'x': '{{ap-flow:missing}}'}))
+        self.repo.put('a-orch', make_ref_def('a-orch', {'x': '{{ap-flow:b-mid}}'}))
+        self.repo.deploy({'a-orch': {}, 'b-mid': {}})
+        r = evaluate(self.ap, self.repo)
+        self.assertEqual((r['a-orch']['state'], r['b-mid']['state']), ('missing-deps', 'missing-deps'))
+
+    def test_cycle_resolves_in_one_pass(self):
+        self.repo.put('worker', make_ref_def('worker', {'back': '{{ap-flow:a-orch}}'}))
+        apply(self.ap, self.repo)
+        self.assertEqual(code_input_of(self.ap, 'worker')['back'], flow_of(self.ap, 'a-orch')['id'])
+        self.assertTrue(code_input_of(self.ap, 'a-orch')['fire'].endswith(flow_of(self.ap, 'worker')['id']))
+
+    def test_plan_creates_nothing(self):
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', dry_run=True, log=lambda m: None)}
+        self.assertEqual(recs['a-orch']['action'], 'create')
+        self.assertEqual(self.ap.flows(), [])
+
+    def test_v2_metadata_is_rebaselined(self):
+        self.repo.deploy({'worker': {}})
+        apply(self.ap, self.repo)
+        f = self.ap._flows[flow_of(self.ap, 'worker')['id']]
+        f['metadata'] = dict(f['metadata'], hashVersion=2, deployHash=ap_deploy.target_hash(f, 2))
+        r = evaluate(self.ap, self.repo)['worker']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))

@@ -44,7 +44,17 @@ SETTINGS_DROP = {'sampleData'}
 NOTE_DROP = {'ownerId', 'createdAt', 'updatedAt'}
 KEY_RE = re.compile(r'[a-z0-9][a-z0-9-]*')
 # Bumped when definition_hash changes; metadata written by an older ap-deploy is compared the old way.
-HASH_VERSION = 2
+# v3: the target flow is hashed in placeholder form (cross-flow references, base URL).
+HASH_VERSION = 3
+# Cross-flow references. Flow ids differ per server, so export writes a reference to another managed
+# flow as a placeholder keyed by its deployKey, and apply resolves it to that flow on the target:
+#   {{ap-flow:<key>}}           the flow's id (webhook URLs /api/v1/webhooks/<id>, code inputs)
+#   {{ap-flow-external:<key>}}  the flow's externalId (subflows "Call Flow": input flow.externalId)
+#   {{ap-base-url}}             the server's own base URL (no trailing slash, no /api)
+FLOW_REF = '{{ap-flow:%s}}'
+FLOW_EXTERNAL_REF = '{{ap-flow-external:%s}}'
+BASE_URL_REF = '{{ap-base-url}}'
+PLACEHOLDER_RE = re.compile(r'\{\{ap-(flow|flow-external):([a-z0-9][a-z0-9-]*)\}\}|\{\{ap-base-url\}\}')
 # States that need a human; status exits 1 and ap-sync logs them.
 FLAGGED_STATES = ('error', 'drifted', 'missing-deps')
 GATEWAY_ERRORS = (502, 503, 504)
@@ -62,6 +72,8 @@ class ApiError(Exception):
 class Client:
     def __init__(self, url, project_id=None, api_key=None, email=None, password=None):
         self.url = url.rstrip('/')
+        # What {{ap-base-url}} resolves to on this target (see README "Cross-flow references").
+        self.base_url = (os.environ.get('AP_DEPLOY_BASE_URL') or self.url).rstrip('/')
         self.project_id = project_id
         self.platform_id = os.environ.get('AP_PLATFORM_ID') or None
         if api_key:
@@ -162,9 +174,14 @@ class Client:
 
 # ---------- normalization ----------
 
-def normalize_flow(version, deploy_key):
-    """Strip ids, timestamps, sample data and owner bits from a flow version; derive deps."""
+def normalize_flow(version, deploy_key, refs=None):
+    """Strip ids, timestamps, sample data and owner bits from a flow version; derive deps.
+
+    refs (from source_refs/target_refs) turns other flows' ids and the server's base URL into
+    placeholders, so the file (and every hash) is the same whatever ids the flows have."""
     trigger = _normalize_step(version['trigger'])
+    if refs:
+        trigger = to_placeholders(trigger, refs)
     return {
         'deployKey': deploy_key,
         'displayName': version['displayName'],
@@ -173,6 +190,7 @@ def normalize_flow(version, deploy_key):
         'trigger': trigger,
         'pieces': pieces_used(trigger),
         'connections': connections_used(trigger),
+        'flowRefs': flow_refs_used(trigger),
     }
 
 
@@ -186,11 +204,15 @@ def definition_hash(flow_def, hash_version=HASH_VERSION):
     return hashlib.sha256(canonical(core).encode()).hexdigest()[:16]
 
 
-def target_hash(flow, hash_version=HASH_VERSION):
-    return definition_hash(normalize_flow(flow['version'], None), hash_version)
+def target_hash(flow, hash_version=HASH_VERSION, refs=None):
+    """Hash of a flow on the target. From v3 it is taken in placeholder form: the target's ids of
+    managed flows (and the ids this flow was last resolved against, see deployRefs) and its base URL
+    are turned back into placeholders, so a referenced flow getting a new id is not an edit."""
+    return definition_hash(normalize_flow(flow['version'], None, _flow_refs_for(flow, refs) if hash_version >= 3 else None),
+                           hash_version)
 
 
-def check_drift(flow, meta):
+def check_drift(flow, meta, refs=None):
     """(drifted, rebaseline) for a managed flow on the target.
 
     rebaseline=True means the flow differs from the recorded deployHash only because of something
@@ -202,7 +224,7 @@ def check_drift(flow, meta):
     if not flow or not meta.get('deployHash'):
         return False, False
     stored_version = meta.get('hashVersion') or 1
-    if target_hash(flow, stored_version) == meta['deployHash']:
+    if target_hash(flow, stored_version, refs) == meta['deployHash']:
         return False, stored_version != HASH_VERSION
     version = flow['version']
     if meta.get('deployVersionId') and meta['deployVersionId'] == version.get('id') \
@@ -218,13 +240,145 @@ def _schema_number(value):
         return -1
 
 
-def to_import_request(flow_def):
+# ---------- cross-flow references ----------
+
+def source_refs(flows, base_urls=()):
+    """Reverse map for export: every source flow carrying a deployKey (id and externalId), plus the
+    source's own base URL(s). localhost and 127.0.0.1 are treated as the same host."""
+    by_value = {}
+    for f in flows:
+        key = (f.get('metadata') or {}).get('deployKey') if isinstance(f.get('metadata'), dict) else None
+        if key:
+            by_value[f['id']] = FLOW_REF % key
+            if f.get('externalId') and f['externalId'] != f['id']:
+                by_value[f['externalId']] = FLOW_EXTERNAL_REF % key
+    urls = set()
+    for url in base_urls:
+        if not url:
+            continue
+        url = url.rstrip('/')
+        urls.add(url)
+        for a, b in (('://localhost', '://127.0.0.1'), ('://127.0.0.1', '://localhost')):
+            if a in url:
+                urls.add(url.replace(a, b))
+    return {'values': by_value, 'base_urls': sorted(urls)}
+
+
+def target_refs(flows, base_url):
+    """{deploy key: {'id', 'externalId'}} for keys carried by exactly one flow on the target, and the
+    base URL that {{ap-base-url}} resolves to."""
+    seen = {}
+    for f in flows:
+        meta = f.get('metadata')
+        key = meta.get('deployKey') if isinstance(meta, dict) else None
+        if key:
+            seen.setdefault(key, []).append(f)
+    keys = {k: {'id': m[0]['id'], 'externalId': m[0].get('externalId') or m[0]['id']} for k, m in seen.items() if len(m) == 1}
+    return {'keys': keys, 'base_url': base_url.rstrip('/')}
+
+
+def to_placeholders(obj, refs):
+    """Replace known flow ids/externalIds (whole tokens) and base URLs in every string of obj."""
+    values, urls = refs.get('values') or {}, refs.get('base_urls') or []
+    if not values and not urls:
+        return obj
+    id_re = re.compile(r'(?<![A-Za-z0-9])(' + '|'.join(map(re.escape, sorted(values, key=len, reverse=True))) + r')(?![A-Za-z0-9])') if values else None
+    # A base URL only matches whole: http://localhost:8080 must not match http://localhost:80801.
+    url_re = re.compile('(' + '|'.join(map(re.escape, sorted(urls, key=len, reverse=True))) + r')(?![A-Za-z0-9.:-])') if urls else None
+
+    def fix(text):
+        if url_re:
+            text = url_re.sub(BASE_URL_REF, text)
+        if id_re:
+            text = id_re.sub(lambda m: values[m.group(1)], text)
+        return text
+    return _map_strings(obj, fix)
+
+
+def resolve_placeholders(obj, refs):
+    """Placeholders -> the target's ids and base URL. Returns (resolved, sorted missing deploy keys)."""
+    keys, missing = refs.get('keys') or {}, set()
+
+    def fix(text):
+        def one(m):
+            if m.group(0) == BASE_URL_REF:
+                return refs['base_url']
+            kind, key = m.group(1), m.group(2)
+            if key not in keys:
+                missing.add(key)
+                return m.group(0)
+            return keys[key]['id' if kind == 'flow' else 'externalId']
+        return PLACEHOLDER_RE.sub(one, text)
+    resolved = _map_strings(obj, fix)
+    return resolved, sorted(missing)
+
+
+def flow_refs_used(trigger):
+    """Deploy keys of the other managed flows a flow references (via placeholders)."""
+    return sorted({m.group(2) for text in _strings(trigger) for m in PLACEHOLDER_RE.finditer(text) if m.group(2)})
+
+
+def uses_base_url(trigger):
+    return any(BASE_URL_REF in text for text in _strings(trigger))
+
+
+def resolution_record(trigger, refs):
+    """What the placeholders of trigger resolve to now (stored as deployRefs/deployBaseUrl)."""
+    keys = refs.get('keys') or {}
+    return {k: dict(keys[k]) for k in flow_refs_used(trigger) if k in keys}
+
+
+def _flow_refs_for(flow, refs):
+    """Reverse map for hashing one target flow: the target's current managed ids plus the ids and
+    base URL recorded when this flow was last applied (so a referenced flow's new id is not drift)."""
+    meta = flow.get('metadata') if isinstance(flow.get('metadata'), dict) else {}
+    values, urls = {}, set()
+    for key, ids in (meta.get('deployRefs') or {}).items():
+        if isinstance(ids, dict):
+            if ids.get('id'):
+                values[ids['id']] = FLOW_REF % key
+            if ids.get('externalId') and ids.get('externalId') != ids.get('id'):
+                values[ids['externalId']] = FLOW_EXTERNAL_REF % key
+    if meta.get('deployBaseUrl'):
+        urls.add(meta['deployBaseUrl'])
+    if refs:
+        for key, ids in (refs.get('keys') or {}).items():
+            values[ids['id']] = FLOW_REF % key
+            if ids['externalId'] != ids['id']:
+                values[ids['externalId']] = FLOW_EXTERNAL_REF % key
+        if refs.get('base_url'):
+            urls.add(refs['base_url'])
+    return {'values': values, 'base_urls': sorted(urls)}
+
+
+def _strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _strings(v)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            yield from _strings(v)
+
+
+def _map_strings(obj, fn):
+    if isinstance(obj, str):
+        return fn(obj)
+    if isinstance(obj, list):
+        return [_map_strings(v, fn) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _map_strings(v, fn) for k, v in obj.items()}
+    return obj
+
+
+def to_import_request(flow_def, refs=None):
     now = datetime.now(timezone.utc).isoformat()
     return {
         'displayName': flow_def['displayName'],
         'schemaVersion': flow_def['schemaVersion'],
         'notes': [dict(n, ownerId=None, createdAt=now, updatedAt=now) for n in flow_def.get('notes') or []],
-        'trigger': _stamp_step(copy.deepcopy(flow_def['trigger']), now),
+        'trigger': _stamp_step(copy.deepcopy(resolve_placeholders(flow_def['trigger'], refs)[0] if refs else flow_def['trigger']), now),
     }
 
 
@@ -310,7 +464,7 @@ def load_deploy_config(repo, target):
 
 # ---------- export (source instance) ----------
 
-def export(client, repo, keys, flow_id=None, name=None, log=print):
+def export(client, repo, keys, flow_id=None, name=None, base_urls=(), log=print):
     flows = client.flows()
     if (flow_id or name) and len(keys) != 1:
         raise ApiError('--flow-id/--name take exactly one deploy key')
@@ -326,7 +480,11 @@ def export(client, repo, keys, flow_id=None, name=None, log=print):
         if clash:
             raise ApiError(f'deployKey "{key}" is already on flow(s) {", ".join(clash)}')
         version = client.flow(flow['id'])['version']
-        flow_def = normalize_flow(version, key)
+        stamped = [dict(f, metadata={**(f.get('metadata') or {}), 'deployKey': key}) if f['id'] == flow['id'] else f for f in flows]
+        flow_def = normalize_flow(version, key, source_refs(stamped, [client.url, *base_urls]))
+        for other in unmanaged_refs(flow_def['trigger'], stamped):
+            log(f'warn {key}: references flow {other["id"]} ("{other["version"]["displayName"]}"), which has no deployKey; '
+                'export it first and re-export this one, or the reference breaks on the target')
         path = os.path.join(repo, MANAGED_DIR, f'{key}.json')
         changed = write_json(path, flow_def)
         if existing_key != key:
@@ -334,9 +492,24 @@ def export(client, repo, keys, flow_id=None, name=None, log=print):
         if version['state'] != 'LOCKED':
             log(f'warn {key}: exported the DRAFT version of "{version["displayName"]}" (not yet published on source)')
         log(f'export {key}: {"wrote" if changed else "unchanged"} {os.path.relpath(path, repo)} '
-            f'({len(flow_def["pieces"])} pieces, connections: {", ".join(flow_def["connections"]) or "none"})')
+            f'({len(flow_def["pieces"])} pieces, connections: {", ".join(flow_def["connections"]) or "none"}'
+            f'{", flows: " + ", ".join(flow_def["flowRefs"]) if flow_def["flowRefs"] else ""})')
         written.append(path)
     return written
+
+
+def unmanaged_refs(trigger, flows):
+    """Source flows without a deployKey whose id or externalId still appears in trigger."""
+    text = '\n'.join(_strings(trigger))
+    found = []
+    for f in flows:
+        if (f.get('metadata') or {}).get('deployKey'):
+            continue
+        for value in {f['id'], f.get('externalId')} - {None}:
+            if re.search(r'(?<![A-Za-z0-9])' + re.escape(value) + r'(?![A-Za-z0-9])', text):
+                found.append(f)
+                break
+    return found
 
 
 def _find_source_flow(flows, key, flow_id, name):
@@ -368,13 +541,14 @@ def evaluate(client, repo, target):
         if key:
             by_key.setdefault(key, []).append(f)
     connections = client.connection_names()
+    refs = target_refs(flows, getattr(client, 'base_url', client.url))
     piece_cache = {}
     records = []
     for key in sorted(wanted):
         matches = by_key.get(key, [])
         rec = {'key': key, 'desired': None, 'flow': matches[0] if len(matches) == 1 else None,
                'status': matches[0].get('status') if len(matches) == 1 else None,
-               'matches': matches, 'action': 'none', 'state': 'error', 'reason': ''}
+               'matches': matches, 'action': 'none', 'state': 'error', 'reason': '', 'refs': refs}
         records.append(rec)
         try:
             entry = wanted[key]
@@ -386,6 +560,8 @@ def evaluate(client, repo, target):
             _classify(client, repo, rec, connections, piece_cache)
         except Exception as e:  # noqa: BLE001 - isolate one bad record from the rest
             rec.update(state='error', action='none', reason=f'{type(e).__name__}: {e}'[:300])
+    _check_flow_refs(records, refs)
+    for rec in records:
         _kill_switch(rec)
     for key, matches in sorted(by_key.items()):
         if key not in wanted:
@@ -413,8 +589,9 @@ def _classify(client, repo, rec, connections, piece_cache):
     rec['def'] = flow_def
     rec['sourceHash'] = definition_hash(flow_def)
     meta = (flow or {}).get('metadata') or {}
-    drifted, rec['rebaseline'] = check_drift(flow, meta)
-    if drifted and _interrupted_apply(flow, meta, rec['sourceHash']):
+    refs = rec['refs']
+    drifted, rec['rebaseline'] = check_drift(flow, meta, refs)
+    if drifted and _interrupted_apply(flow, meta, rec['sourceHash'], refs):
         drifted = False
         rec['interrupted'] = True
     # One-shot "let git win" from deploy.json: a new "overwrite" token replaces a drifted flow (and
@@ -426,7 +603,7 @@ def _classify(client, repo, rec, connections, piece_cache):
     known_source = {rec['sourceHash']}
     # The server copy already equals the git file (e.g. a staff edit was exported into git): adopt
     # it as the new baseline instead of flagging drift or re-importing.
-    if drifted and flow['publishedVersionId'] == flow['version']['id'] and target_hash(flow) == rec['sourceHash']:
+    if drifted and flow['publishedVersionId'] == flow['version']['id'] and target_hash(flow, refs=refs) == rec['sourceHash']:
         drifted = False
         rec['rebaseline'] = True
         known_source.add(meta.get('sourceHash'))
@@ -448,6 +625,8 @@ def _classify(client, repo, rec, connections, piece_cache):
     elif rec.get('interrupted') or meta.get('sourceHash') not in known_source or not meta.get('deployHash') \
             or flow['publishedVersionId'] != flow['version']['id']:
         rec.update(state='changed', action='update')
+    elif _refs_changed(flow_def, meta, refs):
+        rec.update(state='changed', action='update', reason='a referenced flow or the base URL changed on this server; re-resolving')
     elif flow['status'] != desired:
         rec.update(state='in-sync', action='status')
     elif rec['rebaseline'] or meta.get('deployedStatus') != flow['status']:
@@ -456,7 +635,36 @@ def _classify(client, repo, rec, connections, piece_cache):
         rec.update(state='in-sync')
 
 
-def _interrupted_apply(flow, meta, source_hash):
+def _check_flow_refs(records, refs):
+    """A flow whose placeholders name a flow that is not on the target and will not be created in
+    this pass is deferred (missing-deps) and retried next pass. Repeated until nothing changes,
+    because deferring a flow that others reference defers those too."""
+    while True:
+        will_exist = set(refs['keys']) | {r['key'] for r in records if r['action'] == 'create'}
+        changed = False
+        for rec in records:
+            if rec['action'] not in ('create', 'update') or not rec.get('def'):
+                continue
+            missing = [k for k in flow_refs_used(rec['def']['trigger']) if k not in will_exist and k != rec['key']]
+            if missing:
+                rec.update(state='missing-deps', action='none',
+                           reason=f'references flow {", ".join(missing)}, not on this server yet (not listed in {DEPLOY_FILE} '
+                                  'or not applicable this pass); deferred, retried next pass')
+                changed = True
+        if not changed:
+            return
+
+
+def _refs_changed(flow_def, meta, refs):
+    """The placeholders would now resolve to other ids (a referenced flow was recreated) or another
+    base URL than at the last apply: the flow must be re-imported, though nobody edited it."""
+    trigger = flow_def['trigger']
+    if resolution_record(trigger, refs) != (meta.get('deployRefs') or {}):
+        return True
+    return uses_base_url(trigger) and meta.get('deployBaseUrl') != refs['base_url']
+
+
+def _interrupted_apply(flow, meta, source_hash, refs=None):
     """True when the flow differs from its baseline only because an earlier apply imported a new
     version and then failed (e.g. publish rejected): finish that apply instead of flagging drift.
 
@@ -468,7 +676,7 @@ def _interrupted_apply(flow, meta, source_hash):
     if not pending:
         return False
     if meta.get('applyingHash'):
-        return target_hash(flow) == meta['applyingHash']
+        return target_hash(flow, refs=refs) == meta['applyingHash']
     return pending == source_hash
 
 
@@ -532,10 +740,14 @@ def apply(client, repo, target, dry_run=False, log=print):
         blocked = unhide_needed_pieces(client, repo, target, dry_run, log)
         records = evaluate(client, repo, target)
         for rec in records:
+            if rec['key'] in blocked and rec['action'] != 'disable' and rec['state'] != 'unlisted':
+                rec.update(state='missing-deps', action='none', reason=blocked[rec['key']])
+        if blocked:
+            _check_flow_refs(records, next(r['refs'] for r in records if 'refs' in r))
+        if not dry_run:
+            _create_shells(client, records, log)
+        for rec in records:
             key, action = rec['key'], rec['action']
-            if key in blocked and action != 'disable' and rec['state'] != 'unlisted':
-                rec.update(state='missing-deps', action='none', reason=blocked[key])
-                action = 'none'
             if action == 'none' or action == 'disable':
                 if rec['state'] not in ('in-sync', 'unlisted'):
                     log(f'skip {key}: {rec["state"]} - {rec["reason"]}')
@@ -557,6 +769,25 @@ def apply(client, repo, target, dry_run=False, log=print):
     finally:
         if lock:
             lock.close()
+
+
+def _create_shells(client, records, log):
+    """Create every new flow (empty, in the managed folder) before importing any, so flows that
+    reference each other resolve to real ids whatever order, cycles included. A shell carries
+    applyingSourceHash and no deployHash, so if its import fails the next pass finishes it."""
+    for rec in records:
+        if rec['action'] != 'create':
+            continue
+        try:
+            flow = client.request('POST', '/v1/flows', {
+                'displayName': rec['def']['displayName'], 'projectId': client.project_id, 'folderName': MANAGED_FOLDER,
+                'metadata': {'deployKey': rec['key'], 'applyingSourceHash': rec['sourceHash'], 'applyingHash': None}})
+        except Exception as e:  # noqa: BLE001 - its dependents then fail to resolve and are logged
+            rec.update(action='none', error=str(e))
+            log(f'FAIL create {rec["key"]}: {type(e).__name__}: {e}')
+            continue
+        rec.update(flow=flow, shell=True)
+        rec['refs']['keys'][rec['key']] = {'id': flow['id'], 'externalId': flow.get('externalId') or flow['id']}
 
 
 def _apply_lock(client, log):
@@ -587,26 +818,30 @@ def _apply_one(client, rec):
             client.operate(flow_id, 'CHANGE_STATUS', {'status': 'DISABLED'})
             _update_metadata(client, client.flow(flow_id), {'deployedStatus': 'DISABLED'})
         return ', '.join(rec['disable_ids'])
-    flow = rec['flow']
+    flow, refs = rec['flow'], rec['refs']
     if action in ('status', 'rebaseline'):
         if action == 'status':
             client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
         fresh = client.flow(flow['id'])
         extra = {'deployedStatus': fresh['status']}
         if rec.get('rebaseline'):
-            extra.update(_baseline(fresh), sourceHash=rec['sourceHash'])
+            extra.update(_baseline(fresh, refs), sourceHash=rec['sourceHash'])
         _update_metadata(client, fresh, extra)
         return flow['id']
     flow_def = rec['def']
+    request = to_import_request(flow_def, refs)
+    _, unresolved = resolve_placeholders(flow_def['trigger'], refs)
+    if unresolved:
+        raise ApiError(f'references flow {", ".join(unresolved)}, which could not be created on this server; retried next pass')
     pending = {'applyingSourceHash': rec['sourceHash'], 'applyingHash': None}
     if not flow:
         flow = client.request('POST', '/v1/flows', {
             'displayName': flow_def['displayName'], 'projectId': client.project_id,
             'folderName': MANAGED_FOLDER, 'metadata': {'deployKey': rec['key'], **pending}})
-    else:
+    elif not rec.get('shell'):
         _update_metadata(client, client.flow(flow['id']), pending)
     try:
-        client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
+        client.operate(flow['id'], 'IMPORT_FLOW', request)
     except ApiError as e:
         # The server answered with an error, so nothing was imported: drop the pending hash, or a
         # later staff edit could be mistaken for our import and overwritten. On a timeout,
@@ -617,22 +852,24 @@ def _apply_one(client, rec):
             _update_metadata(client, client.flow(flow['id']), {}, drop=('applyingSourceHash', 'applyingHash'))
         raise
     imported = client.flow(flow['id'])
-    _update_metadata(client, imported, {'applyingHash': target_hash(imported)})
+    _update_metadata(client, imported, {'applyingHash': target_hash(imported, refs=refs)})
     published = client.operate(flow['id'], 'LOCK_AND_PUBLISH', {'status': rec['desired']})
     if published['status'] != rec['desired']:
         client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
     fresh = client.flow(flow['id'])
+    resolved = {'deployRefs': resolution_record(flow_def['trigger'], refs),
+                'deployBaseUrl': refs['base_url'] if uses_base_url(flow_def['trigger']) else None}
     _update_metadata(client, fresh, {
-        'deployKey': rec['key'], 'sourceHash': rec['sourceHash'], **_baseline(fresh),
+        'deployKey': rec['key'], 'sourceHash': rec['sourceHash'], **_baseline(fresh, refs), **resolved,
         'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         **({'overwriteApplied': rec['overwrite']} if rec.get('overwrite') else {})},
         drop=('applyingSourceHash', 'applyingHash'))
     return flow['id']
 
 
-def _baseline(fresh):
+def _baseline(fresh, refs=None):
     """What the flow looks like right after an apply; drift is measured against it."""
-    return {'deployHash': target_hash(fresh), 'hashVersion': HASH_VERSION,
+    return {'deployHash': target_hash(fresh, refs=refs), 'hashVersion': HASH_VERSION,
             'deployVersionId': fresh['version']['id'], 'deploySchemaVersion': fresh['version'].get('schemaVersion')}
 
 
@@ -679,6 +916,8 @@ def main(argv=None):
     e.add_argument('keys', nargs='+')
     e.add_argument('--flow-id')
     e.add_argument('--name', help='source flow display name')
+    e.add_argument('--base-url', action='append', default=[],
+                   help='another URL the source is reached by, written as {{ap-base-url}} (the source AP URL always is)')
     for name in ('plan', 'apply', 'status'):
         s = sub.add_parser(name)
         s.add_argument('--target', default=os.environ.get('AP_DEPLOY_TARGET'))
@@ -686,7 +925,7 @@ def main(argv=None):
     repo = os.path.abspath(args.repo)
     try:
         if args.cmd == 'export':
-            export(Client.from_env('AP_SOURCE_'), repo, args.keys, args.flow_id, args.name)
+            export(Client.from_env('AP_SOURCE_'), repo, args.keys, args.flow_id, args.name, args.base_url)
             return 0
         client = Client.from_env()
         if not args.target:
