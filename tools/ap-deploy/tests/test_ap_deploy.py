@@ -40,6 +40,8 @@ class FakeAP:
         self._flows = {}
         self._n = 0
         self.calls = []
+        self.hidden = None  # None: Community / nothing filtered; a set: EE BLOCKED filteredPieceNames
+        self.fail_platform_update = False
 
     def _id(self, prefix):
         self._n += 1
@@ -55,7 +57,16 @@ class FakeAP:
         return set()
 
     def has_piece(self, name, version):
-        return True
+        return not self.hidden or name not in self.hidden
+
+    def hidden_pieces(self):
+        return set(self.hidden) if self.hidden is not None else None
+
+    def set_hidden_pieces(self, names):
+        self.calls.append(('set_hidden', tuple(sorted(names))))
+        if self.fail_platform_update:
+            raise ap_deploy.ApiError('POST /v1/platforms/p1 -> 403: forbidden', status=403)
+        self.hidden = set(names)
 
     def request(self, method, path, body=None, auth=True):
         assert (method, path) == ('POST', '/v1/flows')
@@ -156,6 +167,16 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(meta['deploySchemaVersion'], '22')
         r = evaluate(self.ap, self.repo)['a']
         self.assertEqual((r['state'], r['action']), ('in-sync', 'none'))
+
+    def test_new_flow_is_created_disabled_unless_enabled(self):
+        self.repo.put('b', make_def('b'))
+        self.repo.put('c', make_def('c'))
+        self.repo.deploy({'b': {}, 'c': {'enabled': False}})
+        apply(self.ap, self.repo)
+        for key in ('b', 'c'):
+            flow = flow_of(self.ap, key)
+            self.assertEqual(flow['status'], 'DISABLED', key)
+            self.assertEqual(flow['metadata']['deployedStatus'], 'DISABLED', key)
 
     def test_upgrade_migration_rebaselines_instead_of_drift(self):
         apply(self.ap, self.repo)
@@ -448,6 +469,56 @@ class IsolationTests(unittest.TestCase):
         recs = apply(self.ap, self.repo)
         self.assertIn('boom', recs['good']['error'])
         self.assertTrue(recs['other'].get('applied'))
+
+
+class HiddenPieceTests(unittest.TestCase):
+    """EE piece filter: a managed flow's pieces are unhidden before it is applied."""
+
+    def setUp(self):
+        self.ap, self.repo, self.logs = FakeAP(), Repo(self), []
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {}})
+
+    def run_apply(self, dry_run=False):
+        return {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', dry_run=dry_run,
+                                                     log=self.logs.append)}
+
+    def test_needed_piece_is_unhidden_and_flow_deploys_disabled(self):
+        self.ap.hidden = {PIECE['name'], '@activepieces/piece-other'}
+        r = self.run_apply()['a']
+        self.assertEqual((r['state'], r.get('applied')), ('new', True))
+        self.assertEqual(self.ap.hidden, {'@activepieces/piece-other'})
+        self.assertIn(f"unhid {PIECE['name']} (needed by flow a)", self.logs)
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+
+    def test_unrelated_hidden_pieces_are_left_alone(self):
+        self.ap.hidden = {'@activepieces/piece-other'}
+        self.run_apply()
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+
+    def test_community_does_not_touch_the_filter(self):
+        self.run_apply()
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+
+    def test_failed_unhide_skips_only_that_flow(self):
+        other = make_def('b')
+        other['trigger']['settings']['pieceName'] = '@activepieces/piece-plain'
+        other['pieces'] = ap_deploy.pieces_used(other['trigger'])
+        self.repo.put('b', other)
+        self.repo.deploy({'a': {}, 'b': {}})
+        self.ap.hidden = {PIECE['name']}
+        self.ap.fail_platform_update = True
+        recs = self.run_apply()
+        self.assertEqual((recs['a']['state'], recs['a']['action']), ('missing-deps', 'none'))
+        self.assertIn('unhiding it failed', recs['a']['reason'])
+        self.assertTrue(any(m.startswith('skip a: missing-deps') for m in self.logs))
+        self.assertTrue(recs['b'].get('applied'))
+
+    def test_plan_only_reports(self):
+        self.ap.hidden = {PIECE['name']}
+        self.run_apply(dry_run=True)
+        self.assertFalse([c for c in self.ap.calls if c[0] == 'set_hidden'])
+        self.assertIn(f"would unhide {PIECE['name']} (needed by flow a)", self.logs)
 
 
 if __name__ == '__main__':

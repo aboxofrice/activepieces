@@ -65,6 +65,13 @@ drifted, missing deps or its file is broken. The other way round is not automati
 that apply left **on** is turned **off** in the UI (an emergency stop), apply flags it as drifted
 and leaves it off. Accept the stop with `"enabled": false`, or turn it back on in the UI.
 
+EE piece filter: on an EE server whose platform hides pieces (`filteredPieceNames`, BLOCKED; set
+by the installer from `deploy/warehouse/hidden-pieces.txt`), apply first unhides exactly the pieces
+the flows listed in deploy.json use, via `POST /v1/platforms/<id>`, and logs
+`unhid <piece> (needed by flow <key>)`. If that update fails, only the flows needing those pieces
+are skipped (`missing-deps`) and the next pass retries. `plan` only reports what it would unhide.
+The platform id comes from sign-in (or `AP_PLATFORM_ID` with an API key).
+
 Apply takes a lock per target (a file in the temp dir), so a manual
 `docker compose exec ap-sync python3 ap_deploy.py --repo /data/flows apply` never races the loop.
 Each deploy key is evaluated on its own: a broken flow file or deploy.json entry marks only that
