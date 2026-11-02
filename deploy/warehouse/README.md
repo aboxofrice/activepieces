@@ -33,7 +33,7 @@ Release flow:
    checks that the compose files pin `X.Y.Z`, builds all four images from that commit and pushes
    them as `X.Y.Z` and `sha-<short>` (never `latest`), with OCI revision/source/version labels,
    then runs a report-only vulnerability scan. It can also be started by hand (Actions, "Warehouse
-   images", optional version). After the first push, check each package is **Private** under the
+   images"); a run on a branch pushes only `sha-<short>` tags, never a version. After the first push, check each package is **Private** under the
    account's Packages settings. A version is never pushed twice: if a release run fails partway,
    use "Re-run failed jobs" (not "Re-run all jobs", which stops on the images already pushed).
 3. On the warehouse, re-run the new installer and move the app image:
@@ -49,6 +49,8 @@ from an account that can read the packages, with an expiry you will track. Pass 
 `-e GHCR_USER=<that github user> -e GHCR_TOKEN=<token>`. It is saved in `.env` (mode 600), used
 for `docker login ghcr.io` before every pull, and never printed. Fine-grained tokens do not cover
 GHCR packages. Without a token, images already on the machine still work (local builds on a Mac).
+The installer image itself is private too, so log the host in once before the first `docker run`:
+`echo <token> | docker login ghcr.io -u <that github user> --password-stdin`.
 
 Local build (repo root), e.g. for a Mac test; tags matching the compose pins are used as-is when
 they cannot be pulled:

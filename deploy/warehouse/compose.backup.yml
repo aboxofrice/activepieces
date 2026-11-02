@@ -10,7 +10,7 @@
 #
 # Settings read from .env (all optional except the BACKUP_PASSWORD/BACKUP_SALT that install.sh writes).
 # Only these and the AP_POSTGRES_* connection settings reach the container (no env_file):
-#   TZ                    timezone for BACKUP_TIME, e.g. America/Los_Angeles (default UTC)
+#   TZ                    timezone for BACKUP_TIME (the installer writes America/New_York)
 #   BACKUP_TIME           nightly run time HH:MM (default 03:30; avoid 02:00-03:00, which DST skips)
 #   BACKUP_DRIVE_FOLDER   Drive folder (default "Activepieces Backups/warehouse")
 #   BACKUP_KEEP_NIGHTLY / BACKUP_KEEP_WEEKLY / BACKUP_KEEP_MANUAL   (default 14 / 8 / 10)
