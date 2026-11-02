@@ -3,10 +3,12 @@ import { createAction, Property } from '@activepieces/pieces-framework';
 import { walmartAuth, walmartAuthProps } from '../auth';
 import { walmartClient } from '../common/client';
 import { walmartJson } from '../common/json';
+import { walmartLineMath } from '../common/line-math';
 import { RawOrder, walmartOrders } from '../common/orders';
 
-const { arrayAt, numberAt, stringAt, round } = walmartJson;
+const { arrayAt, stringAt, round } = walmartJson;
 
+const REFUNDABLE_STATUSES = ['Shipped', 'Delivered'];
 const REFUND_REASONS = [
     'ItemNotReceivedByCustomer', 'DamagedItem', 'DefectiveItem', 'IncorrectItemReceived', 'ItemNotAsAdvertised',
     'CustomerChangedMind', 'CustomerReceivedItemLate', 'CancelledYetShipped', 'IncorrectShippingPrice', 'BillingError',
@@ -36,7 +38,7 @@ export const refundOrderLines = createAction({
         }),
         lines: Property.Array({
             displayName: 'Partial Refunds',
-            description: 'Leave empty to refund every line in full (item price, shipping and their tax, read from the order). Otherwise one row per line with the amounts to refund (positive numbers).',
+            description: 'Leave empty to refund everything not yet refunded on the shipped lines (item price, shipping and their tax, read from the order, minus earlier refunds). Otherwise one row per line with the amounts to refund (positive numbers).',
             required: false,
             properties: {
                 lineNumber: Property.ShortText({ displayName: 'Line Number', required: true }),
@@ -88,26 +90,30 @@ export const refundOrderLines = createAction({
     },
 });
 
-// Mirrors every charge on each line with a negative amount, which is how Walmart
-// expresses a refund of that charge.
+// Mirrors what is still unrefunded on each shipped line with a negative amount, which is how
+// Walmart expresses a refund of that charge. Earlier refunds are subtracted so a re-run (or a
+// full refund after a partial one) cannot refund the same money twice.
 function fullRefundLines({ order, reason }: { order: RawOrder; reason: string }): RefundLine[] {
-    return arrayAt({ value: order, path: ['orderLines', 'orderLine'] }).map((line) => ({
-        lineNumber: stringAt({ value: line, path: ['lineNumber'] }) ?? '',
-        charges: arrayAt({ value: line, path: ['charges', 'charge'] })
-            .filter((charge) => (numberAt({ value: charge, path: ['chargeAmount', 'amount'] }) ?? 0) > 0)
-            .map((charge) => {
-                const currency = stringAt({ value: charge, path: ['chargeAmount', 'currency'] }) ?? 'USD';
-                const taxAmount = numberAt({ value: charge, path: ['tax', 'taxAmount', 'amount'] }) ?? 0;
-                return refundCharge({
-                    reason,
-                    chargeType: stringAt({ value: charge, path: ['chargeType'] }) ?? 'PRODUCT',
-                    chargeName: stringAt({ value: charge, path: ['chargeName'] }) ?? 'Item Price',
-                    amount: numberAt({ value: charge, path: ['chargeAmount', 'amount'] }) ?? 0,
-                    currency,
-                    tax: taxAmount > 0 ? { name: stringAt({ value: charge, path: ['tax', 'taxName'] }) ?? 'Tax', amount: taxAmount } : null,
-                });
-            }),
-    }));
+    const shipped = walmartLineMath.eligibleLines({ order, statuses: REFUNDABLE_STATUSES }).map((line) => line.lineNumber);
+    const lines = arrayAt({ value: order, path: ['orderLines', 'orderLine'] })
+        .filter((line) => shipped.includes(stringAt({ value: line, path: ['lineNumber'] }) ?? ''))
+        .map((line) => ({
+            lineNumber: stringAt({ value: line, path: ['lineNumber'] }) ?? '',
+            charges: walmartLineMath.refundableCharges({ line }).map((charge) => refundCharge({
+                reason,
+                chargeType: charge.chargeType,
+                chargeName: charge.chargeName,
+                amount: charge.amount,
+                currency: charge.currency,
+                tax: charge.taxAmount > 0 ? { name: charge.taxName, amount: charge.taxAmount } : null,
+            })),
+        }))
+        .filter((line) => line.charges.length > 0);
+    if (lines.length === 0) {
+        const current = walmartLineMath.lineStatusSummary({ order });
+        throw new Error(`Nothing left to refund on this order: no shipped or delivered line has an unrefunded charge (${current || 'no lines'}).`);
+    }
+    return lines;
 }
 
 function partialCharges({ line, reason, currency }: { line: PartialRefund; reason: string; currency: string }): RefundCharge[] {
