@@ -7,9 +7,7 @@ import { walmartOrders } from './orders';
 // status the action applies to, which saves users from mapping line numbers. The order is
 // always read so explicit rows can be checked against what is actually left.
 async function resolveLines({ auth, purchaseOrderId, lines, statuses, action }: ResolveLinesParams): Promise<LineSelection[]> {
-    const chosen = (lines ?? [])
-        .map((value, index) => walmartLineMath.parseLine({ value, index }))
-        .filter((line): line is LineSelection => line !== null);
+    const chosen = (lines ?? []).map((value, index) => walmartLineMath.parseLine({ value, index }));
     const order = await walmartOrders.getOrder({ auth, purchaseOrderId });
     return walmartLineMath.selectLines({ order, chosen, statuses, action });
 }

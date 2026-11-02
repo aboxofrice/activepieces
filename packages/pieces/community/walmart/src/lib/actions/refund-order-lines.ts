@@ -3,12 +3,11 @@ import { createAction, Property } from '@activepieces/pieces-framework';
 import { walmartAuth, walmartAuthProps } from '../auth';
 import { walmartClient } from '../common/client';
 import { walmartJson } from '../common/json';
-import { walmartLineMath } from '../common/line-math';
+import { PartialRefund, REFUNDABLE_STATUSES, walmartLineMath } from '../common/line-math';
 import { RawOrder, walmartOrders } from '../common/orders';
 
 const { arrayAt, stringAt, round } = walmartJson;
 
-const REFUNDABLE_STATUSES = ['Shipped', 'Delivered'];
 const REFUND_REASONS = [
     'ItemNotReceivedByCustomer', 'DamagedItem', 'DefectiveItem', 'IncorrectItemReceived', 'ItemNotAsAdvertised',
     'CustomerChangedMind', 'CustomerReceivedItemLate', 'CancelledYetShipped', 'IncorrectShippingPrice', 'BillingError',
@@ -56,9 +55,11 @@ export const refundOrderLines = createAction({
         const currency = arrayAt({ value: arrayAt({ value: order, path: ['orderLines', 'orderLine'] })[0], path: ['charges', 'charge'] })
             .map((charge) => stringAt({ value: charge, path: ['chargeAmount', 'currency'] }))
             .find((value) => value !== undefined) ?? 'USD';
-        const partial = (context.propsValue.lines ?? []).map((line) => parsePartial({ value: line })).filter((line): line is PartialRefund => line !== null);
-        const orderLines = partial.length > 0
-            ? partial.map((line) => ({ lineNumber: line.lineNumber, charges: partialCharges({ line, reason, currency }) }))
+        // Only an empty list means "refund everything"; a list whose rows are invalid fails.
+        const rows = context.propsValue.lines ?? [];
+        const orderLines = rows.length > 0
+            ? walmartLineMath.checkPartialRefunds({ order, rows: rows.map((value, index) => walmartLineMath.parsePartialRefund({ value, index })) })
+                .map((line) => ({ lineNumber: line.lineNumber, charges: partialCharges({ line, reason, currency }) }))
             : fullRefundLines({ order, reason });
         if (orderLines.length === 0 || orderLines.some((line) => line.charges.length === 0)) {
             throw new Error('Nothing to refund: check the line numbers and amounts.');
@@ -137,24 +138,6 @@ function refundCharge({ reason, chargeType, chargeName, amount, currency, tax }:
         },
     };
 }
-
-function parsePartial({ value }: { value: unknown }): PartialRefund | null {
-    if (typeof value !== 'object' || value === null) {
-        return null;
-    }
-    const lineNumber = 'lineNumber' in value ? String(value.lineNumber ?? '').trim() : '';
-    const itemAmount = 'itemAmount' in value ? positive({ value: value.itemAmount }) : 0;
-    const itemTax = 'itemTax' in value ? positive({ value: value.itemTax }) : 0;
-    const shippingAmount = 'shippingAmount' in value ? positive({ value: value.shippingAmount }) : 0;
-    return lineNumber ? { lineNumber, itemAmount, itemTax, shippingAmount } : null;
-}
-
-function positive({ value }: { value: unknown }): number {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-type PartialRefund = { lineNumber: string; itemAmount: number; itemTax: number; shippingAmount: number };
 
 type RefundChargeInput = { reason: string; chargeType: string; chargeName: string; amount: number; currency: string; tax: { name: string; amount: number } | null };
 
