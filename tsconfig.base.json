@@ -2111,6 +2111,9 @@
       ],
       "@activepieces/piece-connectuc": [
         "packages/pieces/community/connectuc/src/index.ts"
+      ],
+      "@vqnguyen1/piece-walmart": [
+        "packages/pieces/community/walmart/src/index.ts"
       ]
     },
     "resolveJsonModule": true
