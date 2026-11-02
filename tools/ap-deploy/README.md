@@ -25,10 +25,13 @@ timestamps and sample data are stripped; keys are sorted so diffs stay clean.
 Staff exports add `warehouseFlowId` and `status`, with `deployKey: null`.
 
 Staff exports are **redacted** before they are committed: values that look like credentials are
-replaced with `<redacted-by-ap-sync>` (fields named like `*token*`, `*secret*`, `*password*`,
-`*apikey*`, `Authorization`; `Bearer …`/`Basic …` values; `password = "…"` in code; known token
-formats such as `sk-…`, `ghp_…`, `AKIA…`; long random-looking strings). Template references like
-`{{connections['x']}}` are kept. The file then lists the touched fields under `redacted`, and
+replaced with `<redacted-by-ap-sync>`: fields whose name ends in a credential word (`apiKey`,
+`accessToken`, `client_secret`, `X-SC-Pass`, `Authorization`; not `maxTokens`, `secretName`,
+`passwordResetUrl`), `Bearer …`/`Basic …` values, `?api_key=`/`?key=`/`?token=` query values,
+`user:password@` in URLs, `password = "…"` in code, known token formats (`sk-…`, `ghp_…`, `shpat_…`,
+`AKIA…`, `AIza…`), 32+ hex characters and other long random-looking strings. Kept: template
+references like `{{connections['x']}}`, ids that are the whole value of an id-named field
+(`orderId`, `spreadsheetId`, `folder_id`), and Google Sheets/Docs/Drive ids inside their URLs. The file then lists the touched fields under `redacted`, and
 ap-sync logs a `WARNING export-staff …` line naming the flow and step. A redacted export is history,
 not a working copy: move the credential into a connection on the server.
 

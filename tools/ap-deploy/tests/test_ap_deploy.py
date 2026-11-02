@@ -388,7 +388,7 @@ class RedactionTests(unittest.TestCase):
 
     def test_high_entropy_token_in_body(self):
         out, found = self.redact({'body': 'key=Zk3q9XbT2mLpW8vR5nY1cJ7hF4dG6sA0 id=8f14e45fceea167a5a36dedd4bea2543'})
-        self.assertEqual(out['settings']['input']['body'], f'key={ap_deploy.REDACTED} id=8f14e45fceea167a5a36dedd4bea2543')
+        self.assertEqual(out['settings']['input']['body'], f'key={ap_deploy.REDACTED} id={ap_deploy.REDACTED}')
 
     def test_ordinary_values_untouched(self):
         inp = {'subject': 'VIN request for order 12345', 'to': 'buyer@example.com',
@@ -396,6 +396,46 @@ class RedactionTests(unittest.TestCase):
         out, found = self.redact(inp)
         self.assertEqual(out['settings']['input'], inp)
         self.assertEqual(found, [])
+
+    def test_secrets_in_urls_and_odd_fields(self):
+        R = ap_deploy.REDACTED
+        hexkey = '8f14e45fceea167a5a36dedd4bea2543'
+        cases = {
+            'https://api.example.com/v1/items?api_key=abc123&limit=5': f'https://api.example.com/v1/items?api_key={R}&limit=5',
+            'https://maps.example.com/geo?q=x&key=AbC9xYz': f'https://maps.example.com/geo?q=x&key={R}',
+            'https://x.example.com/feed?token=s3cr3t#top': f'https://x.example.com/feed?token={R}#top',
+            'sftp://pdcuser:hunter2@sftp.example.com/inbox': f'sftp://pdcuser:{R}@sftp.example.com/inbox',
+            f'X-Shopify-Access-Token shpat_{hexkey}': f'X-Shopify-Access-Token {R}',
+            f'https://hooks.example.com/services/{hexkey}/run': f'https://hooks.example.com/services/{R}/run',
+        }
+        for text, want in cases.items():
+            out, found = self.redact({'url': text})
+            self.assertEqual(out['settings']['input']['url'], want, text)
+            self.assertEqual(len(found), 1, text)
+        for key in ('X-SC-Pass', 'x_api_key', 'APIKey', 'accessToken', 'client_secret', 'sftpPassword', 'auth'):
+            out, found = self.redact({'headers': {key: 'ab12'}})
+            self.assertEqual(out['settings']['input']['headers'][key], R, key)
+
+    def test_no_false_positives(self):
+        hexid = '8f14e45fceea167a5a36dedd4bea2543'
+        sheet = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
+        inp = {
+            'maxTokens': '4096', 'tokenLimit': '1000', 'secretName': 'prod-db-creds',
+            'passwordResetUrl': 'https://example.com/reset', 'authType': 'none', 'bypass': 'yes',
+            'spreadsheetId': sheet, 'folder_id': '0B7_abcdEFGHijklMNOPqrstUVwxyz12', 'orderId': hexid,
+            'sheetUrl': f'https://docs.google.com/spreadsheets/d/{sheet}/edit#gid=0',
+            'driveUrl': f'https://drive.google.com/drive/folders/{sheet}',
+            'openUrl': f'https://drive.google.com/open?id={sheet}',
+            'webhook': 'https://example.com/hooks?keyword=brakes&page=2',
+            'valid': 'true',
+        }
+        out, found = self.redact(inp)
+        self.assertEqual(out['settings']['input'], inp)
+        self.assertEqual(found, [])
+
+    def test_hex_in_non_id_field_is_redacted(self):
+        out, found = self.redact({'note': '8f14e45fceea167a5a36dedd4bea2543'})
+        self.assertEqual(out['settings']['input']['note'], ap_deploy.REDACTED)
 
     def test_export_staff_writes_redacted_and_lists_fields(self):
         ap, repo = FakeAP(), Repo(self)

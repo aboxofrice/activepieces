@@ -619,9 +619,9 @@ def export_staff(client, repo, log=print):
 def redact_secrets(obj):
     """Copy of obj with values that look like credentials replaced by REDACTED.
 
-    Staff paste API keys straight into step inputs (HTTP headers, code); the nightly export must not
-    push them to GitHub. Returns (copy, [(step name, field path), ...]). Template references such as
-    {{connections['x']}} or {{trigger.body.token}} are not secrets and are kept."""
+    Staff paste API keys straight into step inputs (HTTP headers, URLs, code); the nightly export
+    must not push them to GitHub. Returns (copy, [(step name, field path), ...]). Template
+    references such as {{connections['x']}} or {{trigger.body.token}} are not secrets and are kept."""
     found = []
 
     def visit(value, step, path, key):
@@ -633,15 +633,28 @@ def redact_secrets(obj):
             return [visit(v, step, f'{path}[{i}]', key) for i, v in enumerate(value)]
         if not isinstance(value, str) or not value:
             return value
-        if key is not None and SECRET_KEY_RE.search(key) and not _only_templates(value):
+        if isinstance(key, str) and _is_secret_key(key) and not _only_templates(value):
             found.append((step, path))
             return REDACTED
+        if isinstance(key, str) and ID_KEY_RE.search(key) and ID_VALUE_RE.fullmatch(value) \
+                and not KNOWN_TOKEN_RE.fullmatch(value):
+            return value  # a record id (order, sheet, folder, ...) in an id-named field
         cleaned = _redact_text(value)
         if cleaned != value:
             found.append((step, path))
         return cleaned
 
     return visit(copy.deepcopy(obj), 'flow', '', None), found
+
+
+def _is_secret_key(key):
+    """Field names whose last word is a credential noun: apiKey, X-SC-Pass, client_secret,
+    accessToken. Not maxTokens, tokenLimit, secretName or passwordResetUrl."""
+    words = [w.lower() for w in KEY_WORD_RE.findall(key)]
+    if not words:
+        return False
+    last, prev = words[-1], (words[-2] if len(words) > 1 else '')
+    return last in SECRET_LAST_WORDS or (last == 'key' and prev in KEY_PREFIXES) or ''.join(words[-2:]) in SECRET_LAST_WORDS
 
 
 def _only_templates(value):
@@ -651,19 +664,27 @@ def _only_templates(value):
 
 def _redact_text(text):
     text = BEARER_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = URL_USERINFO_RE.sub(lambda m: m.group(1) + REDACTED + '@', text)
+    text = QUERY_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, text)
     text = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + REDACTED + m.group(2), text)
     text = KNOWN_TOKEN_RE.sub(REDACTED, text)
-    return LONG_TOKEN_RE.sub(lambda m: REDACTED if _looks_random(m.group(0)) else m.group(0), text)
+    keep = [m.span(2) for m in GOOGLE_ID_RE.finditer(text)]
+
+    def long_token(m):
+        if any(a <= m.start() < b for a, b in keep):
+            return m.group(0)
+        return REDACTED if _looks_random(m.group(0)) else m.group(0)
+    return LONG_TOKEN_RE.sub(long_token, text)
 
 
 def _looks_random(s):
+    if HEX_RE.fullmatch(s):
+        return True  # 32+ hex chars in free text: API keys and webhook secrets look like this
     if not (re.search(r'[0-9]', s) and re.search(r'[A-Za-z]', s)):
         return False
-    if UUID_OR_HEX_RE.fullmatch(s):
-        return False  # ids (UUIDs, hex hashes, AP's 21-char ids are too short anyway), not keys
     parts = re.split(r'[-_]', s)
     if len(parts) > 2 and max(len(p) for p in parts) < 16:
-        return False  # SKUs, slugs, part numbers: short dash/underscore-separated words
+        return False  # SKUs, slugs, part numbers, UUIDs: short dash/underscore-separated words
     classes = sum(bool(re.search(c, s)) for c in ('[a-z]', '[A-Z]', '[0-9]'))
     if classes < 3 and len(s) < 40:
         return False
@@ -672,17 +693,28 @@ def _looks_random(s):
     return entropy >= 3.5
 
 
-# Field names whose non-template values are credentials, e.g. headers.Authorization, apiKey, client_secret.
-SECRET_KEY_RE = re.compile(r'(?i)(passw(or)?d|passwd|secret|token|api[_-]?key|authorization|private[_-]?key|access[_-]?key|credential)')
+KEY_WORD_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+')
+SECRET_LAST_WORDS = {'password', 'passwd', 'pass', 'pwd', 'passphrase', 'passcode', 'secret', 'token',
+                     'authorization', 'auth', 'credential', 'credentials', 'apikey', 'signature', 'privatekey'}
+KEY_PREFIXES = {'api', 'private', 'access', 'secret', 'app', 'client', 'license', 'subscription', 'signing', 'encryption'}
+# Record ids are kept when they are the whole value of a field named like an id.
+ID_KEY_RE = re.compile(r'^(?:[Ii][Dd]s?|uuid|UUID)$|[_-](?:[Ii][Dd]s?|uuid|UUID)$|[a-z0-9](?:Id|ID|Ids|IDs|Uuid)$')
+ID_VALUE_RE = re.compile(r'[A-Za-z0-9_-]{8,}')
 TEMPLATE_RE = re.compile(r'\{\{.*?\}\}', re.S)
 BEARER_RE = re.compile(r'(?i)\b((?:bearer|basic)\s+)(?!\{\{)[A-Za-z0-9._~+/=-]{8,}')
+URL_USERINFO_RE = re.compile(r'''(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@'"{}]+:)(?!\{\{)[^@\s/'"]+@''')
+QUERY_SECRET_RE = re.compile(
+    r'''(?i)([?&](?:api[_-]?key|apikey|key|token|access[_-]?token|auth|secret|client[_-]?secret|password|pass|pwd|sig|signature)=)(?!\{\{)[^&#\s"']+''')
 # password = "..." / apiKey: '...' inside code steps or free text.
 ASSIGNED_SECRET_RE = re.compile(
     r'''(?i)((?:passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*)(["'])(?!\{\{)[^"'\n]{4,}\2''')
 KNOWN_TOKEN_RE = re.compile(
-    r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b')
+    r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}'
+    r'|AKIA[0-9A-Z]{16}|shp(?:at|ss|ca|pa)_[0-9a-fA-F]{32}|AIza[0-9A-Za-z_-]{35})\b')
 LONG_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])')
-UUID_OR_HEX_RE = re.compile(r'[0-9a-fA-F]{32,}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+HEX_RE = re.compile(r'[0-9a-fA-F]{32,}')
+# Google Sheets / Docs / Drive ids inside their URLs are document ids, not credentials.
+GOOGLE_ID_RE = re.compile(r'(https?://(?:docs|drive|sheets)\.google\.com/[^\s"\']*?(?:/d/|/folders/|[?&]id=))([A-Za-z0-9_-]{20,})')
 
 
 # ---------- CLI ----------
