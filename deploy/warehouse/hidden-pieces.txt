@@ -35,7 +35,6 @@
 @activepieces/piece-apitable
 @activepieces/piece-apitemplate-io
 @activepieces/piece-appfollow
-@activepieces/piece-approval
 @activepieces/piece-ashby
 @activepieces/piece-ask-handle
 @activepieces/piece-asknews
@@ -251,7 +250,6 @@
 @activepieces/piece-hunter
 @activepieces/piece-hystruct
 @activepieces/piece-ibm-cognose
-@activepieces/piece-image-helper
 @activepieces/piece-image-router
 @activepieces/piece-imap
 @activepieces/piece-imeetify
