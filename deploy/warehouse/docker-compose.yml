@@ -1,16 +1,42 @@
 # Warehouse (production) stack: Community edition, image pulled from GHCR, no dev-piece mounts.
 # Created and started by install.sh; secrets live in ./.env (generated, root-only, never committed).
+#
+# No service reads .env wholesale (env_file): each gets only the variables it needs, so pieces
+# running inside the app never see GITHUB_TOKEN, ADMIN_PASSWORD or the backup keys. .env still
+# feeds the ${...} substitutions below. Extra AP_* settings for the app go in ./app.env (optional).
 name: ${COMPOSE_PROJECT_NAME:-activepieces}
 
 services:
   activepieces:
     image: ${AP_IMAGE}
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: app.env
+        required: false
     environment:
       # File-passing steps fetch AP_FRONTEND_URL from inside the container, so the app must
       # listen on the same port it is published on.
       AP_PORT: ${AP_HTTP_PORT:-8080}
+      AP_FRONTEND_URL: ${AP_FRONTEND_URL}
+      AP_EDITION: ${AP_EDITION:-ce}
+      AP_ENVIRONMENT: ${AP_ENVIRONMENT:-prod}
+      AP_EXECUTION_MODE: ${AP_EXECUTION_MODE:-SANDBOX_CODE_ONLY}
+      AP_ENCRYPTION_KEY: ${AP_ENCRYPTION_KEY}
+      AP_JWT_SECRET: ${AP_JWT_SECRET}
+      AP_POSTGRES_DATABASE: ${AP_POSTGRES_DATABASE}
+      AP_POSTGRES_HOST: ${AP_POSTGRES_HOST:-postgres}
+      AP_POSTGRES_PORT: ${AP_POSTGRES_PORT:-5432}
+      AP_POSTGRES_USERNAME: ${AP_POSTGRES_USERNAME}
+      AP_POSTGRES_PASSWORD: ${AP_POSTGRES_PASSWORD}
+      AP_REDIS_HOST: ${AP_REDIS_HOST:-redis}
+      AP_REDIS_PORT: ${AP_REDIS_PORT:-6379}
+      AP_TELEMETRY_ENABLED: ${AP_TELEMETRY_ENABLED:-false}
+      AP_TRIGGER_DEFAULT_POLL_INTERVAL: ${AP_TRIGGER_DEFAULT_POLL_INTERVAL:-5}
+      AP_WORKER_CONCURRENCY: ${AP_WORKER_CONCURRENCY:-25}
+      AP_REUSE_SANDBOX: ${AP_REUSE_SANDBOX:-true}
+      AP_FLOW_TIMEOUT_SECONDS: ${AP_FLOW_TIMEOUT_SECONDS:-600}
+      AP_WEBHOOK_TIMEOUT_SECONDS: ${AP_WEBHOOK_TIMEOUT_SECONDS:-30}
+      TZ: ${TZ:-America/New_York}
     ports:
       - '${AP_HTTP_PORT:-8080}:${AP_HTTP_PORT:-8080}'
     depends_on:
