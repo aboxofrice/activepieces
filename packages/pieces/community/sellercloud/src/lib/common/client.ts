@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { HttpError, HttpMethod, QueryParams, httpClient } from '@activepieces/pieces-common';
 import { tryCatch } from '@activepieces/shared';
 
@@ -8,30 +9,51 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 // `store` is the flow's key-value store. The engine forks a process per sandbox, so the
 // module cache dies with the run; passing the store keeps one login alive across runs.
 async function getToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<string> {
-    const cacheKey = `${apiBase({ auth })}|${auth.username}`;
+    const cacheKey = connectionKey({ auth });
     const cached = tokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.token;
     }
-    const stored = store ? await readStoredToken({ store }) : null;
+    const stored = store ? await readStoredToken({ store, cacheKey }) : null;
     if (stored && stored.expiresAt > Date.now()) {
         tokenCache.set(cacheKey, stored);
         return stored.token;
     }
-    const response = await sendWithRetry<CreateTokenResponse>({
+    const response = await fetchToken({ auth });
+    const entry = { token: response.access_token, expiresAt: expiryFrom({ response }), connection: cacheKey };
+    tokenCache.set(cacheKey, entry);
+    if (store) {
+        await store.put(tokenStoreKey({ cacheKey }), entry);
+    }
+    return entry.token;
+}
+
+// The framework's HttpError serialises the request body into its message, and the login
+// body is the password. Only the status and SellerCloud's own reply may leave this function.
+async function fetchToken({ auth }: { auth: SellercloudAuthProps }): Promise<CreateTokenResponse> {
+    const { data, error } = await tryCatch(() => sendWithRetry<CreateTokenResponse>({
         request: {
             method: HttpMethod.POST,
             url: `${apiBase({ auth })}/token`,
             headers: { 'Content-Type': 'application/json' },
             body: { Username: auth.username, Password: auth.password },
         },
-    });
-    const entry = { token: response.access_token, expiresAt: expiryFrom({ response }) };
-    tokenCache.set(cacheKey, entry);
-    if (store) {
-        await store.put(TOKEN_STORE_KEY, entry);
+    }));
+    if (error) {
+        throw new Error(`SellerCloud login failed: ${safeErrorMessage({ error, auth })}`);
     }
-    return entry.token;
+    return data;
+}
+
+// A flow can hold steps on different SellerCloud connections, and the store is shared by
+// every step of the flow, so each connection gets its own key. Hashed so the username is
+// not written into the key.
+function connectionKey({ auth }: { auth: SellercloudAuthProps }): string {
+    return createHash('sha256').update(`${apiBase({ auth })}|${auth.username.trim().toLowerCase()}`).digest('hex').slice(0, 24);
+}
+
+function tokenStoreKey({ cacheKey }: { cacheKey: string }): string {
+    return `${TOKEN_STORE_KEY_PREFIX}${cacheKey}`;
 }
 
 // SellerCloud reports expires_in (seconds). This is an optimisation only — a stale token
@@ -41,9 +63,12 @@ function expiryFrom({ response }: { response: CreateTokenResponse }): number {
     return Date.now() + Math.max(MIN_TOKEN_TTL_MS, lifetimeMs - TOKEN_RENEW_EARLY_MS);
 }
 
-async function readStoredToken({ store }: { store: TokenStore }): Promise<{ token: string; expiresAt: number } | null> {
-    const { data } = await tryCatch(() => store.get<{ token: string; expiresAt: number }>(TOKEN_STORE_KEY));
-    return data && typeof data.token === 'string' && typeof data.expiresAt === 'number' ? data : null;
+async function readStoredToken({ store, cacheKey }: { store: TokenStore; cacheKey: string }): Promise<{ token: string; expiresAt: number } | null> {
+    const { data } = await tryCatch(() => store.get<StoredToken>(tokenStoreKey({ cacheKey })));
+    if (!data || typeof data.token !== 'string' || typeof data.expiresAt !== 'number' || data.connection !== cacheKey) {
+        return null;
+    }
+    return { token: data.token, expiresAt: data.expiresAt };
 }
 
 // SellerCloud answers 409 {"Error":"Too many requests.","RateLimitResetTime":"..."} when
@@ -64,8 +89,8 @@ async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<
 // A 502/503/504 says the gateway gave up, not that the server did nothing: the request may
 // well have been processed. Repeating a read or fetching a token is harmless; repeating an
 // inventory adjustment applies the same delta twice. That is how a run's zero-writes left 41
-// SKUs at minus their original stock. Only a 409/429 is safe to retry for a write, because
-// SellerCloud rejects those before doing any work.
+// SKUs at minus their original stock. A write is only retried on SellerCloud's rate-limit
+// reply, which it sends before doing any work; any other 409 is a real conflict.
 function isSafeToRepeat({ request }: { request: Parameters<typeof httpClient.sendRequest>[0] }): boolean {
     return request.method === HttpMethod.GET || /\/token\/?$/.test(request.url);
 }
@@ -74,32 +99,48 @@ function retryDelayMs({ error, attempt, safeToRepeat }: { error: Error; attempt:
     if (attempt >= MAX_ATTEMPTS || !(error instanceof HttpError)) {
         return null;
     }
-    const status = error.response.status;
-    if (status === RATE_LIMITED_STATUS || status === 429) {
-        const wait = rateLimitWaitMs({ body: error.response.body });
-        return wait !== null && wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
+    const { status, body } = error.response;
+    if (isRateLimited({ status, body })) {
+        const wait = rateLimitWaitMs({ body });
+        return wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
     }
-    if (safeToRepeat && TRANSIENT_STATUSES.includes(status)) {
+    if (safeToRepeat && (TRANSIENT_STATUSES.includes(status) || status === CONFLICT_STATUS)) {
         return BASE_BACKOFF_MS * 2 ** (attempt - 1);
     }
     return null;
 }
 
-function rateLimitWaitMs({ body }: { body: unknown }): number | null {
-    const resetTime = (body as { RateLimitResetTime?: string } | null)?.RateLimitResetTime;
-    if (!resetTime) {
-        return BASE_BACKOFF_MS;
+function isRateLimited({ status, body }: { status: number; body: unknown }): boolean {
+    if (status === 429) {
+        return true;
     }
-    const resetAt = Date.parse(resetTime);
+    if (status !== CONFLICT_STATUS) {
+        return false;
+    }
+    const errorText = recordField({ value: body, field: 'Error' });
+    return recordField({ value: body, field: 'RateLimitResetTime' }) !== null || (errorText !== null && /too many requests/i.test(errorText));
+}
+
+function rateLimitWaitMs({ body }: { body: unknown }): number {
+    const resetTime = recordField({ value: body, field: 'RateLimitResetTime' });
+    const resetAt = resetTime === null ? Number.NaN : Date.parse(resetTime);
     if (Number.isNaN(resetAt)) {
         return BASE_BACKOFF_MS;
     }
     return Math.max(BASE_BACKOFF_MS, resetAt - Date.now() + RATE_LIMIT_PADDING_MS);
 }
 
+function recordField({ value, field }: { value: unknown; field: string }): string | null {
+    if (typeof value !== 'object' || value === null || !(field in value)) {
+        return null;
+    }
+    const found: unknown = Object.entries(value).find(([key]) => key === field)?.[1];
+    return typeof found === 'string' && found !== '' ? found : null;
+}
+
 async function tryGetToken({ auth }: { auth: SellercloudAuthProps }): Promise<{ error: string | null }> {
     const { error } = await tryCatch(() => getToken({ auth }));
-    return { error: error ? describeError({ error }) : null };
+    return { error: error ? safeErrorMessage({ error, auth }) : null };
 }
 
 // Callers that make many requests (catalog paging, job polling) pass `token` so one run
@@ -125,13 +166,13 @@ async function request<T>({ auth, token, store, method, path, queryParams, body 
         return first.data;
     }
     if (!isUnauthorized({ error: first.error })) {
-        throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error: first.error })}`);
+        throw new Error(`SellerCloud ${method} ${path} failed: ${safeErrorMessage({ error: first.error, auth })}`);
     }
     await invalidateToken({ auth, store });
     const freshToken = await getToken({ auth, store });
     const retry = await tryCatch(() => send({ accessToken: freshToken }));
     if (retry.error) {
-        throw new Error(`SellerCloud ${method} ${path} failed: ${describeError({ error: retry.error })}`);
+        throw new Error(`SellerCloud ${method} ${path} failed: ${safeErrorMessage({ error: retry.error, auth })}`);
     }
     return retry.data;
 }
@@ -141,9 +182,10 @@ function isUnauthorized({ error }: { error: Error }): boolean {
 }
 
 async function invalidateToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<void> {
-    tokenCache.delete(`${apiBase({ auth })}|${auth.username}`);
+    const cacheKey = connectionKey({ auth });
+    tokenCache.delete(cacheKey);
     if (store) {
-        await tryCatch(() => store.put(TOKEN_STORE_KEY, null));
+        await tryCatch(() => store.put(tokenStoreKey({ cacheKey }), null));
     }
 }
 
@@ -158,29 +200,32 @@ const catalogCache = new Map<string, { ids: string[]; expiresAt: number }>();
 // The engine forks a process per sandbox, so the module cache above dies with the run and
 // every flow run re-paid the ~53 pages. Keep it in the flow store too.
 async function listCatalogProductIds({ auth, token, store }: { auth: SellercloudAuthProps; token?: string; store?: TokenStore }): Promise<string[]> {
-    const cacheKey = apiBase({ auth });
+    const cacheKey = connectionKey({ auth });
     const cached = catalogCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.ids;
     }
-    const stored = store ? await readStoredCatalog({ store }) : null;
+    const stored = store ? await readStoredCatalog({ store, cacheKey }) : null;
     if (stored && stored.expiresAt > Date.now()) {
         catalogCache.set(cacheKey, stored);
         return stored.ids;
     }
     const products = await fetchAllPages<{ ID: string }>({ auth, token, path: '/Catalog' });
     const ids = products.map((product) => product.ID);
-    const entry = { ids, expiresAt: Date.now() + CATALOG_TTL_MS };
+    const entry = { ids, expiresAt: Date.now() + CATALOG_TTL_MS, connection: cacheKey };
     catalogCache.set(cacheKey, entry);
     if (store) {
-        await store.put(CATALOG_STORE_KEY, entry);
+        await store.put(`${CATALOG_STORE_KEY_PREFIX}${cacheKey}`, entry);
     }
     return ids;
 }
 
-async function readStoredCatalog({ store }: { store: TokenStore }): Promise<{ ids: string[]; expiresAt: number } | null> {
-    const { data } = await tryCatch(() => store.get<{ ids: string[]; expiresAt: number }>(CATALOG_STORE_KEY));
-    return data && Array.isArray(data.ids) && typeof data.expiresAt === 'number' ? data : null;
+async function readStoredCatalog({ store, cacheKey }: { store: TokenStore; cacheKey: string }): Promise<{ ids: string[]; expiresAt: number } | null> {
+    const { data } = await tryCatch(() => store.get<StoredCatalog>(`${CATALOG_STORE_KEY_PREFIX}${cacheKey}`));
+    if (!data || !Array.isArray(data.ids) || typeof data.expiresAt !== 'number' || data.connection !== cacheKey) {
+        return null;
+    }
+    return { ids: data.ids, expiresAt: data.expiresAt };
 }
 
 // SellerCloud silently caps pageSize (50 on /Catalog), so stop on the running total, not on pageNumber * pageSize.
@@ -211,28 +256,41 @@ function compactQuery({ queryParams }: { queryParams?: Record<string, string | n
     );
 }
 
+// Never reads HttpError.message: the framework puts the request body (credentials, PINs) in
+// it. The status and SellerCloud's reply are enough to act on.
 function describeError({ error }: { error: Error }): string {
     if (!(error instanceof HttpError)) {
         return error.message;
     }
     const { status, body } = error.response;
-    if (status === RATE_LIMITED_STATUS) {
-        const resetTime = (body as { RateLimitResetTime?: string } | null)?.RateLimitResetTime;
+    if (isRateLimited({ status, body })) {
+        const resetTime = recordField({ value: body, field: 'RateLimitResetTime' });
         return `rate limited by SellerCloud${resetTime ? `, resets at ${resetTime}` : ''}`;
     }
-    return `${status} ${JSON.stringify(body)}`;
+    const text = typeof body === 'string' ? body : JSON.stringify(body ?? null);
+    return `${status} ${text.length > MAX_ERROR_BODY_CHARS ? `${text.slice(0, MAX_ERROR_BODY_CHARS)}…` : text}`;
+}
+
+// Every message that can reach a step error or a dropdown goes through here, so a reply
+// that echoes a credential back is masked as well.
+function safeErrorMessage({ error, auth }: { error: unknown; auth?: SellercloudAuthProps }): string {
+    const message = error instanceof Error ? describeError({ error }) : String(error);
+    const secrets = [auth?.password, auth?.pinCode].filter((secret): secret is string => typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH);
+    return secrets.reduce((text, secret) => text.split(secret).join('[redacted]'), message);
 }
 
 const MAX_PAGE_SIZE = 500;
-const TOKEN_STORE_KEY = 'sellercloud_token';
+const TOKEN_STORE_KEY_PREFIX = 'sellercloud_token_';
 const DEFAULT_TOKEN_LIFETIME_S = 3600;
 const TOKEN_RENEW_EARLY_MS = 5 * 60 * 1000;
 const MIN_TOKEN_TTL_MS = 60 * 1000;
 // One PDC day runs five workers over several hours, so the list has to outlive a single
 // morning's ticks to be worth caching at all.
 const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
-const CATALOG_STORE_KEY = 'sellercloud_catalog_ids';
-const RATE_LIMITED_STATUS = 409;
+const CATALOG_STORE_KEY_PREFIX = 'sellercloud_catalog_ids_';
+const CONFLICT_STATUS = 409;
+const MAX_ERROR_BODY_CHARS = 600;
+const MIN_SECRET_LENGTH = 3;
 const TRANSIENT_STATUSES = [502, 503, 504];
 const MAX_ATTEMPTS = 4;
 const BASE_BACKOFF_MS = 2000;
@@ -248,6 +306,8 @@ export const sellercloudClient = {
     listWarehouses,
     listCatalogProductIds,
     apiBase,
+    safeErrorMessage,
+    isRateLimited,
 };
 
 export type SellercloudAuthProps = {
@@ -282,6 +342,10 @@ export type TokenStore = {
     get: <T>(key: string) => Promise<T | null>;
     put: (key: string, value: unknown) => Promise<unknown>;
 };
+
+type StoredToken = { token?: unknown; expiresAt?: unknown; connection?: unknown };
+
+type StoredCatalog = { ids?: string[]; expiresAt?: unknown; connection?: unknown };
 
 type CreateTokenResponse = {
     access_token: string;

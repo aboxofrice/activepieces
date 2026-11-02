@@ -44,7 +44,7 @@ export const exportCatalogCsv = createAction({
                 }
                 const { data, error } = await tryCatch(() => listExportColumns({ auth: sellercloudAuthProps(auth) }));
                 if (error) {
-                    return { disabled: true, options: [], placeholder: `Couldn't load columns: ${error.message}` };
+                    return { disabled: true, options: [], placeholder: `Couldn't load columns: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
                 }
                 return { disabled: false, options: data.map((column) => ({ label: column.Value, value: column.Key })) };
             },
