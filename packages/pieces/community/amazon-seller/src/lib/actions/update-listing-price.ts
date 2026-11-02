@@ -8,7 +8,7 @@ export const updateListingPrice = createAction({
     auth: amazonSellerAuth,
     name: 'update_listing_price',
     displayName: 'Update Listing Price',
-    description: 'Set the price of your offer on a listing, optionally with minimum/maximum allowed prices (used by Amazon to guard against pricing errors and by automated pricing).',
+    description: 'Set the price of your offer on a listing, optionally with minimum/maximum allowed prices (used by Amazon to guard against pricing errors and by automated pricing). Anything you leave empty, plus sale prices and business (B2B) pricing, is kept as it is on the listing.',
     props: {
         sku: amazonProps.sku(),
         price: Property.Number({
@@ -18,17 +18,17 @@ export const updateListingPrice = createAction({
         }),
         minimumPrice: Property.Number({
             displayName: 'Minimum Allowed Price',
-            description: 'Optional. Amazon deactivates the offer if the price ever drops below this.',
+            description: 'Optional. Amazon deactivates the offer if the price ever drops below this. Leave empty to keep the current value.',
             required: false,
         }),
         maximumPrice: Property.Number({
             displayName: 'Maximum Allowed Price',
-            description: 'Optional. Amazon deactivates the offer if the price ever rises above this.',
+            description: 'Optional. Amazon deactivates the offer if the price ever rises above this. Leave empty to keep the current value.',
             required: false,
         }),
         productType: Property.ShortText({
             displayName: 'Product Type',
-            description: 'Leave empty to read it from the listing (one extra request).',
+            description: 'Leave empty to use the type of the existing listing.',
             required: false,
         }),
         validationOnly: Property.Checkbox({
@@ -50,7 +50,8 @@ export const updateListingPrice = createAction({
         }
         const marketplaceId = amazonProps.resolveMarketplace({ auth, override: context.propsValue.marketplaceId });
         const sellerId = amazonProps.requireSellerId({ auth });
-        const productType = context.propsValue.productType?.trim() || await amazonListings.lookupProductType({ auth, sellerId, sku, marketplaceId });
+        const current = await amazonListings.readForUpdate({ auth, sellerId, sku, marketplaceId });
+        const productType = context.propsValue.productType?.trim() || current.productType;
         const currency = marketplaces.currencyFor({ marketplaceId });
         const submission = await amazonListings.setPrice({
             auth,
@@ -58,6 +59,7 @@ export const updateListingPrice = createAction({
             sku,
             marketplaceId,
             productType,
+            currentAttributes: current.attributes,
             price,
             currency,
             minimumPrice: minimumPrice ?? undefined,

@@ -56,9 +56,8 @@ export const confirmShipment = createAction({
         }),
         packageReferenceId: Property.ShortText({
             displayName: 'Package Reference',
-            description: 'Your ID for this package; use a different value per package when an order ships in several.',
+            description: 'A positive whole number identifying this package within the order (1, 2, 3...). Required when you list items; use a different number per package. Defaults to 1 when shipping a whole, not-yet-shipped order.',
             required: false,
-            defaultValue: '1',
         }),
         marketplaceId: amazonProps.marketplace(),
     },
@@ -69,7 +68,12 @@ export const confirmShipment = createAction({
         if (carrierCode === 'Other' && !carrierName?.trim()) {
             throw new Error('Carrier Name is required when Carrier is Other.');
         }
-        const orderItems = await resolveItems({ auth, orderId, items: context.propsValue.items });
+        const resolved = await resolveItems({ auth, orderId, items: context.propsValue.items });
+        if (resolved.items.length === 0) {
+            throw new Error(`Nothing left to ship on order ${orderId}: every item is already shipped (or the order has no items).`);
+        }
+        const packageReference = resolvePackageReference({ given: packageReferenceId, explicitItems: resolved.explicit, partlyShipped: resolved.partlyShipped });
+        const orderItems = resolved.items;
         await spApiClient.request<unknown>({
             auth,
             method: HttpMethod.POST,
@@ -77,7 +81,7 @@ export const confirmShipment = createAction({
             body: {
                 marketplaceId: amazonProps.resolveMarketplace({ auth, override: context.propsValue.marketplaceId }),
                 packageDetail: {
-                    packageReferenceId: packageReferenceId?.trim() || '1',
+                    packageReferenceId: packageReference,
                     carrierCode,
                     ...(carrierName?.trim() ? { carrierName: carrierName.trim() } : {}),
                     ...(shippingMethod?.trim() ? { shippingMethod: shippingMethod.trim() } : {}),
@@ -92,29 +96,66 @@ export const confirmShipment = createAction({
             confirmed: true,
             carrier: carrierCode === 'Other' ? carrierName : carrierCode,
             tracking_number: trackingNumber.trim(),
+            package_reference_id: packageReference,
             items: orderItems,
         };
     },
 });
 
-async function resolveItems({ auth, orderId, items }: ResolveItemsParams): Promise<{ orderItemId: string; quantity: number }[]> {
-    const given = (items ?? []).filter(isItemInput).map((item) => ({ orderItemId: String(item['orderItemId']).trim(), quantity: Number(item['quantity']) }));
+async function resolveItems({ auth, orderId, items }: ResolveItemsParams): Promise<ResolvedItems> {
+    const given = (items ?? []).filter(spApiClient.isRecord).map((item, index) => parseItem({ item, index }));
     if (given.length > 0) {
-        return given;
+        return { items: given, explicit: true, partlyShipped: false };
     }
     const all = await amazonOrders.getOrderItems({ auth, orderId });
-    return all
-        .map((item) => ({ orderItemId: item.OrderItemId, quantity: (item.QuantityOrdered ?? 0) - (item.QuantityShipped ?? 0) }))
-        .filter((item) => item.quantity > 0);
+    return {
+        items: all
+            .map((item) => ({ orderItemId: item.OrderItemId, quantity: (item.QuantityOrdered ?? 0) - (item.QuantityShipped ?? 0) }))
+            .filter((item) => item.quantity > 0),
+        explicit: false,
+        partlyShipped: all.some((item) => (item.QuantityShipped ?? 0) > 0),
+    };
 }
 
-function isItemInput(value: unknown): value is Record<string, unknown> {
-    return spApiClient.isRecord(value) && value['orderItemId'] !== undefined && value['orderItemId'] !== '' && Number(value['quantity']) > 0;
+function parseItem({ item, index }: { item: Record<string, unknown>; index: number }): { orderItemId: string; quantity: number } {
+    const orderItemId = String(item['orderItemId'] ?? '').trim();
+    const quantity = Number(item['quantity']);
+    if (!orderItemId) {
+        throw new Error(`Item ${index + 1} has no Order Item ID.`);
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+        throw new Error(`Item ${orderItemId} has quantity "${String(item['quantity'] ?? '')}"; it must be a positive whole number.`);
+    }
+    return { orderItemId, quantity };
 }
 
+// Amazon only accepts positive numeric package references, and two packages of one order
+// must not share one, so "1" is assumed only for the first shipment of a whole order.
+function resolvePackageReference({ given, explicitItems, partlyShipped }: { given: string | undefined | null; explicitItems: boolean; partlyShipped: boolean }): string {
+    const value = given?.trim() ?? '';
+    if (value) {
+        if (!/^[1-9]\d*$/.test(value)) {
+            throw new Error(`Package Reference "${value}" must be a positive whole number (1, 2, 3...).`);
+        }
+        return value;
+    }
+    if (explicitItems) {
+        throw new Error('Package Reference is required when you list the items in the package.');
+    }
+    if (partlyShipped) {
+        throw new Error('Part of this order is already shipped; set Package Reference to a number not used by an earlier package.');
+    }
+    return '1';
+}
 
 type ResolveItemsParams = {
     auth: ReturnType<typeof amazonSellerAuthProps>;
     orderId: string;
     items: unknown[] | undefined | null;
+};
+
+type ResolvedItems = {
+    items: { orderItemId: string; quantity: number }[];
+    explicit: boolean;
+    partlyShipped: boolean;
 };

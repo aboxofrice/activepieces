@@ -9,11 +9,11 @@ import { amazonProps } from '../common/props';
 export const checkPartFitment = createAction({
     auth: amazonSellerAuth,
     name: 'check_part_fitment',
-    displayName: 'Check Part Fitment (best effort)',
-    description: "Compare a part's Amazon catalog compatibility text with a vehicle (by VIN or year/make/model). Amazon does not expose its confirmed-fit data through the API for US listings, so this is a text match that answers likely fits / likely does not fit / unknown — confirm before telling a buyer.",
+    displayName: 'Check Part Fitment (text heuristic)',
+    description: "Compare a part's Amazon catalog compatibility text with a vehicle (by VIN or year/make/model). This is a text heuristic, NOT confirmed fitment: Amazon does not expose its confirmed-fit data through the API for US listings. Answers text_match / text_mismatch / unknown with a confidence and the text it relied on; confirm before telling a buyer.",
     props: {
         notice: Property.MarkDown({
-            value: 'Amazon\'s "Confirmed Fit" database is not readable through SP-API in the US. This action reads the catalog\'s compatibility text (e.g. "2015-2016 Super Duty 6.7L") and the title, decodes a VIN with NHTSA\'s free vPIC service, and compares years and model names.',
+            value: '**Text heuristic, not confirmed fitment.** Amazon\'s "Confirmed Fit" database is not readable through SP-API in the US. This action reads the catalog\'s compatibility text (e.g. "2015-2016 Ford F-250 Super Duty 6.7L"), title and bullet points, decodes a VIN with NHTSA\'s free vPIC service, and checks that the text names the vehicle\'s make, its model, and a model-year range next to that model. `text_match` means the text says so; it does not mean Amazon has confirmed the fit.',
         }),
         asin: Property.ShortText({
             displayName: 'ASIN',
@@ -45,10 +45,10 @@ export const checkPartFitment = createAction({
         const flat = amazonCatalog.flattenCatalogItem({ item, marketplaceId });
         const attrs = item.attributes ?? {};
         const assessment = fitment.assessFitment({
-            texts: [
-                flat.compatibility_options,
-                flat.item_name ?? '',
-                ...amazonCatalog.allValues({ attrs, key: 'bullet_point' }),
+            sources: [
+                { label: 'compatibility', text: flat.compatibility_options },
+                { label: 'title', text: flat.item_name ?? '' },
+                ...amazonCatalog.allValues({ attrs, key: 'bullet_point' }).map((text) => ({ label: 'bullet', text })),
             ],
             fitType: flat.automotive_fit_type,
             brand: flat.brand,
@@ -56,6 +56,8 @@ export const checkPartFitment = createAction({
         });
         return {
             ...assessment,
+            method: 'text_heuristic',
+            fitment_confirmed: false,
             reasons: assessment.reasons.join(' '),
             asin: flat.asin,
             item_name: flat.item_name,

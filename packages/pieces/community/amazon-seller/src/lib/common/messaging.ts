@@ -26,6 +26,9 @@ async function getBuyerAttributes({ auth, orderId, marketplaceId }: OrderScope):
 // Amazon decides per order which message types are allowed (order state, age, channel), and
 // a disallowed POST fails with a terse 403. Checking first turns that into an actionable error.
 async function sendTextMessage({ auth, orderId, marketplaceId, messageType, text }: SendTextMessageParams): Promise<SentMessage> {
+    if (!TEXT_MESSAGE_TYPES.some((type) => type.value === messageType)) {
+        throw new Error(`"${messageType}" is not a supported message type. Use one of: ${TEXT_MESSAGE_TYPES.map((type) => type.value).join(', ')}.`);
+    }
     const allowed = await getAvailableMessageTypes({ auth, orderId, marketplaceId });
     if (!allowed.includes(messageType)) {
         const available = allowed.length > 0 ? allowed.join(', ') : 'none';
@@ -34,7 +37,7 @@ async function sendTextMessage({ auth, orderId, marketplaceId, messageType, text
     await spApiClient.request<unknown>({
         auth,
         method: HttpMethod.POST,
-        path: `/messaging/v1/orders/${encodeURIComponent(orderId.trim())}/messages/${messageType}`,
+        path: `/messaging/v1/orders/${encodeURIComponent(orderId.trim())}/messages/${encodeURIComponent(messageType)}`,
         queryParams: { marketplaceIds: [marketplaceId] },
         body: { text },
     });

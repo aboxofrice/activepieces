@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
-import { HttpError, HttpMethod, HttpRequest, QueryParams, httpClient } from '@activepieces/pieces-common';
-import { tryCatch } from '@activepieces/shared';
+import { HttpMethod } from '@activepieces/pieces-common';
+import { tryCatch, tryCatchSync } from '@activepieces/shared';
 import { marketplaces } from './marketplaces';
+import { REQUEST_TIMEOUT_MS, RetryableFailure, spApiRetry } from './retry';
 
 // LWA access tokens live an hour; the token endpoint is rate limited too, so a flow that
 // runs several actions in one sandbox should not exchange the refresh token per request.
@@ -19,34 +20,35 @@ async function getAccessToken({ auth }: { auth: AmazonSellerAuthProps }): Promis
     return response.access_token;
 }
 
-// pieces-common's HttpError embeds the request body in its message and logs it, which for this
-// call is the client secret and refresh token. The token call goes to one fixed Amazon host, so it
-// uses fetch and builds its own error from the response alone.
-async function exchangeRefreshToken({ auth, attempt = 1 }: { auth: AmazonSellerAuthProps; attempt?: number }): Promise<LwaTokenResponse> {
-    const response = await fetch(LWA_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: auth.refreshToken.trim(),
-            client_id: auth.clientId.trim(),
-            client_secret: auth.clientSecret.trim(),
-        }).toString(),
-    });
-    const body: unknown = await response.json().catch(() => null);
-    if (response.ok && spApiClient.isRecord(body) && typeof body['access_token'] === 'string') {
-        return { access_token: body['access_token'], expires_in: typeof body['expires_in'] === 'number' ? body['expires_in'] : undefined };
+// The token call goes to one fixed Amazon host and its form body is the client secret and
+// refresh token, so it is sent with send(), whose errors carry only the response.
+async function exchangeRefreshToken({ auth }: { auth: AmazonSellerAuthProps }): Promise<LwaTokenResponse> {
+    const { data, error } = await tryCatch(() => sendWithRetry<unknown>({
+        request: {
+            method: HttpMethod.POST,
+            url: LWA_TOKEN_URL,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: auth.refreshToken.trim(),
+                client_id: auth.clientId.trim(),
+                client_secret: auth.clientSecret.trim(),
+            }).toString(),
+        },
+        safeToRepeat: true,
+    }));
+    if (error) {
+        throw new Error(`Login with Amazon token request failed: ${describeError({ error })}`);
     }
-    if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (attempt - 1))));
-        return exchangeRefreshToken({ auth, attempt: attempt + 1 });
+    if (isRecord(data) && typeof data['access_token'] === 'string') {
+        return { access_token: data['access_token'], expires_in: typeof data['expires_in'] === 'number' ? data['expires_in'] : undefined };
     }
-    throw new Error(`Login with Amazon token request failed: HTTP ${response.status}: ${lwaErrorText({ body }) ?? 'no error details'}`);
+    throw new Error('Login with Amazon token request failed: the response had no access token.');
 }
 
 async function tryGetAccessToken({ auth }: { auth: AmazonSellerAuthProps }): Promise<{ error: string | null }> {
     const { error } = await tryCatch(() => getAccessToken({ auth }));
-    return { error: error ? describeError({ error }) : null };
+    return { error: error ? error.message : null };
 }
 
 function apiBase({ auth }: { auth: AmazonSellerAuthProps }): string {
@@ -59,14 +61,13 @@ async function request<T>({ auth, method, path, queryParams, body }: SpApiReques
     const send = async ({ accessToken }: { accessToken: string }) => sendWithRetry<T>({
         request: {
             method,
-            url: `${apiBase({ auth })}${path}`,
+            url: withQuery({ url: `${apiBase({ auth })}${path}`, queryParams }),
             headers: {
                 'x-amz-access-token': accessToken,
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
             },
-            queryParams: compactQuery({ queryParams }),
-            body,
+            body: body === undefined ? undefined : JSON.stringify(body),
         },
         safeToRepeat: method === HttpMethod.GET,
     });
@@ -102,51 +103,86 @@ async function fetchPages<TPage, TRow>({ fetchPage, rowsOf, nextTokenOf, maxRows
     return collect({ nextToken: undefined, collected: [] });
 }
 
-// SP-API answers a throttled call with 429 before doing any work, so a 429 is safe to retry
-// even for a write. A 5xx may mean the write landed, so only reads and token calls repeat it.
-async function sendWithRetry<T>({ request, safeToRepeat, attempt = 1 }: { request: HttpRequest; safeToRepeat: boolean; attempt?: number }): Promise<T> {
-    const { data, error } = await tryCatch(() => httpClient.sendRequest<T>(request));
+// fetch rather than pieces-common's httpClient: its HttpError drops the response headers
+// (Retry-After, x-amzn-RateLimit-Limit) and embeds the request body in its message.
+async function sendWithRetry<T>({ request, safeToRepeat, attempt = 1, startedAt = Date.now() }: SendParams): Promise<T> {
+    const { data, error } = await tryCatch(() => sendOnce<T>({ request }));
     if (!error) {
-        return data.body;
+        return data;
     }
-    const delay = retryDelayMs({ error, attempt, safeToRepeat });
+    const failure = retryableFailure({ error });
+    const delay = failure === null ? null : spApiRetry.delayBeforeRetry({ failure, attempt, safeToRepeat, elapsedMs: Date.now() - startedAt });
     if (delay === null) {
         throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, delay));
-    return sendWithRetry({ request, safeToRepeat, attempt: attempt + 1 });
+    return sendWithRetry({ request, safeToRepeat, attempt: attempt + 1, startedAt });
 }
 
-function retryDelayMs({ error, attempt, safeToRepeat }: { error: Error; attempt: number; safeToRepeat: boolean }): number | null {
-    if (attempt >= MAX_ATTEMPTS || !(error instanceof HttpError)) {
-        return null;
+async function sendOnce<T>({ request }: { request: RawRequest }): Promise<T> {
+    const response = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    }).catch((cause: unknown) => {
+        throw new NetworkError({ cause });
+    });
+    // The timeout also covers reading the body; a failure there is a network error too.
+    const text = await response.text().catch((cause: unknown) => {
+        throw new NetworkError({ cause });
+    });
+    const body = parseBody<T>({ text });
+    if (!response.ok) {
+        throw new SpApiHttpError({
+            status: response.status,
+            body,
+            serverDelayMs: spApiRetry.serverRequestedDelayMs({ headers: response.headers, now: Date.now() }),
+        });
     }
-    const status = error.response.status;
-    const retryable = status === 429 || (safeToRepeat && TRANSIENT_STATUSES.includes(status));
-    if (!retryable) {
-        return null;
+    return body;
+}
+
+// JSON.parse is untyped; non-JSON text is returned as a JSON string so callers still get a value.
+function parseBody<T>({ text }: { text: string }): T {
+    const parsed = tryCatchSync(() => JSON.parse(text));
+    return parsed.error ? JSON.parse(JSON.stringify(text)) : parsed.data;
+}
+
+function retryableFailure({ error }: { error: Error }): RetryableFailure | null {
+    if (error instanceof NetworkError) {
+        return { kind: 'network' };
     }
-    // getOrders restores one request a minute once its burst is spent, so the backoff has
-    // to reach a minute or every retry lands inside the same empty bucket.
-    const backoff = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (attempt - 1));
-    return backoff + Math.floor(Math.random() * JITTER_MS);
+    return error instanceof SpApiHttpError ? { kind: 'http', status: error.status, serverDelayMs: error.serverDelayMs } : null;
 }
 
 function isUnauthorized({ error }: { error: Error }): boolean {
-    return error instanceof HttpError && (error.response.status === 401 || isExpiredTokenForbidden({ error }));
+    return error instanceof SpApiHttpError && (error.status === 401 || isExpiredTokenForbidden({ error }));
 }
 
-function isExpiredTokenForbidden({ error }: { error: HttpError }): boolean {
-    return error.response.status === 403 && JSON.stringify(error.response.body ?? '').includes('expired');
+// A 403 is usually a missing role or wrong seller, which a new token will not fix. Only
+// Amazon's Unauthorized/InvalidAccessToken errors about the token itself are worth a re-login.
+function isExpiredTokenForbidden({ error }: { error: SpApiHttpError }): boolean {
+    if (error.status !== 403 || !isRecord(error.body) || !Array.isArray(error.body['errors'])) {
+        return false;
+    }
+    return error.body['errors'].filter(isRecord).some((entry) => {
+        const code = typeof entry['code'] === 'string' ? entry['code'] : '';
+        const text = [entry['message'], entry['details']].filter((part) => typeof part === 'string').join(' ');
+        return code === 'InvalidAccessToken' || (code === 'Unauthorized' && ACCESS_TOKEN_PROBLEM.test(text));
+    });
 }
 
 function describeError({ error }: { error: Error }): string {
-    if (!(error instanceof HttpError)) {
+    if (error instanceof NetworkError) {
+        return `network error: ${error.message}`;
+    }
+    if (!(error instanceof SpApiHttpError)) {
         return error.message;
     }
-    const body = error.response.body;
-    const detail = spApiErrorText({ body }) ?? lwaErrorText({ body }) ?? JSON.stringify(body ?? '');
-    return `HTTP ${error.response.status}: ${detail}`;
+    const body = error.body;
+    const detail = spApiErrorText({ body }) ?? lwaErrorText({ body }) ?? JSON.stringify(body ?? '').slice(0, 500);
+    return `HTTP ${error.status}: ${detail}`;
 }
 
 function spApiErrorText({ body }: { body: unknown }): string | null {
@@ -168,26 +204,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function compactQuery({ queryParams }: { queryParams?: SpApiQuery }): QueryParams {
-    return Object.fromEntries(
-        Object.entries(queryParams ?? {})
-            .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0))
-            .map(([key, value]) => [key, Array.isArray(value) ? value.join(',') : String(value)]),
-    );
+function withQuery({ url, queryParams }: { url: string; queryParams?: SpApiQuery }): string {
+    const target = new URL(url);
+    Object.entries(queryParams ?? {})
+        .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0))
+        .forEach(([key, value]) => target.searchParams.append(key, Array.isArray(value) ? value.join(',') : String(value)));
+    return target.toString();
 }
 
+// Hashed so the cache never holds the raw credentials; the secret is part of it so that fixing
+// a wrong secret on a connection is not masked by a token cached under the old one.
 function tokenCacheKey({ auth }: { auth: AmazonSellerAuthProps }): string {
-    return createHash('sha256').update(`${auth.clientId}|${auth.refreshToken}`).digest('hex');
+    return createHash('sha256').update(`${auth.clientId}|${auth.clientSecret}|${auth.refreshToken}`).digest('hex');
 }
 
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
 const DEFAULT_TOKEN_LIFETIME_S = 3600;
 const TOKEN_RENEW_EARLY_MS = 5 * 60 * 1000;
-const MAX_ATTEMPTS = 8;
-const BASE_BACKOFF_MS = 2000;
-const MAX_BACKOFF_MS = 60000;
-const JITTER_MS = 1000;
-const TRANSIENT_STATUSES = [500, 502, 503, 504];
+const ACCESS_TOKEN_PROBLEM = /access token.*(expired|revoked|invalid|malformed)/i;
+
+class NetworkError extends Error {
+    constructor({ cause }: { cause: unknown }) {
+        super(cause instanceof Error ? cause.message : String(cause));
+        this.name = 'NetworkError';
+    }
+}
+
+class SpApiHttpError extends Error {
+    readonly status: number;
+    readonly body: unknown;
+    readonly serverDelayMs: number | null;
+
+    constructor({ status, body, serverDelayMs }: { status: number; body: unknown; serverDelayMs: number | null }) {
+        super(`HTTP ${status}`);
+        this.name = 'SpApiHttpError';
+        this.status = status;
+        this.body = body;
+        this.serverDelayMs = serverDelayMs;
+    }
+}
 
 export const spApiClient = { apiBase, getAccessToken, tryGetAccessToken, request, fetchPages, isRecord };
 
@@ -215,6 +270,20 @@ type FetchPagesParams<TPage, TRow> = {
     rowsOf: (params: { page: TPage }) => TRow[];
     nextTokenOf: (params: { page: TPage }) => string | undefined;
     maxRows?: number;
+};
+
+type RawRequest = {
+    method: HttpMethod;
+    url: string;
+    headers: Record<string, string>;
+    body?: string;
+};
+
+type SendParams = {
+    request: RawRequest;
+    safeToRepeat: boolean;
+    attempt?: number;
+    startedAt?: number;
 };
 
 type LwaTokenResponse = {

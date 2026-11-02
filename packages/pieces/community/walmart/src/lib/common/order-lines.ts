@@ -1,33 +1,20 @@
 import { Property } from '@activepieces/pieces-framework';
 import { WalmartAuthProps } from './client';
+import { EligibleLine, walmartLineMath } from './line-math';
 import { walmartOrders } from './orders';
 
-// Leaving the lines empty means "the whole order": every line at its ordered quantity,
-// which is what most ship/cancel flows want and saves users from mapping line numbers.
-async function resolveLines({ auth, purchaseOrderId, lines }: { auth: WalmartAuthProps; purchaseOrderId: string; lines: unknown[] | undefined }): Promise<LineSelection[]> {
-    const chosen = (lines ?? []).map(parseLine).filter((line): line is LineSelection => line !== null);
-    if (chosen.length > 0) {
-        return chosen;
-    }
-    const order = walmartOrders.flattenOrder({ order: await walmartOrders.getOrder({ auth, purchaseOrderId }) });
-    return order.order_lines.map((line) => ({ lineNumber: line.line_number, quantity: line.quantity }));
-}
-
-function parseLine(value: unknown): LineSelection | null {
-    if (typeof value !== 'object' || value === null) {
-        return null;
-    }
-    const lineNumber = 'lineNumber' in value ? String(value.lineNumber ?? '').trim() : '';
-    const quantity = 'quantity' in value ? Number(value.quantity) : NaN;
-    if (!lineNumber) {
-        return null;
-    }
-    return { lineNumber, quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1 };
+// Leaving the lines empty means "the whole order": every line at the quantity still in a
+// status the action applies to, which saves users from mapping line numbers. The order is
+// always read so explicit rows can be checked against what is actually left.
+async function resolveLines({ auth, purchaseOrderId, lines, statuses, action }: ResolveLinesParams): Promise<LineSelection[]> {
+    const chosen = (lines ?? []).map((value, index) => walmartLineMath.parseLine({ value, index }));
+    const order = await walmartOrders.getOrder({ auth, purchaseOrderId });
+    return walmartLineMath.selectLines({ order, chosen, statuses, action });
 }
 
 export const orderLinesProp = Property.Array({
     displayName: 'Order Lines',
-    description: 'Leave empty to apply to every line of the order at its full quantity.',
+    description: 'Leave empty to apply to every line that can still take this action, at its remaining quantity.',
     required: false,
     properties: {
         lineNumber: Property.ShortText({
@@ -47,4 +34,12 @@ export const walmartOrderLines = {
     resolveLines,
 };
 
-export type LineSelection = { lineNumber: string; quantity: number };
+export type LineSelection = EligibleLine;
+
+type ResolveLinesParams = {
+    auth: WalmartAuthProps;
+    purchaseOrderId: string;
+    lines: unknown[] | undefined;
+    statuses: string[];
+    action: string;
+};

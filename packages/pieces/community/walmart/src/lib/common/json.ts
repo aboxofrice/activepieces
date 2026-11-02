@@ -1,7 +1,5 @@
-import { walmartClient } from './client';
-
 function valueAt({ value, path }: { value: unknown; path: string[] }): unknown {
-    return path.reduce<unknown>((current, key) => (walmartClient.isRecord(current) ? current[key] : undefined), value);
+    return path.reduce<unknown>((current, key) => (isRecord(current) ? current[key] : undefined), value);
 }
 
 function stringAt({ value, path }: { value: unknown; path: string[] }): string | undefined {
@@ -23,7 +21,7 @@ function numberAt({ value, path }: { value: unknown; path: string[] }): number |
 function arrayAt({ value, path }: { value: unknown; path: string[] }): Record<string, unknown>[] {
     const found = valueAt({ value, path });
     const list = Array.isArray(found) ? found : found === undefined || found === null ? [] : [found];
-    return list.filter(walmartClient.isRecord);
+    return list.filter(isRecord);
 }
 
 function isoFromEpoch({ epoch }: { epoch: number | undefined }): string | null {
@@ -46,7 +44,12 @@ function cursorRequest({ basePath, cursor }: { basePath: string; cursor: string 
         : { path: basePath, queryParams: { nextCursor: cursor } };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export const walmartJson = {
+    isRecord,
     valueAt,
     stringAt,
     numberAt,
