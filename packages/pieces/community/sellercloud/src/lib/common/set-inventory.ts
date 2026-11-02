@@ -283,7 +283,7 @@ async function verifyQuantities({ auth, token, store, warehouseId, expected, dea
         }
         // A pending adjustment reads as the OLD value, never as null, so a SKU that keeps
         // coming back null is an error or a missing row and will not improve by asking again.
-        // Re-reading it every 15s until the deadline is what turned Sherwood's 58 writes into
+        // Re-reading it every 15s until the deadline is what turned one supplier feed's 58 writes into
         // enough requests to lock the whole account out for an hour.
         outstanding = outstanding.filter((item) => !settled.has(item.productId)
             && (unreadableRounds.get(item.productId) ?? 0) < MAX_UNREADABLE_ROUNDS);
