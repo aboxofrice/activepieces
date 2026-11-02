@@ -90,12 +90,28 @@ function parseCursor({ value }: { value: unknown }): OrderCursor | null {
     return { fromMs: candidate.fromMs, offset: candidate.offset, startedAt: candidate.startedAt };
 }
 
+// The account behind a connection, cached by token: re-authorising the same account (a new
+// refresh token) must not look like a different account, or New Order would reset.
+async function accountName({ store, tokenKey, fetchUsername }: { store: NewOrderStore; tokenKey: string; fetchUsername: () => Promise<string> }): Promise<string> {
+    const cached = await store.get<unknown>(ACCOUNT_KEY);
+    if (typeof cached === 'object' && cached !== null) {
+        const entry: Partial<Record<'tokenKey' | 'username', unknown>> = Object.fromEntries(Object.entries(cached));
+        if (entry.tokenKey === tokenKey && typeof entry.username === 'string' && entry.username !== '') {
+            return entry.username;
+        }
+    }
+    const username = await fetchUsername();
+    await store.put(ACCOUNT_KEY, { tokenKey, username });
+    return username;
+}
+
 function timeOf({ value }: { value: string | undefined }): number {
     const parsed = value ? Date.parse(value) : Number.NaN;
     return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 const STATE_KEY = 'ebay_new_order_state';
+const ACCOUNT_KEY = 'ebay_new_order_account';
 const STATE_VERSION = 2;
 const OVERLAP_MS = 2 * 60 * 60 * 1000;
 const MAX_RESUME_GAP_MS = 6 * 60 * 60 * 1000;
@@ -103,7 +119,7 @@ const MAX_ORDERS_PER_POLL = 1000;
 const MAX_SEEN_IDS = 5000;
 const OFFSET_REREAD = 50;
 
-export const newOrderPoll = { enable, poll, OVERLAP_MS, MAX_ORDERS_PER_POLL };
+export const newOrderPoll = { enable, poll, accountName, OVERLAP_MS, MAX_ORDERS_PER_POLL };
 
 export type PolledOrder = { orderId: string; creationDate?: string };
 

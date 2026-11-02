@@ -1,7 +1,8 @@
 import { createTrigger, TriggerStrategy } from '@activepieces/pieces-framework';
+import { tryCatch } from '@activepieces/shared';
 import { ebayAuth } from '../../auth';
 import { EbayAuthProps, ebayClient } from '../../common/client';
-import { FetchOrders, newOrderPoll } from '../../common/new-order-poll';
+import { FetchOrders, NewOrderStore, newOrderPoll } from '../../common/new-order-poll';
 import { EbayOrder, orderCommon } from '../../common/order';
 
 export const newOrder = createTrigger({
@@ -64,7 +65,7 @@ export const newOrder = createTrigger({
         await newOrderPoll.enable({
             store: context.store,
             fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
-            fingerprint: fingerprint({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: await fingerprint({ auth: context.auth.props, store: context.store, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
         });
     },
     // State is kept on purpose: a publish disables and re-enables the trigger, and the
@@ -84,7 +85,7 @@ export const newOrder = createTrigger({
         const orders = await newOrderPoll.poll({
             store: context.store,
             fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
-            fingerprint: fingerprint({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: await fingerprint({ auth: context.auth.props, store: context.store, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
         });
         return orders.map((order) => orderCommon.flattenOrder({ order }));
     },
@@ -99,10 +100,24 @@ function buildFetch({ auth, fulfillmentStatus }: { auth: EbayAuthProps; fulfillm
     });
 }
 
-// Includes the connection, so switching the trigger to another account starts from a
-// fresh seed instead of replaying that account's recent orders.
-function fingerprint({ auth, fulfillmentStatus }: { auth: EbayAuthProps; fulfillmentStatus: string | undefined }): string {
-    return `order_new_order:${ebayClient.connectionKey({ auth })}:${fulfillmentStatus ?? ''}`;
+// Keyed on the seller account (environment + app + username), so switching the trigger to
+// another account starts from a fresh seed, while re-authorising the same account keeps
+// its state.
+async function fingerprint({ auth, store, fulfillmentStatus }: { auth: EbayAuthProps; store: NewOrderStore; fulfillmentStatus: string | undefined }): Promise<string> {
+    const username = await newOrderPoll.accountName({ store, tokenKey: ebayClient.connectionKey({ auth }), fetchUsername: () => sellerUsername({ auth }) });
+    return `order_new_order:${auth.environment ?? 'production'}:${auth.appId}:${username}:${fulfillmentStatus ?? ''}`;
+}
+
+// The identity API needs the commerce.identity.readonly scope, which an order-only token may
+// lack; the seller ID on the latest order names the same account. Failing both, the token
+// itself identifies the connection (re-authorising then resets the trigger).
+async function sellerUsername({ auth }: { auth: EbayAuthProps }): Promise<string> {
+    const identity = await tryCatch(() => ebayClient.getUsername({ auth }));
+    if (identity.data) {
+        return identity.data;
+    }
+    const latest = await tryCatch(() => orderCommon.listOrders({ auth, filter: undefined, maxOrders: 1 }));
+    return latest.data?.orders[0]?.sellerId ?? `token:${ebayClient.connectionKey({ auth })}`;
 }
 
 const TEST_ORDERS = 5;

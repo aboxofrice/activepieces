@@ -175,6 +175,27 @@ describe('New Order polling', () => {
         expect([...all].sort()).toEqual(Array.from({ length: 8 }, (_, index) => `n${index}`).sort());
     });
 
+    it('keeps its state when the same account is re-authorised with a new refresh token', async () => {
+        const store = memoryStore();
+        const source = fakeOrders({ orders: [order({ id: 'o1' })] });
+        const fetchUsername = vi.fn(async () => 'tgp_seller');
+        const fingerprintFor = async (tokenKey: string) => `order_new_order:production:app:${await newOrderPoll.accountName({ store, tokenKey, fetchUsername })}:`;
+        const before = await fingerprintFor('token-hash-1');
+        expect(await fingerprintFor('token-hash-1')).toBe(before);
+        expect(fetchUsername).toHaveBeenCalledTimes(1);
+        await newOrderPoll.enable({ store, fetchOrders: source.fetch, fingerprint: before, now: T0 });
+        source.orders.push(order({ id: 'o2' }));
+        // Re-authorised: new refresh token, same seller.
+        const after = await fingerprintFor('token-hash-2');
+        expect(fetchUsername).toHaveBeenCalledTimes(2);
+        expect(after).toBe(before);
+        expect(await newOrderPoll.enable({ store, fetchOrders: source.fetch, fingerprint: after, now: T0 + MINUTE })).toBe('resumed');
+        expect((await newOrderPoll.poll({ store, fetchOrders: source.fetch, fingerprint: after, now: T0 + 2 * MINUTE })).map((polled) => polled.orderId)).toEqual(['o2']);
+        // A different seller is a different trigger state.
+        fetchUsername.mockResolvedValueOnce('other_seller');
+        expect(await fingerprintFor('token-hash-3')).not.toBe(before);
+    });
+
     it('fails the poll on a store error instead of re-seeding', async () => {
         const store = memoryStore();
         const source = fakeOrders({ orders: [] });
