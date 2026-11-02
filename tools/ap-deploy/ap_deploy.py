@@ -21,11 +21,15 @@ Repo:          --repo <dir> or AP_FLOWS_REPO (default: current directory).
 """
 import argparse
 import copy
+import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -41,6 +45,12 @@ CONNECTION_REF = re.compile(r"connections\['([^']+)'\]")
 STEP_DROP = {'lastUpdatedDate'}
 SETTINGS_DROP = {'sampleData'}
 NOTE_DROP = {'ownerId', 'createdAt', 'updatedAt'}
+KEY_RE = re.compile(r'[a-z0-9][a-z0-9-]*')
+# Bumped when definition_hash changes; metadata written by an older ap-deploy is compared the old way.
+HASH_VERSION = 2
+# States that need a human; status exits 1 and ap-sync logs them.
+FLAGGED_STATES = ('error', 'drifted', 'missing-deps')
+REDACTED = '<redacted-by-ap-sync>'
 
 
 class ApiError(Exception):
@@ -54,7 +64,17 @@ class Client:
         if api_key:
             self.token = api_key
         elif email and password:
-            res = self.request('POST', '/v1/authentication/sign-in', {'email': email, 'password': password}, auth=False)
+            try:
+                res = self.request('POST', '/v1/authentication/sign-in', {'email': email, 'password': password}, auth=False)
+            except ApiError as e:
+                if re.search(r' -> (400|401|403):', str(e)):
+                    raise ApiError(
+                        f'sign-in as {email} was rejected ({e}). If the admin password was changed in the UI, '
+                        'put the new one in ADMIN_PASSWORD in the server .env (e.g. /data/.env) and re-run the '
+                        'installer, which recreates ap-sync with it.') from None
+                raise
+            if not isinstance(res, dict) or not res.get('token'):
+                raise ApiError(f'{self.url}: sign-in returned no token')
             self.token = res['token']
             self.project_id = self.project_id or res.get('projectId')
         else:
@@ -78,6 +98,8 @@ class Client:
             with urllib.request.urlopen(req, timeout=60) as res:
                 raw = res.read()
                 return json.loads(raw) if raw else None
+        except ValueError:
+            raise ApiError(f'{method} {path.split("?")[0]}: response is not JSON (proxy or error page?)') from None
         except urllib.error.HTTPError as e:
             raise ApiError(f'{method} {path.split("?")[0]} -> {e.code}: {e.read().decode(errors="replace")[:500]}') from None
         except urllib.error.URLError as e:
@@ -113,7 +135,7 @@ class Client:
             if ' -> 404' in str(e):
                 return False
             raise
-        return piece.get('version') == version
+        return isinstance(piece, dict) and piece.get('version') == version
 
 
 # ---------- normalization ----------
@@ -132,14 +154,46 @@ def normalize_flow(version, deploy_key):
     }
 
 
-def definition_hash(flow_def):
-    """Hash of what the flow does (deps and deployKey are derived/bookkeeping, so excluded)."""
-    core = {k: flow_def[k] for k in ('displayName', 'schemaVersion', 'notes', 'trigger')}
+def definition_hash(flow_def, hash_version=HASH_VERSION):
+    """Hash of what the flow does (deps and deployKey are derived/bookkeeping, so excluded).
+
+    schemaVersion is left out (v2): the server's flow-version migration bumps it on every image
+    upgrade without anyone editing the flow. Version 1 hashes (older metadata) included it."""
+    fields = ('displayName', 'schemaVersion', 'notes', 'trigger') if hash_version == 1 else ('displayName', 'notes', 'trigger')
+    core = {k: flow_def.get(k) for k in fields}
     return hashlib.sha256(canonical(core).encode()).hexdigest()[:16]
 
 
-def target_hash(flow):
-    return definition_hash(normalize_flow(flow['version'], None))
+def target_hash(flow, hash_version=HASH_VERSION):
+    return definition_hash(normalize_flow(flow['version'], None), hash_version)
+
+
+def check_drift(flow, meta):
+    """(drifted, rebaseline) for a managed flow on the target.
+
+    rebaseline=True means the flow differs from the recorded deployHash only because of something
+    that is not an edit, so the baseline should be re-recorded instead of flagging:
+      - the metadata was written with an older hash version, or
+      - an image upgrade migrated the deployed version in place: same version id as deployed, newer
+        schemaVersion. Staff edits never qualify: editing a published flow creates a new version id.
+    """
+    if not flow or not meta.get('deployHash'):
+        return False, False
+    stored_version = meta.get('hashVersion') or 1
+    if target_hash(flow, stored_version) == meta['deployHash']:
+        return False, stored_version != HASH_VERSION
+    version = flow['version']
+    if meta.get('deployVersionId') and meta['deployVersionId'] == version.get('id') \
+            and _schema_number(version.get('schemaVersion')) > _schema_number(meta.get('deploySchemaVersion')):
+        return False, True
+    return True, False
+
+
+def _schema_number(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
 
 
 def to_import_request(flow_def):
@@ -201,8 +255,10 @@ def _stamp_step(step, now):
 def write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     text = json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + '\n'
-    if os.path.exists(path) and open(path, encoding='utf-8').read() == text:
-        return False
+    if os.path.exists(path):
+        with open(path, encoding='utf-8') as f:
+            if f.read() == text:
+                return False
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
     return True
@@ -217,9 +273,16 @@ def load_deploy_config(repo, target):
     path = os.path.join(repo, DEPLOY_FILE)
     if not os.path.exists(path):
         raise ApiError(f'{path} not found')
-    config = read_json(path)
+    try:
+        config = read_json(path)
+    except ValueError as e:
+        raise ApiError(f'{DEPLOY_FILE} is not valid JSON: {e}') from None
+    if not isinstance(config, dict):
+        raise ApiError(f'{DEPLOY_FILE} must be an object of targets')
     if target not in config:
         raise ApiError(f'{DEPLOY_FILE} has no "{target}" entry (targets: {", ".join(config) or "none"})')
+    if not isinstance(config[target], dict):
+        raise ApiError(f'{DEPLOY_FILE} "{target}" must be an object of deploy keys')
     return config[target]
 
 
@@ -235,7 +298,7 @@ def export(client, repo, keys, flow_id=None, name=None, log=print):
         raise ApiError('--flow-id/--name take exactly one deploy key')
     written = []
     for key in keys:
-        if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', key):
+        if not KEY_RE.fullmatch(key):
             raise ApiError(f'deploy key "{key}" must be lowercase letters, digits and dashes')
         flow = _find_source_flow(flows, key, flow_id, name)
         existing_key = (flow.get('metadata') or {}).get('deployKey')
@@ -274,84 +337,165 @@ def _find_source_flow(flows, key, flow_id, name):
 # ---------- plan / apply / status (target instance) ----------
 
 def evaluate(client, repo, target):
-    """One record per managed flow: what state it is in and what apply would do."""
+    """One record per managed flow: what state it is in and what apply would do.
+
+    Each deploy key is evaluated on its own: a broken entry or flow file marks only that key as
+    `error`, the others are still applied."""
     wanted = load_deploy_config(repo, target)
     flows = client.flows()
     by_key = {}
     for f in flows:
-        key = (f.get('metadata') or {}).get('deployKey')
+        meta = f.get('metadata')
+        key = meta.get('deployKey') if isinstance(meta, dict) else None
         if key:
             by_key.setdefault(key, []).append(f)
     connections = client.connection_names()
     piece_cache = {}
     records = []
     for key in sorted(wanted):
-        desired = 'ENABLED' if wanted[key].get('enabled') else 'DISABLED'
-        rec = {'key': key, 'desired': desired, 'flow': None, 'status': None, 'action': 'none', 'reason': ''}
-        records.append(rec)
-        path = os.path.join(repo, MANAGED_DIR, f'{key}.json')
-        if not os.path.exists(path):
-            rec.update(state='error', reason=f'{MANAGED_DIR}/{key}.json missing')
-            continue
-        flow_def = read_json(path)
-        rec['def'] = flow_def
-        rec['sourceHash'] = definition_hash(flow_def)
         matches = by_key.get(key, [])
-        if len(matches) > 1:
-            rec.update(state='error', reason=f'{len(matches)} target flows carry this deployKey: {", ".join(f["id"] for f in matches)}')
-            continue
-        flow = matches[0] if matches else None
-        rec['flow'] = flow
-        rec['status'] = flow['status'] if flow else None
-        missing = _missing_deps(client, flow_def, connections, piece_cache)
-        meta = (flow or {}).get('metadata') or {}
-        if flow and meta.get('deployHash') and target_hash(flow) != meta['deployHash']:
-            rec.update(state='drifted', reason='edited on this server since the last apply; not overwritten')
-        elif missing:
-            rec.update(state='missing-deps', reason='missing ' + ', '.join(missing))
-        elif not flow:
-            rec.update(state='new', action='create')
-        elif meta.get('sourceHash') != rec['sourceHash'] or not meta.get('deployHash') \
-                or flow['publishedVersionId'] != flow['version']['id']:
-            rec.update(state='changed', action='update')
-        elif flow['status'] != desired:
-            rec.update(state='in-sync', action='status')
-        else:
-            rec.update(state='in-sync')
+        rec = {'key': key, 'desired': None, 'flow': matches[0] if len(matches) == 1 else None,
+               'status': matches[0].get('status') if len(matches) == 1 else None,
+               'matches': matches, 'action': 'none', 'state': 'error', 'reason': ''}
+        records.append(rec)
+        try:
+            entry = wanted[key]
+            if not isinstance(entry, dict) or not isinstance(entry.get('enabled', False), bool):
+                raise ValueError(f'{DEPLOY_FILE} entry must look like {{"enabled": true}}')
+            rec['desired'] = 'ENABLED' if entry.get('enabled') else 'DISABLED'
+            _classify(client, repo, rec, connections, piece_cache)
+        except Exception as e:  # noqa: BLE001 - isolate one bad record from the rest
+            rec.update(state='error', action='none', reason=f'{type(e).__name__}: {e}'[:300])
+        _kill_switch(rec)
     for key, matches in sorted(by_key.items()):
         if key not in wanted:
             for f in matches:
-                records.append({'key': key, 'desired': None, 'flow': f, 'status': f['status'], 'action': 'none',
+                records.append({'key': key, 'desired': None, 'flow': f, 'status': f.get('status'), 'action': 'none',
                                 'state': 'unlisted', 'reason': f'not in {DEPLOY_FILE} for this server; left alone'})
     return records
 
 
+def _classify(client, repo, rec, connections, piece_cache):
+    key, desired, flow, matches = rec['key'], rec['desired'], rec['flow'], rec['matches']
+    if not KEY_RE.fullmatch(key):
+        rec.update(state='error', reason='invalid deploy key (lowercase letters, digits and dashes only)')
+        return
+    path = os.path.join(repo, MANAGED_DIR, f'{key}.json')
+    if not os.path.exists(path):
+        rec.update(state='error', reason=f'{MANAGED_DIR}/{key}.json missing')
+        return
+    if len(matches) > 1:
+        rec.update(state='error', reason=f'{len(matches)} target flows carry this deployKey: {", ".join(f["id"] for f in matches)}')
+        return
+    flow_def = read_json(path)
+    if not isinstance(flow_def, dict) or not flow_def.get('displayName') or not isinstance(flow_def.get('trigger'), dict):
+        raise ValueError(f'{MANAGED_DIR}/{key}.json is not a flow export (needs displayName and trigger)')
+    rec['def'] = flow_def
+    rec['sourceHash'] = definition_hash(flow_def)
+    meta = (flow or {}).get('metadata') or {}
+    drifted, rec['rebaseline'] = check_drift(flow, meta)
+    known_source = {rec['sourceHash']}
+    if (meta.get('hashVersion') or 1) != HASH_VERSION:
+        known_source.add(definition_hash(flow_def, meta.get('hashVersion') or 1))
+    # deployedStatus is what the last apply left; a different status now means someone switched the
+    # flow in the UI. Turning it off there (an emergency stop) must not be undone by the next pass.
+    stopped_here = bool(flow) and meta.get('deployedStatus') == 'ENABLED' and flow['status'] == 'DISABLED' and desired == 'ENABLED'
+    missing = _missing_deps(client, flow_def, connections, piece_cache)
+    if drifted:
+        rec.update(state='drifted', reason='edited on this server since the last apply; not overwritten')
+    elif stopped_here:
+        rec.update(state='drifted', reason='turned off on this server since the last apply; not turned back on '
+                   f'(set "enabled": false in {DEPLOY_FILE} to accept, or turn it on in the UI)')
+    elif missing:
+        rec.update(state='missing-deps', reason='missing ' + ', '.join(missing))
+    elif not flow:
+        rec.update(state='new', action='create')
+    elif meta.get('sourceHash') not in known_source or not meta.get('deployHash') \
+            or flow['publishedVersionId'] != flow['version']['id']:
+        rec.update(state='changed', action='update')
+    elif flow['status'] != desired:
+        rec.update(state='in-sync', action='status')
+    elif rec['rebaseline'] or meta.get('deployedStatus') != flow['status']:
+        rec.update(state='in-sync', action='rebaseline')
+    else:
+        rec.update(state='in-sync')
+
+
+def _kill_switch(rec):
+    """`"enabled": false` always turns a flow off, even one that is drifted, missing deps or broken."""
+    if rec['desired'] != 'DISABLED' or rec['action'] in ('create', 'update', 'status'):
+        return
+    on = [f['id'] for f in rec['matches'] if f.get('status') == 'ENABLED']
+    if on:
+        rec.update(action='disable', disable_ids=on)
+
+
 def apply(client, repo, target, dry_run=False, log=print):
-    records = evaluate(client, repo, target)
-    for rec in records:
-        key, action = rec['key'], rec['action']
-        if action == 'none':
-            if rec['state'] not in ('in-sync', 'unlisted'):
-                log(f'skip {key}: {rec["state"]} - {rec["reason"]}')
-            continue
-        label = f'{action} {key} -> {rec["desired"]}'
-        if dry_run:
-            log(f'would {label}')
-            continue
+    lock = None if dry_run else _apply_lock(client, log)
+    try:
+        records = evaluate(client, repo, target)
+        for rec in records:
+            key, action = rec['key'], rec['action']
+            if action == 'none' or action == 'disable':
+                if rec['state'] not in ('in-sync', 'unlisted'):
+                    log(f'skip {key}: {rec["state"]} - {rec["reason"]}')
+                if action == 'none':
+                    continue
+            label = f'{action} {key} -> {"DISABLED" if action == "disable" else rec["desired"]}'
+            if dry_run:
+                log(f'would {label}')
+                continue
+            try:
+                flow_id = _apply_one(client, rec)
+                rec['applied'] = True
+                if action != 'rebaseline':
+                    log(f'{label} ok (flow {flow_id})')
+            except Exception as e:  # noqa: BLE001 - one failing flow must not stop the others
+                rec['error'] = str(e)
+                log(f'FAIL {label}: {type(e).__name__}: {e}')
+        return records
+    finally:
+        if lock:
+            lock.close()
+
+
+def _apply_lock(client, log):
+    """Serialize applies to one target (ap-sync's loop and a manual `docker exec ... apply`), so two
+    runs can never both see a flow as new and create it twice."""
+    ident = hashlib.sha256(f'{client.url}|{client.project_id}'.encode()).hexdigest()[:12]
+    path = os.path.join(tempfile.gettempdir(), f'ap-deploy-{ident}.lock')
+    f = open(path, 'a')
+    waited = 0
+    while True:
         try:
-            flow_id = _apply_one(client, rec)
-            rec['applied'] = True
-            log(f'{label} ok (flow {flow_id})')
-        except ApiError as e:
-            rec['error'] = str(e)
-            log(f'FAIL {label}: {e}')
-    return records
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except BlockingIOError:
+            if waited == 0:
+                log(f'waiting for another apply to {client.url} to finish ({path})')
+            if waited >= 600:
+                f.close()
+                raise ApiError(f'another apply to {client.url} has held {path} for 10 minutes')
+            time.sleep(2)
+            waited += 2
 
 
 def _apply_one(client, rec):
+    action = rec['action']
+    if action == 'disable':
+        for flow_id in rec['disable_ids']:
+            client.operate(flow_id, 'CHANGE_STATUS', {'status': 'DISABLED'})
+            _update_metadata(client, client.flow(flow_id), {'deployedStatus': 'DISABLED'})
+        return ', '.join(rec['disable_ids'])
     flow = rec['flow']
-    if rec['action'] == 'status':
-        client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
+    if action in ('status', 'rebaseline'):
+        if action == 'status':
+            client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
+        fresh = client.flow(flow['id'])
+        extra = {'deployedStatus': fresh['status']}
+        if rec.get('rebaseline'):
+            extra.update(_baseline(fresh), sourceHash=rec['sourceHash'])
+        _update_metadata(client, fresh, extra)
         return flow['id']
     flow_def = rec['def']
     if not flow:
@@ -363,10 +507,20 @@ def _apply_one(client, rec):
     if published['status'] != rec['desired']:
         client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
     fresh = client.flow(flow['id'])
-    client.operate(flow['id'], 'UPDATE_METADATA', {'metadata': {
-        **(fresh.get('metadata') or {}), 'deployKey': rec['key'], 'sourceHash': rec['sourceHash'],
-        'deployHash': target_hash(fresh), 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds')}})
+    _update_metadata(client, fresh, {
+        'deployKey': rec['key'], 'sourceHash': rec['sourceHash'], **_baseline(fresh),
+        'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds')})
     return flow['id']
+
+
+def _baseline(fresh):
+    """What the flow looks like right after an apply; drift is measured against it."""
+    return {'deployHash': target_hash(fresh), 'hashVersion': HASH_VERSION,
+            'deployVersionId': fresh['version']['id'], 'deploySchemaVersion': fresh['version'].get('schemaVersion')}
+
+
+def _update_metadata(client, fresh, fields):
+    client.operate(fresh['id'], 'UPDATE_METADATA', {'metadata': {**(fresh.get('metadata') or {}), **fields}})
 
 
 def _missing_deps(client, flow_def, connections, piece_cache):
@@ -394,7 +548,7 @@ def _onoff(status):
 
 
 def _any_flagged(records):
-    return any(r.get('error') or r['state'] in ('error', 'drifted', 'missing-deps') for r in records)
+    return any(r.get('error') or r['state'] in FLAGGED_STATES for r in records)
 
 
 # ---------- export-staff (target instance) ----------
@@ -411,6 +565,14 @@ def export_staff(client, repo, log=print):
             slug = f'{slug}-{f["id"][:6].lower()}'
         used.add(slug)
         flow_def = normalize_flow(f['version'], None)
+        flow_def['trigger'], found = redact_secrets(flow_def['trigger'])
+        flow_def['notes'], found_notes = redact_secrets(flow_def['notes'])
+        found += found_notes
+        if found:
+            flow_def['redacted'] = sorted({f'{step}: {where}' for step, where in found})
+            log(f'WARNING export-staff {slug}: redacted {len(found)} value(s) that look like credentials '
+                f'(flow "{f["version"]["displayName"]}": {", ".join(flow_def["redacted"])}); '
+                'they should live in a connection')
         flow_def.update(warehouseFlowId=f['id'], status=f['status'])
         path = os.path.join(out_dir, f'{slug}.json')
         keep.add(path)
@@ -426,6 +588,75 @@ def export_staff(client, repo, log=print):
                 log(f'export-staff {name[:-5]}: removed (flow gone or now managed)')
     log(f'export-staff: {len(flows)} staff flows, {len(changed)} files changed')
     return changed
+
+
+def redact_secrets(obj):
+    """Copy of obj with values that look like credentials replaced by REDACTED.
+
+    Staff paste API keys straight into step inputs (HTTP headers, code); the nightly export must not
+    push them to GitHub. Returns (copy, [(step name, field path), ...]). Template references such as
+    {{connections['x']}} or {{trigger.body.token}} are not secrets and are kept."""
+    found = []
+
+    def visit(value, step, path, key):
+        if isinstance(value, dict):
+            if isinstance(value.get('name'), str) and 'type' in value and 'settings' in value:
+                step, path = value['name'], ''
+            return {k: visit(v, step, f'{path}.{k}' if path else k, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [visit(v, step, f'{path}[{i}]', key) for i, v in enumerate(value)]
+        if not isinstance(value, str) or not value:
+            return value
+        if key is not None and SECRET_KEY_RE.search(key) and not _only_templates(value):
+            found.append((step, path))
+            return REDACTED
+        cleaned = _redact_text(value)
+        if cleaned != value:
+            found.append((step, path))
+        return cleaned
+
+    return visit(copy.deepcopy(obj), 'flow', '', None), found
+
+
+def _only_templates(value):
+    rest = TEMPLATE_RE.sub('', value)
+    return not re.sub(r'(?i)\b(bearer|basic|token)\b', '', rest).strip()
+
+
+def _redact_text(text):
+    text = BEARER_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + REDACTED + m.group(2), text)
+    text = KNOWN_TOKEN_RE.sub(REDACTED, text)
+    return LONG_TOKEN_RE.sub(lambda m: REDACTED if _looks_random(m.group(0)) else m.group(0), text)
+
+
+def _looks_random(s):
+    if not (re.search(r'[0-9]', s) and re.search(r'[A-Za-z]', s)):
+        return False
+    if UUID_OR_HEX_RE.fullmatch(s):
+        return False  # ids (UUIDs, hex hashes, AP's 21-char ids are too short anyway), not keys
+    parts = re.split(r'[-_]', s)
+    if len(parts) > 2 and max(len(p) for p in parts) < 16:
+        return False  # SKUs, slugs, part numbers: short dash/underscore-separated words
+    classes = sum(bool(re.search(c, s)) for c in ('[a-z]', '[A-Z]', '[0-9]'))
+    if classes < 3 and len(s) < 40:
+        return False
+    counts = {c: s.count(c) for c in set(s)}
+    entropy = -sum(n / len(s) * math.log2(n / len(s)) for n in counts.values())
+    return entropy >= 3.5
+
+
+# Field names whose non-template values are credentials, e.g. headers.Authorization, apiKey, client_secret.
+SECRET_KEY_RE = re.compile(r'(?i)(passw(or)?d|passwd|secret|token|api[_-]?key|authorization|private[_-]?key|access[_-]?key|credential)')
+TEMPLATE_RE = re.compile(r'\{\{.*?\}\}', re.S)
+BEARER_RE = re.compile(r'(?i)\b((?:bearer|basic)\s+)(?!\{\{)[A-Za-z0-9._~+/=-]{8,}')
+# password = "..." / apiKey: '...' inside code steps or free text.
+ASSIGNED_SECRET_RE = re.compile(
+    r'''(?i)((?:passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*)(["'])(?!\{\{)[^"'\n]{4,}\2''')
+KNOWN_TOKEN_RE = re.compile(
+    r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b')
+LONG_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])')
+UUID_OR_HEX_RE = re.compile(r'[0-9a-fA-F]{32,}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 
 
 # ---------- CLI ----------
