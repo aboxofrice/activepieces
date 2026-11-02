@@ -19,6 +19,7 @@ import { placeOrderFromQuote } from './lib/actions/place-order-from-quote';
 import { searchItems } from './lib/actions/search-items';
 import { turn14Auth, turn14AuthProps } from './lib/auth';
 import { turn14Client } from './lib/common/client';
+import { turn14CustomCall } from './lib/common/custom-call';
 import { inventoryChanged } from './lib/triggers/inventory-changed';
 import { newInvoice } from './lib/triggers/new-invoice';
 import { orderShipped } from './lib/triggers/order-shipped';
@@ -52,10 +53,12 @@ export const turn14 = createPiece({
         createCustomApiCallAction({
             auth: turn14Auth,
             baseUrl: (auth) => (auth ? `${turn14Client.apiBase({ auth: turn14AuthProps(auth) })}/v1` : ''),
-            authMapping: async (auth) => ({
-                Authorization: `Bearer ${await turn14Client.getToken({ auth: turn14AuthProps(auth) })}`,
-            }),
-            description: 'Call any Turn14 endpoint, e.g. GET /items/data/brand/{brand_id}. The path is relative to /v1. Warning: do not use this to create quotes or orders - it skips the Testing/Production guard, the live-order confirmation and the duplicate-order checks of Create Shipping Quote / Place Order From Quote, and a failed request may log its body (recipient name, address, phone).',
+            // Runs before the request is sent, so a refused call never reaches Turn14.
+            authMapping: async (auth, propsValue) => {
+                turn14CustomCall.assertAllowed({ propsValue });
+                return { Authorization: `Bearer ${await turn14Client.getToken({ auth: turn14AuthProps(auth) })}` };
+            },
+            description: 'Call any Turn14 endpoint, e.g. GET /items/data/brand/{brand_id}. The path is relative to /v1. Writes to /quote and /order* are refused here: use Create Shipping Quote / Place Order From Quote, which carry the Testing/Production guard, the live-order confirmation and the duplicate-order checks. A failed request may log its body.',
         }),
     ],
     triggers: [inventoryChanged, priceChanged, newInvoice, orderShipped],

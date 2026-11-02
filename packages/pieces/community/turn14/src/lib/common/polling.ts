@@ -1,11 +1,12 @@
 import { createHash } from 'crypto';
 import { Store } from '@activepieces/pieces-framework';
-import { tryCatch } from '@activepieces/shared';
 import { turn14Client, Turn14AuthProps } from './client';
 import { turn14Items } from './items';
 
+// store.get returns null when nothing is stored; a failing store is a real error and propagates,
+// so a run never mistakes it for "no state" and refires or forgets work.
 async function readState<T>({ store, key, isValid }: { store: Store; key: string; isValid: (value: unknown) => value is T }): Promise<T | null> {
-    const { data } = await tryCatch(() => store.get<unknown>(key));
+    const data = await store.get<unknown>(key);
     return isValid(data) ? data : null;
 }
 

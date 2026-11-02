@@ -6,7 +6,7 @@ export const listInvoices = createAction({
     auth: turn14Auth,
     name: 'list_invoices',
     displayName: 'List Invoices',
-    description: 'List your Turn14 invoices (newest first), with totals, amount due, tracking numbers and the Turn14 order each belongs to.',
+    description: 'List your Turn14 invoices (newest first), with totals, amount due, tracking numbers and the Turn14 order each belongs to. truncated = true means more than 50 pages exist and the rest were not read.',
     props: {
         sinceDate: Property.ShortText({
             displayName: 'Invoiced On or After',
@@ -27,13 +27,14 @@ export const listInvoices = createAction({
     },
     async run(context) {
         const since = context.propsValue.sinceDate?.trim();
-        const { rows } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
-        return rows
+        const { rows, truncated } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
+        const invoices = rows
             .map((invoice) => turn14Orders.flattenInvoice({ invoice }))
             .filter((invoice) => !since || String(invoice['date'] ?? '') >= since)
             .filter((invoice) => !context.propsValue.unpaidOnly || Number(invoice['amount_due'] ?? 0) > 0)
             .sort((left, right) => String(right['date'] ?? '').localeCompare(String(left['date'] ?? '')))
             .map((invoice) => (context.propsValue.includeLines ? invoice : withoutLines({ record: invoice })));
+        return { count: invoices.length, truncated, invoices };
     },
 });
 

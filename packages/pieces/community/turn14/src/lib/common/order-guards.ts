@@ -1,19 +1,40 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { Store, StoreScope } from '@activepieces/pieces-framework';
 import { tryCatch } from '@activepieces/shared';
 import { Turn14AuthProps, turn14Client } from './client';
 import { OrderEnvironment } from './environment';
 import { Turn14Order } from './orders';
 
-// Runs every check that does not depend on Turn14 accepting the order, and throws on the first
-// one that fails. Nothing has been sent to Turn14 when this throws.
-async function assertSafeToOrder({ store, auth, quoteId, poNumber, environment, refuseRepeatQuote, refuseOpenPo, listOpenOrders }: GuardParams): Promise<void> {
+// Claims the quote for this run, then runs every check that does not depend on Turn14 accepting
+// the order. The claim ("sending" plus a per-run token) is written before the slow open-order
+// lookup and re-read after a short pause, so of two runs racing for one quote only the last writer
+// goes on. This narrows the race; it cannot close it, since the store has no compare-and-set.
+// Nothing has been sent to Turn14 when this throws, and a refused claim is cleared again.
+async function claimOrder({ store, auth, quoteId, poNumber, environment, refuseRepeatQuote, refuseOpenPo, listOpenOrders, settleMs = CLAIM_SETTLE_MS }: GuardParams): Promise<OrderClaim> {
     if (refuseRepeatQuote) {
         const attempt = await readAttempt({ store, auth, quoteId });
         if (attempt !== null) {
             throw new Error(describeAttempt({ quoteId, attempt }));
         }
     }
+    const claim: OrderClaim = { token: randomUUID(), at: new Date().toISOString() };
+    await recordAttempt({ store, auth, quoteId, attempt: { status: 'sending', token: claim.token, at: claim.at, poNumber, environment, orderId: null } });
+    if (refuseRepeatQuote) {
+        await sleep({ ms: settleMs });
+        const current = await readAttempt({ store, auth, quoteId });
+        if (current?.token !== claim.token) {
+            throw new Error(`Another run claimed quote ${quoteId} at the same moment, so this run sent nothing. Check List Open Orders / Get Order for PO "${poNumber}".`);
+        }
+    }
+    const { error } = await tryCatch(() => assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders }));
+    if (error) {
+        await releaseClaim({ store, auth, quoteId, token: claim.token });
+        throw error;
+    }
+    return claim;
+}
+
+async function assertNoConflict({ store, auth, quoteId, poNumber, environment, refuseOpenPo, listOpenOrders }: Omit<GuardParams, 'refuseRepeatQuote' | 'settleMs'>): Promise<void> {
     const quote = await readQuote({ store, auth, quoteId });
     if (quote !== null && quote.environment !== environment) {
         throw new Error(`Quote ${quoteId} was created with Order Environment "${quote.environment}" but this order asks for "${environment}". A quote can only be ordered in the environment it was created in - create a new quote instead.`);
@@ -30,6 +51,14 @@ async function assertSafeToOrder({ store, auth, quoteId, poNumber, environment, 
     }
 }
 
+// Removes the attempt record only while it is still this run's claim.
+async function releaseClaim({ store, auth, quoteId, token }: { store: Store; auth: Turn14AuthProps; quoteId: string; token: string }): Promise<void> {
+    const current = await readAttempt({ store, auth, quoteId });
+    if (current?.token === token) {
+        await store.delete(attemptKey({ auth, quoteId }), StoreScope.PROJECT);
+    }
+}
+
 function findOpenOrderWithPo({ orders, poNumber }: { orders: Turn14Order[]; poNumber: string }): Turn14Order | null {
     const wanted = normalizePo({ value: poNumber });
     if (wanted.length === 0) {
@@ -39,7 +68,7 @@ function findOpenOrderWithPo({ orders, poNumber }: { orders: Turn14Order[]; poNu
 }
 
 async function readAttempt({ store, auth, quoteId }: { store: Store; auth: Turn14AuthProps; quoteId: string }): Promise<AttemptRecord | null> {
-    const { data } = await tryCatch(() => store.get<unknown>(attemptKey({ auth, quoteId }), StoreScope.PROJECT));
+    const data = await store.get<unknown>(attemptKey({ auth, quoteId }), StoreScope.PROJECT);
     return isAttemptRecord(data) ? data : null;
 }
 
@@ -47,12 +76,8 @@ async function recordAttempt({ store, auth, quoteId, attempt }: { store: Store; 
     await store.put(attemptKey({ auth, quoteId }), attempt, StoreScope.PROJECT);
 }
 
-async function clearAttempt({ store, auth, quoteId }: { store: Store; auth: Turn14AuthProps; quoteId: string }): Promise<void> {
-    await store.delete(attemptKey({ auth, quoteId }), StoreScope.PROJECT);
-}
-
 async function readQuote({ store, auth, quoteId }: { store: Store; auth: Turn14AuthProps; quoteId: string }): Promise<QuoteRecord | null> {
-    const { data } = await tryCatch(() => store.get<unknown>(quoteKey({ auth, quoteId }), StoreScope.PROJECT));
+    const data = await store.get<unknown>(quoteKey({ auth, quoteId }), StoreScope.PROJECT);
     return isQuoteRecord(data) ? data : null;
 }
 
@@ -90,8 +115,13 @@ function normalizePo({ value }: { value: string }): string {
     return value.trim().toLowerCase();
 }
 
+function sleep({ ms }: { ms: number }): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isAttemptRecord(value: unknown): value is AttemptRecord {
     return turn14Client.isRecord(value)
+        && typeof value['token'] === 'string'
         && (value['status'] === 'sending' || value['status'] === 'placed' || value['status'] === 'unknown')
         && typeof value['at'] === 'string'
         && typeof value['poNumber'] === 'string';
@@ -101,23 +131,28 @@ function isQuoteRecord(value: unknown): value is QuoteRecord {
     return turn14Client.isRecord(value) && (value['environment'] === 'testing' || value['environment'] === 'production');
 }
 
+const CLAIM_SETTLE_MS = 1500;
+
 export const turn14OrderGuards = {
-    assertSafeToOrder,
+    claimOrder,
+    releaseClaim,
     findOpenOrderWithPo,
     readAttempt,
     recordAttempt,
-    clearAttempt,
     readQuote,
     recordQuote,
 };
 
 export type AttemptRecord = {
     status: 'sending' | 'placed' | 'unknown';
+    token: string;
     at: string;
     poNumber: string;
     environment: OrderEnvironment;
     orderId: string | null;
 };
+
+export type OrderClaim = { token: string; at: string };
 
 export type QuoteRecord = {
     environment: OrderEnvironment;
@@ -134,4 +169,5 @@ type GuardParams = {
     refuseRepeatQuote: boolean;
     refuseOpenPo: boolean;
     listOpenOrders: () => Promise<{ orders: Turn14Order[]; complete: boolean }>;
+    settleMs?: number;
 };
