@@ -394,6 +394,9 @@ def _classify(client, repo, rec, connections, piece_cache):
     rec['sourceHash'] = definition_hash(flow_def)
     meta = (flow or {}).get('metadata') or {}
     drifted, rec['rebaseline'] = check_drift(flow, meta)
+    if drifted and _interrupted_apply(flow, meta, rec['sourceHash']):
+        drifted = False
+        rec['interrupted'] = True
     known_source = {rec['sourceHash']}
     if (meta.get('hashVersion') or 1) != HASH_VERSION:
         known_source.add(definition_hash(flow_def, meta.get('hashVersion') or 1))
@@ -410,7 +413,7 @@ def _classify(client, repo, rec, connections, piece_cache):
         rec.update(state='missing-deps', reason='missing ' + ', '.join(missing))
     elif not flow:
         rec.update(state='new', action='create')
-    elif meta.get('sourceHash') not in known_source or not meta.get('deployHash') \
+    elif rec.get('interrupted') or meta.get('sourceHash') not in known_source or not meta.get('deployHash') \
             or flow['publishedVersionId'] != flow['version']['id']:
         rec.update(state='changed', action='update')
     elif flow['status'] != desired:
@@ -419,6 +422,22 @@ def _classify(client, repo, rec, connections, piece_cache):
         rec.update(state='in-sync', action='rebaseline')
     else:
         rec.update(state='in-sync')
+
+
+def _interrupted_apply(flow, meta, source_hash):
+    """True when the flow differs from its baseline only because an earlier apply imported a new
+    version and then failed (e.g. publish rejected): finish that apply instead of flagging drift.
+
+    applyingSourceHash is written before the import, applyingHash (the server's hash of the imported
+    version) right after it. A staff edit of the half-applied draft changes the hash, so it is still
+    drift; only if the run died between import and recording applyingHash is the source hash alone
+    trusted."""
+    pending = meta.get('applyingSourceHash')
+    if not pending:
+        return False
+    if meta.get('applyingHash'):
+        return target_hash(flow) == meta['applyingHash']
+    return pending == source_hash
 
 
 def _kill_switch(rec):
@@ -498,18 +517,24 @@ def _apply_one(client, rec):
         _update_metadata(client, fresh, extra)
         return flow['id']
     flow_def = rec['def']
+    pending = {'applyingSourceHash': rec['sourceHash'], 'applyingHash': None}
     if not flow:
         flow = client.request('POST', '/v1/flows', {
             'displayName': flow_def['displayName'], 'projectId': client.project_id,
-            'folderName': MANAGED_FOLDER, 'metadata': {'deployKey': rec['key']}})
+            'folderName': MANAGED_FOLDER, 'metadata': {'deployKey': rec['key'], **pending}})
+    else:
+        _update_metadata(client, client.flow(flow['id']), pending)
     client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
+    imported = client.flow(flow['id'])
+    _update_metadata(client, imported, {'applyingHash': target_hash(imported)})
     published = client.operate(flow['id'], 'LOCK_AND_PUBLISH', {'status': rec['desired']})
     if published['status'] != rec['desired']:
         client.operate(flow['id'], 'CHANGE_STATUS', {'status': rec['desired']})
     fresh = client.flow(flow['id'])
     _update_metadata(client, fresh, {
         'deployKey': rec['key'], 'sourceHash': rec['sourceHash'], **_baseline(fresh),
-        'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds')})
+        'deployedStatus': fresh['status'], 'deployedAt': datetime.now(timezone.utc).isoformat(timespec='seconds')},
+        drop=('applyingSourceHash', 'applyingHash'))
     return flow['id']
 
 
@@ -519,8 +544,9 @@ def _baseline(fresh):
             'deployVersionId': fresh['version']['id'], 'deploySchemaVersion': fresh['version'].get('schemaVersion')}
 
 
-def _update_metadata(client, fresh, fields):
-    client.operate(fresh['id'], 'UPDATE_METADATA', {'metadata': {**(fresh.get('metadata') or {}), **fields}})
+def _update_metadata(client, fresh, fields, drop=()):
+    kept = {k: v for k, v in (fresh.get('metadata') or {}).items() if k not in drop}
+    client.operate(fresh['id'], 'UPDATE_METADATA', {'metadata': {**kept, **fields}})
 
 
 def _missing_deps(client, flow_def, connections, piece_cache):

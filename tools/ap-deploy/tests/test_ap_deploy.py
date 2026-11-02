@@ -202,6 +202,46 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(evaluate(self.ap, self.repo)['a']['action'], 'none')
 
 
+class InterruptedApplyTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.fid = flow_of(self.ap, 'a')['id']
+        self.repo.put('a', make_def('a', code='return 2'))
+        real = self.ap.operate
+
+        def publish_fails_once(flow_id, op_type, request):
+            if op_type == 'LOCK_AND_PUBLISH' and not getattr(self, 'failed', False):
+                self.failed = True
+                raise ap_deploy.ApiError('POST /v1/flows -> 500: publish rejected')
+            return real(flow_id, op_type, request)
+        self.ap.operate = publish_fails_once
+
+    def test_failed_publish_is_retried_not_drift(self):
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('publish rejected', r['error'])
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('changed', 'update'))
+        self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
+        meta = flow_of(self.ap, 'a')['metadata']
+        self.assertNotIn('applyingSourceHash', meta)
+        self.assertNotIn('applyingHash', meta)
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+    def test_staff_edit_after_failed_publish_is_drift(self):
+        apply(self.ap, self.repo)
+        self.ap.staff_edit(self.fid, 'return 99')
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
+    def test_died_between_import_and_recording_hash(self):
+        apply(self.ap, self.repo)
+        meta = self.ap._flows[self.fid]['metadata']
+        meta['applyingHash'] = None  # run killed right after IMPORT_FLOW
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'changed')
+
+
 class KillSwitchTests(unittest.TestCase):
     def setUp(self):
         self.ap, self.repo = FakeAP(), Repo(self)
