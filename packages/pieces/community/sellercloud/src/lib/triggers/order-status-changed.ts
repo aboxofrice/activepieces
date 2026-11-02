@@ -1,5 +1,6 @@
 import { createTrigger, Property, TriggerStrategy } from '@activepieces/pieces-framework';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
+import { sellercloudClient } from '../common/client';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { sellercloudEnums } from '../common/enums';
 import { FetchItems, PollStore, sellercloudPoller } from '../common/poller';
@@ -27,27 +28,30 @@ export const orderStatusChanged = createTrigger({
     sampleData: { ...sellercloudSamples.order, status_code: 3, status: 'Completed', previous_status_code: 2, previous_status: 'In Process' },
     type: TriggerStrategy.POLLING,
     async onEnable(context) {
-        await sellercloudPoller.baseline({
+        await sellercloudPoller.enable({
             store: context.store,
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue, maxPages: MAX_PAGES }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now() - BASELINE_LOOKBACK_MS,
         });
     },
-    async onDisable(context) {
-        await sellercloudPoller.clear({ store: context.store });
+    async onDisable() {
+        await sellercloudPoller.disable();
     },
     async test(context) {
         const fetchItems = buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue, maxPages: 1 });
-        const items = await fetchItems({ since: new Date(Date.now() - TEST_LOOKBACK_MS) });
+        const { items } = await fetchItems({ since: new Date(Date.now() - TEST_LOOKBACK_MS), startPage: 1, seen: {} });
         return items.filter((item) => item.eligible).slice(0, 5).map((item) => withPrevious({ order: item.data, previousState: null }));
     },
     async run(context) {
         const emissions = await sellercloudPoller.poll({
             store: context.store,
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue, maxPages: MAX_PAGES }),
             emitUnseen: false,
             retentionMs: RETENTION_MS,
+            overlapMs: sellercloudPoller.OVERLAP_MS,
         });
         return emissions.map((emission) => withPrevious({ order: emission.item, previousState: emission.previousState }));
     },
@@ -64,8 +68,8 @@ function withPrevious({ order, previousState }: { order: FlatOrder; previousStat
 
 function buildFetch({ auth, store, propsValue, maxPages }: BuildFetchParams): FetchItems<FlatOrder> {
     const targets = new Set((propsValue.targetStatuses ?? []).map(Number));
-    return async ({ since }) => {
-        const orders = await sellercloudFeeds.orders({
+    return async ({ since, startPage }) => {
+        const page = await sellercloudFeeds.orders({
             auth: sellercloudAuthProps(auth),
             store,
             since,
@@ -73,18 +77,38 @@ function buildFetch({ auth, store, propsValue, maxPages }: BuildFetchParams): Fe
             channels: (propsValue.channels ?? []).map(Number),
             companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds }),
             maxPages,
+            startPage,
         });
-        return orders.map((order) => ({
-            key: String(order.ID),
-            state: String(order.StatusCode),
-            eligible: targets.size === 0 || targets.has(Number(order.StatusCode)),
-            data: sellercloudRecords.flattenOrder({ order }),
-        }));
+        return {
+            truncated: page.truncated,
+            nextPage: page.nextPage,
+            partialError: page.partialError,
+            items: page.items.map((order) => ({
+                key: String(order.ID),
+                state: String(order.StatusCode),
+                eligible: targets.size === 0 || targets.has(Number(order.StatusCode)),
+                eventTime: sellercloudPoller.toEventTime({ tenantLocal: order.LastUpdated }),
+                data: sellercloudRecords.flattenOrder({ order }),
+            })),
+        };
     };
 }
 
+// The target statuses only decide what is reported, not what is remembered, so they are
+// left out: changing them keeps the remembered statuses.
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
+    return sellercloudPoller.fingerprintOf({
+        trigger: 'order_status_changed',
+        settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
+            channels: (propsValue.channels ?? []).map(Number).sort(),
+            companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
+        },
+    });
+}
+
 // Updated-since results are ordered by order ID, not by update time, so the whole window
-// has to be read; this bounds a busy window.
+// has to be read; this bounds one poll, and a busier window is finished by the next polls.
 const MAX_PAGES = 30;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const BASELINE_LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;

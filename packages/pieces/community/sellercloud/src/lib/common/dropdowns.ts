@@ -51,31 +51,49 @@ async function companiesSeenInOrders({ auth }: { auth: SellercloudAuthProps }): 
 }
 
 // Sampling misses a store with only a handful of orders. Company IDs are allocated
-// sequentially per account, so ask for one order of each ID in and just around the range
-// already seen; a company that has never had an order still needs "Other Company IDs".
+// sequentially per account, so ask for one order of each ID in the small gaps between the
+// IDs already seen and just past either end; a company that has never had an order still
+// needs "Other Company IDs". Sparse IDs would otherwise mean thousands of sequential calls
+// inside a dropdown, so the probe is capped and stops at the first failure (a rate limit).
 async function probeNeighbourCompanies({ auth, token, known }: { auth: SellercloudAuthProps; token: string; known: Map<number, string> }): Promise<Map<number, string>> {
-    if (known.size === 0) {
-        return new Map();
-    }
-    const ids = [...known.keys()];
-    const low = Math.max(1, Math.min(...ids) - COMPANY_PROBE_MARGIN);
-    const high = Math.max(...ids) + COMPANY_PROBE_MARGIN;
-    const candidates = Array.from({ length: high - low + 1 }, (_, index) => low + index).filter((id) => !known.has(id));
     const found = new Map<number, string>();
-    for (const id of candidates) {
-        const page = await sellercloudClient.request<{ Items: OrderCompany[] | null }>({
+    for (const id of probeCandidates({ known: [...known.keys()] })) {
+        const { data: page, error } = await tryCatch(() => sellercloudClient.request<{ Items: OrderCompany[] | null }>({
             auth,
             token,
             method: HttpMethod.GET,
             path: `/Orders?model.companyID=${id}`,
             queryParams: { 'model.pageSize': 1, 'model.pageNumber': 1 },
-        });
+        }));
+        if (error) {
+            break;
+        }
         const order = (page.Items ?? []).find((item) => Number(item.CompanyID) === id);
         if (order) {
             found.set(id, order.CompanyName || `Company ${id}`);
         }
     }
     return found;
+}
+
+function probeCandidates({ known }: { known: number[] }): number[] {
+    const sorted = unique(known.filter((id) => Number.isInteger(id) && id > 0)).sort((a, b) => a - b);
+    if (sorted.length === 0) {
+        return [];
+    }
+    const gaps = sorted.slice(1).flatMap((id, index) => {
+        const previous = sorted[index];
+        return id - previous - 1 <= COMPANY_PROBE_MAX_GAP ? range({ from: previous + 1, to: id - 1 }) : [];
+    });
+    const edges = [
+        ...range({ from: sorted[sorted.length - 1] + 1, to: sorted[sorted.length - 1] + COMPANY_PROBE_MARGIN }),
+        ...range({ from: Math.max(1, sorted[0] - COMPANY_PROBE_MARGIN), to: sorted[0] - 1 }),
+    ];
+    return unique([...gaps, ...edges]).slice(0, COMPANY_PROBE_MAX_CALLS);
+}
+
+function range({ from, to }: { from: number; to: number }): number[] {
+    return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
 }
 
 function unique(values: number[]): number[] {
@@ -102,7 +120,7 @@ function companies({ required, description }: { required: boolean; description?:
             }
             const { data, error } = await tryCatch(() => listCompanies({ auth: sellercloudAuthProps(auth) }));
             if (error) {
-                return { disabled: true, options: [], placeholder: `Couldn't load companies: ${error.message}. Use "Other Company IDs" instead.` };
+                return { disabled: true, options: [], placeholder: `Couldn't load companies: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}. Use "Other Company IDs" instead.` };
             }
             if (data.companies.length === 0) {
                 return { disabled: true, options: [], placeholder: 'No companies found. Use "Other Company IDs" instead.' };
@@ -140,7 +158,7 @@ function warehouse({ required, description }: { required: boolean; description?:
             }
             const { data, error } = await tryCatch(() => sellercloudClient.listWarehouses({ auth: sellercloudAuthProps(auth) }));
             if (error) {
-                return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${error.message}` };
+                return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
             }
             return {
                 disabled: false,
@@ -163,7 +181,7 @@ function warehouses({ required, description }: { required: boolean; description?
             }
             const { data, error } = await tryCatch(() => sellercloudClient.listWarehouses({ auth: sellercloudAuthProps(auth) }));
             if (error) {
-                return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${error.message}` };
+                return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
             }
             return {
                 disabled: false,
@@ -208,7 +226,7 @@ const brand = Property.Dropdown({
             path: '/Settings/Brands',
         }));
         if (error) {
-            return { disabled: true, options: [], placeholder: `Couldn't load brands: ${error.message}` };
+            return { disabled: true, options: [], placeholder: `Couldn't load brands: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
         }
         return {
             disabled: false,
@@ -233,7 +251,7 @@ const shippingCarrier = Property.Dropdown({
             queryParams: { siteCode: US_SITE_CODE },
         }));
         if (error) {
-            return { disabled: true, options: [], placeholder: `Couldn't load carriers: ${error.message}` };
+            return { disabled: true, options: [], placeholder: `Couldn't load carriers: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
         }
         return { disabled: false, options: data.map((item) => ({ label: item.Value, value: item.Key })) };
     },
@@ -259,7 +277,7 @@ const shippingService = Property.Dropdown({
             queryParams: { siteCode: US_SITE_CODE, carrier },
         }));
         if (error) {
-            return { disabled: true, options: [], placeholder: `Couldn't load services: ${error.message}` };
+            return { disabled: true, options: [], placeholder: `Couldn't load services: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
         }
         return { disabled: false, options: data.map((item) => ({ label: item.Value, value: item.Key })) };
     },
@@ -281,7 +299,7 @@ const orderCustomColumn = Property.Dropdown({
         }
         const { data, error } = await tryCatch(() => listOrderCustomColumns({ auth: sellercloudAuthProps(auth), orderId: id }));
         if (error) {
-            return { disabled: true, options: [], placeholder: `Couldn't load custom columns: ${error.message}` };
+            return { disabled: true, options: [], placeholder: `Couldn't load custom columns: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
         }
         return {
             disabled: false,
@@ -306,6 +324,8 @@ const US_SITE_CODE = 0;
 const COMPANY_FALLBACK_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const COMPANY_FALLBACK_SAMPLES = 5;
 const COMPANY_PROBE_MARGIN = 3;
+const COMPANY_PROBE_MAX_GAP = 5;
+const COMPANY_PROBE_MAX_CALLS = 20;
 const COMPANY_FALLBACK_HELP = 'The list comes from SellerCloud Companies; if the API user lacks the company-view permission it shows companies seen in orders from the last 90 days (marked "seen in orders") — grant that permission for the full list.';
 const CUSTOM_COLUMN_TYPES: Record<number, string> = {
     0: 'Text', 1: 'Integer', 2: 'Decimal', 3: 'Date/Time', 4: 'Yes/No', 5: 'Long Text', 6: 'Hyperlink',
@@ -325,6 +345,7 @@ export const sellercloudDropdowns = {
     orderCustomColumn,
     listCompanies,
     listOrderCustomColumns,
+    probeCandidates,
 };
 
 export type OrderCustomColumn = {

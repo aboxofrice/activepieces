@@ -11,7 +11,7 @@ const MODEL_FALLBACK = 'model.pageNumber';
 // SellerCloud nests most query strings under a `model.` prefix, which is not a legal
 // Activepieces prop key, so the generated actions carry the wire name alongside the key.
 function buildRequest({ pathTemplate, pathParams, queryParams, bodyFields, bodyMode, propsValue }: BuildRequestParams): BuiltRequest {
-    const values = propsValue as Record<string, unknown>;
+    const values: Record<string, unknown> = typeof propsValue === 'object' && propsValue !== null ? Object.fromEntries(Object.entries(propsValue)) : {};
     const basePath = pathParams.reduce(
         (acc, key) => acc.replace(`{${key}}`, encodeURIComponent(requirePathParam({ key, value: values[key] }))),
         stripApiPrefix({ pathTemplate }),

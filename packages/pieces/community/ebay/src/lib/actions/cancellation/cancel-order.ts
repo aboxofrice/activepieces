@@ -1,6 +1,7 @@
 import { HttpMethod } from '@activepieces/pieces-common';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { ebayAuth } from '../../auth';
+import { cancellationCommon } from '../../common/cancellation';
 import { postOrderCommon } from '../../common/post-order';
 
 export const cancelOrder = createAction({
@@ -30,12 +31,19 @@ export const cancelOrder = createAction({
     },
     async run(context) {
         const orderId = context.propsValue.orderId.trim();
+        const payment = await cancellationCommon.fetchPaymentInfo({ auth: context.auth.props, orderId });
+
         const response = await postOrderCommon.request<{ cancelId?: string }>({
             auth: context.auth.props,
             method: HttpMethod.POST,
             path: '/cancellation',
-            body: { legacyOrderId: orderId, cancelReason: context.propsValue.reason },
+            body: cancellationCommon.cancelBody({ orderId, reason: context.propsValue.reason, payment }),
         });
-        return { order_id: orderId, cancel_id: response.cancelId ?? null, reason: context.propsValue.reason };
+        return {
+            order_id: orderId,
+            cancel_id: response.cancelId ?? null,
+            reason: context.propsValue.reason,
+            buyer_paid: payment?.buyerPaid ?? null,
+        };
     },
 });

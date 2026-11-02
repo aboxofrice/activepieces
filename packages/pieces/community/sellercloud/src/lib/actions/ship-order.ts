@@ -25,7 +25,7 @@ export const shipOrder = createAction({
         }),
         shipDate: Property.DateTime({
             displayName: 'Ship Date',
-            description: 'Defaults to now. Sent to SellerCloud in the account\'s local time.',
+            description: 'Defaults to now. Sent to SellerCloud in the account\'s local time; a date without a time means that day there.',
             required: false,
         }),
         shippingCost: Property.Number({
@@ -36,8 +36,8 @@ export const shipOrder = createAction({
     },
     async run(context) {
         const { orderId, carrier, service, trackingNumber, shipDate, shippingCost, shipFromWarehouse } = context.propsValue;
-        const date = shipDate ? new Date(shipDate) : new Date();
-        if (Number.isNaN(date.getTime())) {
+        const tenantShipDate = shipDate ? tenantTime.userInputToTenantLocal({ value: shipDate }) : tenantTime.toTenantLocal({ date: new Date() });
+        if (tenantShipDate === null) {
             throw new Error(`SellerCloud: "${shipDate}" is not a valid ship date.`);
         }
         const body = {
@@ -45,7 +45,7 @@ export const shipOrder = createAction({
             ShippingCarrier: carrier,
             ShippingService: service,
             TrackingNumber: trackingNumber.trim(),
-            ShipDate: tenantTime.toTenantLocal({ date }),
+            ShipDate: tenantShipDate,
             ...(isNil(shippingCost) ? {} : { ShippingCost: shippingCost }),
             ...(isNil(shipFromWarehouse) ? {} : { ShipFromWarehouseID: Number(shipFromWarehouse) }),
         };

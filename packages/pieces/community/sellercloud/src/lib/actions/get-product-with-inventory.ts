@@ -1,7 +1,7 @@
 import { HttpMethod } from '@activepieces/pieces-common';
 import { createAction, Property } from '@activepieces/pieces-framework';
 import { sellercloudAuth, sellercloudAuthProps } from '../auth';
-import { sellercloudClient } from '../common/client';
+import { SellercloudAuthProps, sellercloudClient } from '../common/client';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { sellercloudListing } from '../common/listing';
 import { SellercloudCatalogProduct, sellercloudRecords } from '../common/records';
@@ -29,14 +29,7 @@ export const getProductWithInventory = createAction({
         const productId = sku.trim();
         const auth = sellercloudAuthProps(context.auth);
         const token = await sellercloudClient.getToken({ auth, store: context.store });
-        const { items } = await sellercloudListing.listPages<SellercloudCatalogProduct>({
-            auth,
-            token,
-            path: '/Catalog',
-            query: { 'model.sKU': productId },
-            maxPages: 1,
-        });
-        const product = items.find((item) => item.ID.toLowerCase() === productId.toLowerCase());
+        const product = await findExactSku({ auth, token, productId });
         // /Inventory/Warehouses answers 500 (not 404) for an unknown product, so check first.
         if (!product) {
             throw new Error(`SellerCloud: no product with SKU "${productId}".`);
@@ -70,6 +63,32 @@ export const getProductWithInventory = createAction({
         };
     },
 });
+
+// The SKU filter is a partial match, so a short SKU can be buried under longer ones that
+// contain it. Read on until the exact SKU turns up or the matches run out.
+async function findExactSku({ auth, token, productId }: { auth: SellercloudAuthProps; token: string; productId: string }): Promise<SellercloudCatalogProduct | null> {
+    const wanted = productId.toLowerCase();
+    for (let pageNumber = 1; pageNumber <= MAX_SKU_SEARCH_PAGES; pageNumber++) {
+        const page = await sellercloudListing.listPages<SellercloudCatalogProduct>({
+            auth,
+            token,
+            path: '/Catalog',
+            query: { 'model.sKU': productId },
+            maxPages: 1,
+            startPage: pageNumber,
+        });
+        const match = page.items.find((item) => item.ID.toLowerCase() === wanted);
+        if (match) {
+            return match;
+        }
+        if (!page.truncated) {
+            return null;
+        }
+    }
+    throw new Error(`SellerCloud: more than ${MAX_SKU_SEARCH_PAGES * sellercloudListing.PAGE_SIZE} products contain "${productId}" and none of those read is an exact match; use the full SKU.`);
+}
+
+const MAX_SKU_SEARCH_PAGES = 10;
 
 type WarehouseInventory = {
     ProductID: string;

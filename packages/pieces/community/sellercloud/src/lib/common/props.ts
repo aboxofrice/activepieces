@@ -14,7 +14,7 @@ const warehouse = Property.Dropdown({
         }
         const { data, error } = await tryCatch(() => sellercloudClient.listWarehouses({ auth: sellercloudAuthProps(auth) }));
         if (error) {
-            return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${error.message}` };
+            return { disabled: true, options: [], placeholder: `Couldn't load warehouses: ${sellercloudClient.safeErrorMessage({ error, auth: sellercloudAuthProps(auth) })}` };
         }
         return {
             disabled: false,

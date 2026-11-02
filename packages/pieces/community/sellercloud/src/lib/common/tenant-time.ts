@@ -11,6 +11,32 @@ function toTenantLocal({ date }: { date: Date }): string {
     return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:${pad(parts.second)}`;
 }
 
+// A user-entered date for a write. A bare date ("2026-11-01") means that day in the
+// tenant's zone; parsing it as UTC midnight would land on the previous evening Eastern.
+// A date-time without a zone is likewise taken as tenant wall-clock time, and one with a
+// zone is converted. Returns null when the value is not a date.
+function userInputToTenantLocal({ value }: { value: string }): string | null {
+    const trimmed = value.trim();
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (dateOnly) {
+        return isRealDate({ year: Number(dateOnly[1]), month: Number(dateOnly[2]), day: Number(dateOnly[3]) }) ? `${trimmed}T00:00:00` : null;
+    }
+    const zoneless = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/.exec(trimmed);
+    if (zoneless) {
+        if (!isRealDate({ year: Number(zoneless[1]), month: Number(zoneless[2]), day: Number(zoneless[3]) }) || Number(zoneless[4]) > 23 || Number(zoneless[5]) > 59) {
+            return null;
+        }
+        return `${zoneless[1]}-${zoneless[2]}-${zoneless[3]}T${zoneless[4]}:${zoneless[5]}:${zoneless[6] ?? '00'}`;
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : toTenantLocal({ date: new Date(parsed) });
+}
+
+function isRealDate({ year, month, day }: { year: number; month: number; day: number }): boolean {
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
 // Interprets a zone-less SellerCloud timestamp as tenant time and returns the UTC instant.
 function tenantLocalToUtc({ value }: { value: string | null | undefined }): string | null {
     if (!value) {
@@ -55,6 +81,7 @@ export const tenantTime = {
     toFilterValue,
     toTenantLocal,
     tenantLocalToUtc,
+    userInputToTenantLocal,
 };
 
 type WallClock = { year: number; month: number; day: number; hour: number; minute: number; second: number };

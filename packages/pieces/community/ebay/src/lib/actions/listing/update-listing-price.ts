@@ -55,7 +55,7 @@ export const updateListingPrice = createAction({
             price,
             quantity: quantity ?? undefined,
         });
-        if (result.ack === 'Failure' && failOnError !== false && !inventoryCommon.hasOnlyKnownListingIssues({ errors: result.errors })) {
+        if (!inventoryCommon.isSuccess({ ack: result.ack }) && failOnError !== false && !inventoryCommon.hasOnlyKnownListingIssues({ errors: result.errors })) {
             throw new Error(`eBay ReviseInventoryStatus failed: ${result.errors.map((error) => `${error.code} ${error.message ?? ''}`.trim()).join(' | ') || 'unknown error'}`);
         }
         return result;

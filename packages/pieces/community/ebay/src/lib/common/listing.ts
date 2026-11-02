@@ -9,7 +9,7 @@ async function getListingDetails({ auth, itemId, includeCompatibility }: { auth:
         innerXml: `<ItemID>${xmlUtils.escapeXml({ text: itemId.trim() })}</ItemID><DetailLevel>ReturnAll</DetailLevel><IncludeItemSpecifics>true</IncludeItemSpecifics>${includeCompatibility ? '<IncludeItemCompatibilityList>true</IncludeItemCompatibilityList>' : ''}`,
         readOnly: true,
     });
-    const result = inventoryCommon.parseResult({ xml });
+    const result = inventoryCommon.readableResult({ xml, call: 'GetItem' });
     const itemXml = xmlUtils.blocks({ xml, tag: 'Item' })[0];
     if (result.ack === 'Failure' || !itemXml) {
         return { found: false, ...result, listing: null };

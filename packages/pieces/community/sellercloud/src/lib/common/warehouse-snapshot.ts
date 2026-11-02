@@ -7,9 +7,12 @@ import { SellercloudAuthProps, sellercloudClient } from './client';
 // source for the full product universe, and it doubles as a snapshot of current quantities,
 // replacing one read per SKU with one request.
 async function fetchWarehouseSnapshot({ auth, token, warehouseName, shadowSuffix }: FetchSnapshotParams): Promise<WarehouseSnapshot> {
-    const base = auth.serverUrl.trim().replace(/\/+$/, '');
     const bearer = token ?? await sellercloudClient.getToken({ auth });
-    const url = `${base}/api/Inventory/Import/DownloadInventoryTemplate?template=2&fileFormat=1`;
+    // Raw fetch on purpose: the reply is a ~350 MB stream, and the framework's httpClient
+    // buffers whole bodies (no stream response type) and applies no address filtering of
+    // its own, so it would add memory pressure without adding protection. The URL is the
+    // same connection-configured host every other call in this piece already uses.
+    const url = `${sellercloudClient.apiBase({ auth })}/Inventory/Import/DownloadInventoryTemplate?template=2&fileFormat=1`;
     const started = Date.now();
     const failures: string[] = [];
 

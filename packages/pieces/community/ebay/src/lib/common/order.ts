@@ -25,11 +25,15 @@ function buildFilter({ dateField, from, to, fulfillmentStatus }: OrderFilter): s
     return parts.length > 0 ? parts.join(',') : undefined;
 }
 
-async function listOrders({ auth, filter, orderIds, maxOrders }: { auth: EbayAuthProps; filter: string | undefined; orderIds?: string; maxOrders: number }): Promise<{ orders: EbayOrder[]; total: number }> {
-    const pages = await fetchOrderPages({ auth, filter, orderIds, offset: 0, remaining: maxOrders });
+async function listOrders({ auth, filter, orderIds, maxOrders, offset = 0 }: { auth: EbayAuthProps; filter: string | undefined; orderIds?: string; maxOrders: number; offset?: number }): Promise<{ orders: EbayOrder[]; total: number; truncated: boolean }> {
+    const pages = await fetchOrderPages({ auth, filter, orderIds, offset, remaining: maxOrders });
+    const orders = pages.flatMap((page) => page.orders ?? []).slice(0, maxOrders);
+    const total = pages[0]?.total ?? 0;
+    const last = pages[pages.length - 1];
     return {
-        orders: pages.flatMap((page) => page.orders ?? []).slice(0, maxOrders),
-        total: pages[0]?.total ?? 0,
+        orders,
+        total,
+        truncated: !orderIds && !!last?.next && (last.orders?.length ?? 0) > 0 && offset + orders.length < total,
     };
 }
 
@@ -42,18 +46,27 @@ async function getOrder({ auth, orderId }: { auth: EbayAuthProps; orderId: strin
 }
 
 async function listShippingFulfillments({ auth, orderId }: { auth: EbayAuthProps; orderId: string }): Promise<FlatShippingFulfillment[]> {
+    const fulfillments = await listRawShippingFulfillments({ auth, orderId });
+    return fulfillments.map((fulfillment) => flattenShippingFulfillment({ fulfillment }));
+}
+
+async function listRawShippingFulfillments({ auth, orderId }: { auth: EbayAuthProps; orderId: string }): Promise<EbayShippingFulfillment[]> {
     const response = await ebayClient.request<{ fulfillments?: EbayShippingFulfillment[] }>({
         auth,
         method: HttpMethod.GET,
         path: `${FULFILLMENT_PATH}/order/${encodeURIComponent(orderId.trim())}/shipping_fulfillment`,
     });
-    return (response.fulfillments ?? []).map((fulfillment) => ({
+    return response.fulfillments ?? [];
+}
+
+function flattenShippingFulfillment({ fulfillment }: { fulfillment: EbayShippingFulfillment }): FlatShippingFulfillment {
+    return {
         fulfillment_id: fulfillment.fulfillmentId ?? null,
         shipped_date: fulfillment.shippedDate ?? null,
         carrier: fulfillment.shippingCarrierCode ?? null,
         tracking_number: fulfillment.shipmentTrackingNumber ?? null,
         line_item_ids: (fulfillment.lineItems ?? []).map((lineItem) => lineItem.lineItemId).filter((id): id is string => !!id).join(', '),
-    }));
+    };
 }
 
 function flattenOrder({ order }: { order: EbayOrder }): FlatOrder {
@@ -161,6 +174,8 @@ export const orderCommon = {
     getOrder,
     flattenOrder,
     listShippingFulfillments,
+    listRawShippingFulfillments,
+    flattenShippingFulfillment,
     fulfillmentPath: FULFILLMENT_PATH,
 };
 
@@ -208,7 +223,7 @@ export type EbayOrder = {
         tax?: EbayAmount;
         total?: EbayAmount;
     };
-    paymentSummary?: { totalDueSeller?: EbayAmount };
+    paymentSummary?: { totalDueSeller?: EbayAmount; payments?: { paymentDate?: string; paymentStatus?: string }[] };
     totalMarketplaceFee?: EbayAmount;
     fulfillmentStartInstructions?: {
         maxEstimatedDeliveryDate?: string;

@@ -246,7 +246,7 @@ async function adjust({ auth, token, store, warehouseId, item, reason }: AdjustP
         return { error: null };
     }
     catch (error) {
-        return { error: error as Error };
+        return { error: error instanceof Error ? error : new Error(String(error)) };
     }
 }
 

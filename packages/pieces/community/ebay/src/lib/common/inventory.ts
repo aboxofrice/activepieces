@@ -9,7 +9,7 @@ async function getListingQuantity({ auth, itemId, sku }: { auth: EbayAuthProps; 
         innerXml: `${lookup}${GET_ITEM_OUTPUT_SELECTORS.map((selector) => tag({ name: 'OutputSelector', value: selector })).join('')}`,
         readOnly: true,
     });
-    const result = parseResult({ xml });
+    const result = readableResult({ xml, call: 'GetItem' });
     const itemXml = xmlUtils.blocks({ xml, tag: 'Item' })[0];
     if (result.ack === 'Failure' || !itemXml) {
         return { found: false, ...result, listing: null };
@@ -26,12 +26,12 @@ async function updateListingQuantity({ auth, itemId, sku, quantity, method, isVa
             ? reviseItemXml({ itemId, sku, quantity, isVariation })
             : tag({ name: 'InventoryStatus', value: `${optionalTag({ name: 'ItemID', value: itemId })}${optionalTag({ name: 'SKU', value: sku })}<Quantity>${quantity}</Quantity>`, raw: true }),
     });
-    const result = parseResult({ xml });
-    const quantityIgnored = result.errors.some((error) => error.code === QUANTITY_IGNORED_CODE);
+    const result = readableResult({ xml, call: callName });
+    const quantityIgnored = [...result.errors, ...result.warnings].some((error) => error.code === QUANTITY_IGNORED_CODE);
     return {
         ...result,
         call: callName,
-        updated: result.ack !== 'Failure' && !quantityIgnored,
+        updated: isSuccess({ ack: result.ack }) && !quantityIgnored,
         quantity_ignored: quantityIgnored,
         item_id: xmlUtils.firstTag({ xml, tag: 'ItemID' }) ?? itemId ?? null,
         sku: sku ?? null,
@@ -49,12 +49,12 @@ async function updateListingPrice({ auth, itemId, sku, price, quantity }: PriceU
             raw: true,
         }),
     });
-    const result = parseResult({ xml });
+    const result = readableResult({ xml, call: 'ReviseInventoryStatus' });
     const statusXml = xmlUtils.blocks({ xml, tag: 'InventoryStatus' })[0] ?? '';
     return {
         ...result,
         call: 'ReviseInventoryStatus',
-        updated: result.ack !== 'Failure',
+        updated: isSuccess({ ack: result.ack }),
         item_id: xmlUtils.firstTag({ xml: statusXml, tag: 'ItemID' }) ?? itemId ?? null,
         sku: xmlUtils.firstTag({ xml: statusXml, tag: 'SKU' }) ?? sku ?? null,
         requested_price: price,
@@ -80,6 +80,22 @@ function parseResult({ xml }: { xml: string }): TradingResult {
         warnings: errors.filter((error) => error.severity !== 'Error'),
         timestamp: xmlUtils.firstTag({ xml, tag: 'Timestamp' }),
     };
+}
+
+// Only Success and Warning mean eBay applied the call. A reply without a recognisable Ack
+// (an HTML error page, a truncated body) says nothing about what happened, so it fails
+// rather than being reported as done.
+function readableResult({ xml, call }: { xml: string; call: string }): TradingResult {
+    const result = parseResult({ xml });
+    if (!KNOWN_ACKS.includes(result.ack)) {
+        const snippet = xml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, UNREADABLE_SNIPPET_CHARS);
+        throw new Error(`eBay ${call} returned a reply without a recognisable Ack, so the outcome is unknown${snippet ? `: ${snippet}` : ''}`);
+    }
+    return result;
+}
+
+function isSuccess({ ack }: { ack: string }): boolean {
+    return SUCCESS_ACKS.includes(ack);
 }
 
 function hasOnlyKnownListingIssues({ errors }: { errors: TradingError[] }): boolean {
@@ -158,6 +174,9 @@ function available({ quantity, sold }: { quantity: number | null; sold: number |
 }
 
 const QUANTITY_IGNORED_CODE = 21916619;
+const SUCCESS_ACKS = ['Success', 'Warning'];
+const KNOWN_ACKS = [...SUCCESS_ACKS, 'Failure', 'PartialFailure'];
+const UNREADABLE_SNIPPET_CHARS = 200;
 const LISTING_QUALITY_CODES = [21919136, 21920443];
 const KNOWN_ERRORS: Record<number, string> = {
     21919136: 'Listing has no photo — eBay blocks revisions until a photo is added. Quantity NOT updated.',
@@ -180,6 +199,8 @@ export const inventoryCommon = {
     updateListingQuantity,
     updateListingPrice,
     parseResult,
+    readableResult,
+    isSuccess,
     hasOnlyKnownListingIssues,
 };
 

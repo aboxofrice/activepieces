@@ -1,8 +1,10 @@
 import { createTrigger, Property, TriggerStrategy } from '@activepieces/pieces-framework';
-import { isNil } from '@activepieces/shared';
+import { isNil, tryCatch } from '@activepieces/shared';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
 import { sellercloudDropdowns } from '../common/dropdowns';
-import { FetchItems, PollStore, sellercloudPoller } from '../common/poller';
+import { sellercloudClient } from '../common/client';
+import { lowStock } from '../common/low-stock';
+import { FetchItems, PolledItem, PollStore, sellercloudPoller } from '../common/poller';
 import { InventoryRecord, sellercloudFeeds } from '../common/trigger-feeds';
 
 export const inventoryChanged = createTrigger({
@@ -57,29 +59,34 @@ export const inventoryChanged = createTrigger({
     },
     type: TriggerStrategy.POLLING,
     async onEnable(context) {
-        await sellercloudPoller.baseline({
+        await sellercloudPoller.enable({
             store: context.store,
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
+            keepState: keepState({ propsValue: context.propsValue }),
             sinceMs: Date.now() - sellercloudPoller.OVERLAP_MS,
         });
     },
-    async onDisable(context) {
-        await sellercloudPoller.clear({ store: context.store });
+    async onDisable() {
+        await sellercloudPoller.disable();
     },
     async test(context) {
-        const items = await buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue })({ since: new Date(Date.now() - TEST_LOOKBACK_MS) });
+        const { items } = await buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue })({ since: new Date(Date.now() - TEST_LOOKBACK_MS), startPage: 1, seen: {} });
         return items.slice(0, 5).map((item) => ({ ...item.data, previous_physical_qty: null }));
     },
     async run(context) {
         const watchingWarehouseOnly = parseSkus({ value: context.propsValue.skus }).length === 0;
         const emissions = await sellercloudPoller.poll({
             store: context.store,
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
+            overlapMs: sellercloudPoller.OVERLAP_MS,
             // Watching a warehouse by "updated since", a product is often first seen when it
             // is already low; that is the event, so report it.
             emitUnseen: watchingWarehouseOnly,
             retentionMs: RETENTION_MS,
+            keepState: keepState({ propsValue: context.propsValue }),
         });
         return emissions.map((emission) => ({
             ...emission.item,
@@ -99,28 +106,71 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<I
     if (skus.length === 0 && (mode === 'CHANGED' || warehouseId === null)) {
         throw new Error('SellerCloud: list the SKUs to watch. Without SKUs this trigger can only watch a warehouse for low stock.');
     }
-    return async ({ since }) => {
-        const records = await sellercloudFeeds.inventory({
+    const companies = sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds });
+    const toItem = (record: InventoryRecord): PolledItem<InventoryEvent> => {
+        const qty = (warehouseId === null ? record.PhysicalQty : record.WarehousePhysicalQty) ?? 0;
+        const low = qty <= threshold;
+        return {
+            key: itemKey({ sku: record.ID, warehouseId }),
+            state: mode === 'CHANGED' ? String(qty) : low ? 'low' : 'ok',
+            eligible: mode === 'CHANGED' || low,
+            eventTime: sellercloudPoller.toEventTime({ tenantLocal: record.LastModifiedDate }),
+            data: toEvent({ record, qty, mode, threshold, warehouseId }),
+        };
+    };
+    return async ({ since, startPage, seen }) => {
+        const page = await sellercloudFeeds.inventory({
             auth: sellercloudAuthProps(auth),
             store,
             since,
             skus,
             warehouseId,
-            companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds }),
+            companies,
             maxQty: skus.length === 0 ? threshold : null,
             maxPages: MAX_PAGES,
+            startPage,
         });
-        return records.map((record) => {
-            const qty = (warehouseId === null ? record.PhysicalQty : record.WarehousePhysicalQty) ?? 0;
-            const low = qty <= threshold;
-            return {
-                key: `${record.ID}|${warehouseId ?? 'all'}`,
-                state: mode === 'CHANGED' ? String(qty) : low ? 'low' : 'ok',
-                eligible: mode === 'CHANGED' || low,
-                data: toEvent({ record, qty, mode, threshold, warehouseId }),
-            };
-        });
+        const lowItems = page.items.map(toItem);
+        const recheck = skus.length === 0 && warehouseId !== null
+            ? lowStock.skusToRecheck({ seen, returned: new Set(lowItems.map((item) => item.key)), warehouseId })
+            : [];
+        // The recovery re-read is best effort: failing it must not cost the low-stock results.
+        const { data: rechecked, error: recheckError } = recheck.length === 0 ? { data: [], error: null } : await tryCatch(async () => (await sellercloudFeeds.inventoryBySku({
+            auth: sellercloudAuthProps(auth),
+            token: await sellercloudClient.getToken({ auth: sellercloudAuthProps(auth), store }),
+            skus: recheck,
+            warehouseId,
+            companies,
+        })).map(toItem));
+        if (recheckError) {
+            console.warn(`SellerCloud low stock: re-reading remembered low products failed (${recheckError.message}); retried next poll.`);
+        }
+        return { truncated: page.truncated, nextPage: page.nextPage, partialError: page.partialError, items: [...lowItems, ...(rechecked ?? [])] };
     };
+}
+
+// Watching a warehouse, only full "low" entries are re-read for recovery, so when the
+// remembered set outgrows the store the "ok" entries are trimmed first.
+function keepState({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string | undefined {
+    return parseSkus({ value: propsValue.skus }).length === 0 ? 'low' : undefined;
+}
+
+function itemKey({ sku, warehouseId }: { sku: string; warehouseId: number | null }): string {
+    return `${sku}|${warehouseId ?? 'all'}`;
+}
+
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
+    return sellercloudPoller.fingerprintOf({
+        trigger: 'inventory_changed',
+        settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
+            mode: propsValue.mode === 'CHANGED' ? 'CHANGED' : 'LOW_STOCK',
+            skus: parseSkus({ value: propsValue.skus }).sort(),
+            warehouse: isNil(propsValue.warehouse) ? null : Number(propsValue.warehouse),
+            threshold: propsValue.threshold ?? 0,
+            companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
+        },
+    });
 }
 
 function toEvent({ record, qty, mode, threshold, warehouseId }: { record: InventoryRecord; qty: number; mode: 'CHANGED' | 'LOW_STOCK'; threshold: number; warehouseId: number | null }): InventoryEvent {
