@@ -6,10 +6,11 @@ async function getInventory({ auth, itemIds }: { auth: Turn14AuthProps; itemIds:
     const batches = chunkIds({ ids: itemIds, size: INVENTORY_BATCH_SIZE });
     const results = await batches.reduce<Promise<Turn14Inventory[]>>(async (previous, batch) => {
         const collected = await previous;
-        const { data, error } = await tryCatch(() => turn14Client.request<{ data?: Turn14Inventory[] }>({
+        const { data, error } = await tryCatch(() => turn14Client.request({
             auth,
             method: 'GET',
             path: `/v1/inventory/${batch.map((id) => encodeURIComponent(id)).join(',')}`,
+            validate: turn14Client.isListResponse<Turn14Inventory>,
         }));
         // Turn14 answers 404 only when no ID in the batch exists; unknown IDs are otherwise just left out.
         if (error) {

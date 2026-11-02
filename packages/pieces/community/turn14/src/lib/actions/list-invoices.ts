@@ -27,8 +27,8 @@ export const listInvoices = createAction({
     },
     async run(context) {
         const since = context.propsValue.sinceDate?.trim();
-        const invoices = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
-        return invoices
+        const { rows } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
+        return rows
             .map((invoice) => turn14Orders.flattenInvoice({ invoice }))
             .filter((invoice) => !since || String(invoice['date'] ?? '') >= since)
             .filter((invoice) => !context.propsValue.unpaidOnly || Number(invoice['amount_due'] ?? 0) > 0)

@@ -55,7 +55,7 @@ export const turn14 = createPiece({
             authMapping: async (auth) => ({
                 Authorization: `Bearer ${await turn14Client.getToken({ auth: turn14AuthProps(auth) })}`,
             }),
-            description: 'Call any Turn14 endpoint, e.g. POST /order (direct order without a quote) or /items/data/brand/{brand_id}. The path is relative to /v1.',
+            description: 'Call any Turn14 endpoint, e.g. GET /items/data/brand/{brand_id}. The path is relative to /v1. Warning: do not use this to create quotes or orders - it skips the Testing/Production guard, the live-order confirmation and the duplicate-order checks of Create Shipping Quote / Place Order From Quote, and a failed request may log its body (recipient name, address, phone).',
         }),
     ],
     triggers: [inventoryChanged, priceChanged, newInvoice, orderShipped],

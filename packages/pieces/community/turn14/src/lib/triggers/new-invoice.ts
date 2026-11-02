@@ -35,21 +35,21 @@ export const newInvoice = createTrigger({
         lines: [{ item_id: '078595', part_number: 'rad20-0262', part_description: 'Radium Engineering Mitsubishi Evo 8-10 Clutch Fork Stop', quantity: 1, location_id: '01', unit_price: 29.16, total_price: 29.16 }],
     },
     async onEnable(context) {
-        const invoices = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
+        const { rows: invoices } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
         await turn14Polling.writeIdSet({ store: context.store, prefix: SEEN_PREFIX, ids: invoices.map((invoice) => String(invoice.id)) });
     },
     async onDisable(context) {
         await turn14Polling.deleteIdSet({ store: context.store, prefix: SEEN_PREFIX });
     },
     async test(context) {
-        const invoices = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: 1 });
+        const { rows: invoices } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: 1 });
         return invoices
             .map((invoice) => turn14Orders.flattenInvoice({ invoice }))
             .sort((left, right) => String(right['date'] ?? '').localeCompare(String(left['date'] ?? '')))
             .slice(0, TEST_LIMIT);
     },
     async run(context) {
-        const invoices = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
+        const { rows: invoices } = await turn14Orders.listInvoices({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
         const seen = await turn14Polling.readIdSet({ store: context.store, prefix: SEEN_PREFIX });
         const fresh = invoices.filter((invoice) => !seen.has(String(invoice.id)));
         if (fresh.length > 0) {

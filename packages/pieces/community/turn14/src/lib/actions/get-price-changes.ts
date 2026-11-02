@@ -42,7 +42,7 @@ export const getPriceChanges = createAction({
             item_ids: result.itemIds,
             pages_read: result.pagesRead,
             total_pages: result.totalPages,
-            complete: result.pagesRead >= result.totalPages,
+            complete: !result.truncated,
         };
     },
 });

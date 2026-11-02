@@ -1,6 +1,12 @@
 import { PieceAuth, Property } from '@activepieces/pieces-framework';
 import { Turn14AuthProps, turn14Client } from './common/client';
 
+// Engines below context V1 hand actions the CustomAuth props directly; newer ones pass the whole
+// connection with the credentials under `.props`. Accept either shape.
+function turn14AuthProps(auth: Turn14AuthValue): Turn14AuthProps {
+    return 'props' in auth ? auth.props : auth;
+}
+
 export const turn14Auth = PieceAuth.CustomAuth({
     description: `Connect a Turn 14 Distribution dealer account to the Turn14 API (OAuth client credentials).
 
@@ -20,7 +26,7 @@ export const turn14Auth = PieceAuth.CustomAuth({
         }),
         environment: Property.StaticDropdown({
             displayName: 'Environment',
-            description: 'Testing sends every request to apitest.turn14.com, Turn14\'s test host. Use it while building quote/order flows.',
+            description: 'Testing sends every request to apitest.turn14.com, Turn14\'s test host. Use it while building quote/order flows: quotes and orders with Order Environment "Testing" are only accepted on a Testing connection. A Production connection can only place real orders.',
             required: true,
             defaultValue: 'production',
             options: {
@@ -40,10 +46,6 @@ export const turn14Auth = PieceAuth.CustomAuth({
     },
 });
 
-// Engines below context V1 hand actions the CustomAuth props directly; newer ones pass the whole
-// connection with the credentials under `.props`. Accept either shape.
-export function turn14AuthProps(auth: Turn14AuthValue): Turn14AuthProps {
-    return 'props' in auth ? auth.props : auth;
-}
+export { turn14AuthProps };
 
 export type Turn14AuthValue = Turn14AuthProps | { props: Turn14AuthProps };

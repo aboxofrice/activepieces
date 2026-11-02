@@ -9,8 +9,8 @@ export const listOrders = createAction({
     description: 'List your open Turn14 orders. Turn14 only lists orders that are still open here; closed orders are reachable with Get Order (order IDs appear on invoices and tracking).',
     props: {},
     async run(context) {
-        const orders = await turn14Orders.listOrders({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
-        return orders.map((order) => turn14Orders.flattenOrder({ order }));
+        const { rows } = await turn14Orders.listOrders({ auth: turn14AuthProps(context.auth), maxPages: MAX_PAGES });
+        return rows.map((order) => turn14Orders.flattenOrder({ order }));
     },
 });
 

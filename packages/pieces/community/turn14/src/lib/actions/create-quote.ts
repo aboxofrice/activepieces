@@ -2,6 +2,7 @@ import { createAction, Property } from '@activepieces/pieces-framework';
 import { turn14Auth, turn14AuthProps } from '../auth';
 import { turn14Client } from '../common/client';
 import { turn14Environment } from '../common/environment';
+import { turn14OrderGuards } from '../common/order-guards';
 import { turn14Props } from '../common/props';
 import { turn14Quotes } from '../common/quotes';
 
@@ -9,7 +10,7 @@ export const createQuote = createAction({
     auth: turn14Auth,
     name: 'create_quote',
     displayName: 'Create Shipping Quote',
-    description: 'Ask Turn14 for a drop-ship quote (shipping options and cost) for items going to a recipient. Returns the quote ID and shipping_quote_ids that Place Order From Quote needs. Request shape is based on published Turn14 dealer integrations and has not been tested against a live account - try it with the Testing environment first.',
+    description: 'Ask Turn14 for a drop-ship quote (shipping options and cost) for items going to a recipient. Returns the quote ID and shipping_quote_ids that Place Order From Quote needs. Request shape is based on published Turn14 dealer integrations and has not been tested against a live account - try it on a Testing connection first. The quote\'s Order Environment is remembered so it cannot later be ordered in the other environment.',
     props: {
         environment: turn14Environment.orderEnvironmentProperty(),
         poNumber: Property.ShortText({
@@ -71,12 +72,14 @@ export const createQuote = createAction({
         if (items.length === 0 || items.some((item) => item.itemId.length === 0 || !Number.isInteger(item.quantity) || item.quantity < 1)) {
             throw new Error('Every item needs a Turn14 item ID and a whole-number quantity of at least 1.');
         }
-        const environment = turn14Environment.resolveEnvironment({ auth, requested: p.environment });
+        // A quote is not a purchase, so it needs no live-order confirmation; the host rule still applies.
+        const environment = turn14Environment.resolveOrderEnvironment({ auth, requested: p.environment, requireLiveConfirmation: false });
+        const poNumber = p.poNumber.trim();
         const response = await turn14Quotes.createQuote({
             auth,
             quote: {
                 environment,
-                poNumber: p.poNumber.trim(),
+                poNumber,
                 location: p.location?.trim() || 'default',
                 combineInOutStock: p.combineInOutStock !== false,
                 items,
@@ -97,6 +100,11 @@ export const createQuote = createAction({
                 },
             },
         });
-        return { environment, ...turn14Quotes.summarizeQuote({ response }) };
+        const summary = turn14Quotes.summarizeQuote({ response });
+        if (summary.quote_id !== null) {
+            await turn14OrderGuards.recordQuote({ store: context.store, auth, quoteId: summary.quote_id, quote: { environment, poNumber, at: new Date().toISOString() } });
+        }
+        turn14Environment.assertEchoedEnvironment({ response, expected: environment, what: `quote for PO "${poNumber}"` });
+        return { environment, ...summary };
     },
 });

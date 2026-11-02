@@ -1,12 +1,12 @@
 import { Turn14AuthProps, turn14Client } from './client';
 
 async function getItem({ auth, itemId }: { auth: Turn14AuthProps; itemId: string }): Promise<Turn14Item> {
-    const response = await turn14Client.request<{ data: Turn14Item }>({ auth, method: 'GET', path: `/v1/items/${encodeURIComponent(itemId)}` });
+    const response = await turn14Client.request({ auth, method: 'GET', path: `/v1/items/${encodeURIComponent(itemId)}`, validate: turn14Client.isSingleResponse<Turn14Item> });
     return response.data;
 }
 
 async function getItemData({ auth, itemId }: { auth: Turn14AuthProps; itemId: string }): Promise<Turn14ItemData | null> {
-    const response = await turn14Client.request<{ data?: Turn14ItemData[] | Turn14ItemData }>({ auth, method: 'GET', path: `/v1/items/data/${encodeURIComponent(itemId)}` });
+    const response = await turn14Client.request({ auth, method: 'GET', path: `/v1/items/data/${encodeURIComponent(itemId)}`, validate: isItemDataResponse });
     const data = response.data;
     if (Array.isArray(data)) {
         return data[0] ?? null;
@@ -15,37 +15,66 @@ async function getItemData({ auth, itemId }: { auth: Turn14AuthProps; itemId: st
 }
 
 async function getItemFitment({ auth, itemId }: { auth: Turn14AuthProps; itemId: string }): Promise<Turn14ItemFitment> {
-    const response = await turn14Client.request<{ data: Turn14ItemFitment }>({ auth, method: 'GET', path: `/v1/items/fitment/${encodeURIComponent(itemId)}` });
+    const response = await turn14Client.request({ auth, method: 'GET', path: `/v1/items/fitment/${encodeURIComponent(itemId)}`, validate: turn14Client.isSingleResponse<Turn14ItemFitment> });
     return response.data;
 }
 
 // Turn14 has no server-side part-number search, so searching means reading catalog pages
-// (1000 items each) and filtering them here. A brand narrows that to a handful of pages.
+// (1000 items each) and filtering them here. Each page is filtered as it arrives and only matches
+// are kept; the scan stops once `limit` matches are found. A brand narrows it to a handful of pages.
 async function searchItems({ auth, brandId, partNumber, matchMode, updatedWithinDays, activeOnly, maxPages, limit }: SearchItemsParams): Promise<SearchItemsResult> {
     const path = updatedWithinDays ? '/v1/items/updates' : brandId ? `/v1/items/brand/${encodeURIComponent(brandId)}` : '/v1/items';
-    const { rows, totalPages, pagesRead } = await turn14Client.fetchPages<Turn14Item>({
+    const criteria: SearchCriteria = {
+        brandId: updatedWithinDays ? brandId : undefined,
+        activeOnly,
+        wanted: partNumber ? normalizePartNumber({ value: partNumber }) : null,
+        matchMode,
+    };
+    const result = await turn14Client.scanPages<Turn14Item, Turn14Item[]>({
         auth,
         path,
         queryParams: updatedWithinDays ? { days: updatedWithinDays } : {},
-        maxPages,
+        maxPages: Math.min(maxPages, MAX_SEARCH_PAGES),
+        initial: [],
+        reduce: ({ acc, rows }) => {
+            const matches = [...acc, ...filterItems({ rows, criteria })].slice(0, limit);
+            return { acc: matches, done: matches.length >= limit };
+        },
     });
-    const wanted = partNumber ? normalizePartNumber({ value: partNumber }) : null;
-    const matches = rows
-        .filter((item) => !brandId || !updatedWithinDays || String(item.attributes?.brand_id ?? '') === brandId)
-        .filter((item) => !activeOnly || item.attributes?.active !== false)
-        .filter((item) => wanted === null || partNumberMatches({ item, wanted, matchMode }));
     return {
-        items: matches.slice(0, limit).map((item) => flattenItem({ item })),
-        match_count: matches.length,
-        pages_scanned: pagesRead,
-        total_pages: totalPages,
-        scanned_all_pages: pagesRead >= totalPages,
+        items: result.acc.map((item) => flattenItem({ item })),
+        match_count: result.acc.length,
+        stopped_at_limit: result.stoppedBy === 'reducer',
+        pages_scanned: result.pagesRead,
+        total_pages: result.totalPages ?? 0,
+        scanned_all_pages: result.nextPage === null,
     };
 }
 
-async function listBrandItemIds({ auth, brandId }: { auth: Turn14AuthProps; brandId: string }): Promise<string[]> {
-    const { rows } = await turn14Client.fetchPages<Turn14Item>({ auth, path: `/v1/items/brand/${encodeURIComponent(brandId)}`, maxPages: MAX_BRAND_PAGES });
-    return rows.map((item) => item.id);
+function filterItems({ rows, criteria }: { rows: Turn14Item[]; criteria: SearchCriteria }): Turn14Item[] {
+    const { brandId, activeOnly, wanted, matchMode } = criteria;
+    return rows
+        .filter((item) => !brandId || String(item.attributes?.brand_id ?? '') === brandId)
+        .filter((item) => !activeOnly || item.attributes?.active !== false)
+        .filter((item) => wanted === null || partNumberMatches({ item, wanted, matchMode }));
+}
+
+// A brand's item list feeds the trigger filters; an incomplete list would silently drop items, so
+// a brand too large to read fails loudly instead.
+async function listBrandItemIds({ auth, brandId, deadline }: { auth: Turn14AuthProps; brandId: string; deadline?: number }): Promise<string[]> {
+    const { rows, truncated, pagesRead, totalPages } = await turn14Client.fetchPages<Turn14Item>({ auth, path: `/v1/items/brand/${encodeURIComponent(brandId)}`, maxPages: MAX_BRAND_PAGES, deadline });
+    if (truncated) {
+        throw new Error(`Turn14 brand ${brandId} could not be read in full (${pagesRead} of ${totalPages} pages of 1,000 items before the page/time limit), so the brand filter would miss items. Use "Only These Item IDs" instead, or no filter.`);
+    }
+    return rows.map((item) => String(item.id));
+}
+
+function isItemDataResponse(value: unknown): value is { data?: Turn14ItemData[] | Turn14ItemData | null } {
+    if (!turn14Client.isRecord(value)) {
+        return false;
+    }
+    const data = value['data'];
+    return data === undefined || data === null || turn14Client.isRecord(data) || Array.isArray(data);
 }
 
 function partNumberMatches({ item, wanted, matchMode }: { item: Turn14Item; wanted: string; matchMode: PartNumberMatchMode }): boolean {
@@ -137,8 +166,9 @@ function round({ value }: { value: number }): number {
 }
 
 const MAX_BRAND_PAGES = 60;
+const MAX_SEARCH_PAGES = 200;
 
-export const turn14Items = { getItem, getItemData, getItemFitment, searchItems, listBrandItemIds, flattenItem, flattenItemData, normalizePartNumber };
+export const turn14Items = { getItem, getItemData, getItemFitment, searchItems, filterItems, listBrandItemIds, flattenItem, flattenItemData, normalizePartNumber, MAX_SEARCH_PAGES };
 
 export type PartNumberMatchMode = 'exact' | 'contains';
 
@@ -184,6 +214,13 @@ export type Turn14ItemFitment = {
 
 export type FlatItem = Record<string, string | number | boolean | null>;
 
+export type SearchCriteria = {
+    brandId?: string;
+    activeOnly: boolean;
+    wanted: string | null;
+    matchMode: PartNumberMatchMode;
+};
+
 type Turn14File = {
     id?: string;
     type?: string;
@@ -227,6 +264,7 @@ type SearchItemsParams = {
 type SearchItemsResult = {
     items: FlatItem[];
     match_count: number;
+    stopped_at_limit: boolean;
     pages_scanned: number;
     total_pages: number;
     scanned_all_pages: boolean;

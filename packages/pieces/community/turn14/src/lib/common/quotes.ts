@@ -1,16 +1,18 @@
 import { Turn14AuthProps, turn14Client } from './client';
+import { OrderEnvironment } from './environment';
 
 // Request shapes follow Turn14's quote -> order/from_quote flow as used by published dealer
 // integrations; Turn14's own reference is behind the dealer login. They were not exercised live.
 async function createQuote({ auth, quote }: { auth: Turn14AuthProps; quote: QuoteInput }): Promise<unknown> {
-    return turn14Client.request<unknown>({ auth, method: 'POST', path: '/v1/quote', body: buildQuoteBody({ quote }) });
+    return turn14Client.request({ auth, method: 'POST', path: '/v1/quote', body: buildQuoteBody({ quote }), validate: turn14Client.isAnyBody });
 }
 
 async function placeOrderFromQuote({ auth, order }: { auth: Turn14AuthProps; order: OrderFromQuoteInput }): Promise<unknown> {
-    return turn14Client.request<unknown>({
+    return turn14Client.request({
         auth,
         method: 'POST',
         path: '/v1/order/from_quote',
+        validate: turn14Client.isAnyBody,
         body: {
             data: {
                 environment: order.environment,
@@ -57,7 +59,7 @@ function buildQuoteBody({ quote }: { quote: QuoteInput }): Record<string, unknow
 
 // Only data.id and shipment[].shipping[].shipping_quote_id are known; the rest of each shipping
 // option is passed through as Turn14 sends it.
-function summarizeQuote({ response }: { response: unknown }): Record<string, unknown> {
+function summarizeQuote({ response }: { response: unknown }): QuoteSummary {
     const data = turn14Client.isRecord(response) && turn14Client.isRecord(response['data']) ? response['data'] : {};
     const attributes = turn14Client.isRecord(data['attributes']) ? data['attributes'] : {};
     const shipments = Array.isArray(attributes['shipment']) ? attributes['shipment'].filter(turn14Client.isRecord) : [];
@@ -65,8 +67,9 @@ function summarizeQuote({ response }: { response: unknown }): Record<string, unk
         const options = Array.isArray(shipment['shipping']) ? shipment['shipping'].filter(turn14Client.isRecord) : [];
         return options.map((option) => ({ shipment_index: shipmentIndex, location: shipment['location'] ?? null, ...option }));
     });
+    const quoteId = data['id'];
     return {
-        quote_id: data['id'] ?? null,
+        quote_id: typeof quoteId === 'string' || typeof quoteId === 'number' ? String(quoteId) : null,
         shipping_quote_ids: shippingOptions.map((option) => option['shipping_quote_id']).filter((id) => id !== undefined && id !== null),
         shipping_options: shippingOptions,
         raw: response,
@@ -74,8 +77,6 @@ function summarizeQuote({ response }: { response: unknown }): Record<string, unk
 }
 
 export const turn14Quotes = { createQuote, placeOrderFromQuote, buildQuoteBody, summarizeQuote };
-
-export type OrderEnvironment = 'testing' | 'production';
 
 export type QuoteInput = {
     environment: OrderEnvironment;
@@ -107,4 +108,11 @@ export type OrderFromQuoteInput = {
     acknowledgeProp65: boolean;
     acknowledgeEpa: boolean;
     shippingIds: (string | number)[];
+};
+
+export type QuoteSummary = {
+    quote_id: string | null;
+    shipping_quote_ids: unknown[];
+    shipping_options: Record<string, unknown>[];
+    raw: unknown;
 };

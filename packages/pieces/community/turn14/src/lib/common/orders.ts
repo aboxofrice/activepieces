@@ -1,22 +1,20 @@
-import { Turn14AuthProps, turn14Client } from './client';
+import { FetchPagesResult, Turn14AuthProps, turn14Client } from './client';
 
-async function listInvoices({ auth, maxPages }: { auth: Turn14AuthProps; maxPages: number }): Promise<Turn14Invoice[]> {
-    const { rows } = await turn14Client.fetchPages<Turn14Invoice>({ auth, path: '/v1/invoices', maxPages });
-    return rows;
+async function listInvoices({ auth, maxPages }: { auth: Turn14AuthProps; maxPages: number }): Promise<FetchPagesResult<Turn14Invoice>> {
+    return turn14Client.fetchPages<Turn14Invoice>({ auth, path: '/v1/invoices', maxPages });
 }
 
 async function getInvoice({ auth, invoiceId }: { auth: Turn14AuthProps; invoiceId: string }): Promise<Turn14Invoice> {
-    const response = await turn14Client.request<{ data: Turn14Invoice }>({ auth, method: 'GET', path: `/v1/invoices/${encodeURIComponent(invoiceId)}` });
+    const response = await turn14Client.request({ auth, method: 'GET', path: `/v1/invoices/${encodeURIComponent(invoiceId)}`, validate: turn14Client.isSingleResponse<Turn14Invoice> });
     return response.data;
 }
 
-async function listOrders({ auth, maxPages }: { auth: Turn14AuthProps; maxPages: number }): Promise<Turn14Order[]> {
-    const { rows } = await turn14Client.fetchPages<Turn14Order>({ auth, path: '/v1/orders', maxPages });
-    return rows;
+async function listOrders({ auth, maxPages }: { auth: Turn14AuthProps; maxPages: number }): Promise<FetchPagesResult<Turn14Order>> {
+    return turn14Client.fetchPages<Turn14Order>({ auth, path: '/v1/orders', maxPages });
 }
 
 async function getOrder({ auth, orderId }: { auth: Turn14AuthProps; orderId: string }): Promise<Turn14Order> {
-    const response = await turn14Client.request<{ data: Turn14Order }>({ auth, method: 'GET', path: `/v1/orders/${encodeURIComponent(orderId)}` });
+    const response = await turn14Client.request({ auth, method: 'GET', path: `/v1/orders/${encodeURIComponent(orderId)}`, validate: turn14Client.isSingleResponse<Turn14Order> });
     return response.data;
 }
 
@@ -25,7 +23,7 @@ async function getTracking({ auth, startDate, endDate }: { auth: Turn14AuthProps
     const windows = trackingWindows({ startDate, endDate });
     const rows = await windows.reduce<Promise<Turn14Tracking[]>>(async (previous, window) => {
         const collected = await previous;
-        const response = await turn14Client.request<{ data?: Turn14Tracking[] }>({ auth, method: 'GET', path: '/v1/tracking', queryParams: { start_date: window.start, end_date: window.end } });
+        const response = await turn14Client.request({ auth, method: 'GET', path: '/v1/tracking', queryParams: { start_date: window.start, end_date: window.end }, validate: turn14Client.isListResponse<Turn14Tracking> });
         return [...collected, ...(response.data ?? [])];
     }, Promise.resolve([]));
     const seen = new Set<string>();

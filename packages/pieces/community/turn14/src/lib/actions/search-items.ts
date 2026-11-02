@@ -7,7 +7,7 @@ export const searchItems = createAction({
     auth: turn14Auth,
     name: 'search_items',
     displayName: 'Search Items',
-    description: 'Find Turn14 catalog items by brand, part number / manufacturer part number, or recent updates. Turn14 has no part-number search, so this reads catalog pages (1,000 items each) and filters them - pick a brand to keep it fast.',
+    description: 'Find Turn14 catalog items by brand, part number / manufacturer part number, or recent updates. Turn14 has no part-number search, so this reads catalog pages (1,000 items each), keeps only matches and stops as soon as Max Results matches are found - pick a brand to keep it fast.',
     props: {
         brandId: turn14Props.brandDropdown({ required: false, description: 'Strongly recommended: limits the scan to one brand (usually 1-30 pages instead of ~830).' }),
         partNumber: Property.ShortText({
@@ -38,12 +38,13 @@ export const searchItems = createAction({
         }),
         maxPages: Property.Number({
             displayName: 'Max Pages to Scan',
-            description: 'Each page is 1,000 items (about 1 second). The whole catalog is ~830 pages; a brand is usually under 30.',
+            description: 'Each page is 1,000 items (about a third of a second). Capped at 200 pages (200,000 items) per run; the whole catalog is ~830 pages, so an unfiltered search cannot cover it - pick a brand (usually under 30 pages). The output says whether every page was scanned.',
             required: true,
             defaultValue: 30,
         }),
         limit: Property.Number({
             displayName: 'Max Results',
+            description: 'The scan stops once this many matches are found.',
             required: true,
             defaultValue: 100,
         }),
@@ -60,7 +61,7 @@ export const searchItems = createAction({
             matchMode: matchMode === 'contains' ? 'contains' : 'exact',
             updatedWithinDays: updatedWithinDays ?? undefined,
             activeOnly: activeOnly !== false,
-            maxPages: Math.max(1, Math.floor(maxPages ?? 30)),
+            maxPages: Math.min(turn14Items.MAX_SEARCH_PAGES, Math.max(1, Math.floor(maxPages ?? 30))),
             limit: Math.max(1, Math.floor(limit ?? 100)),
         });
     },

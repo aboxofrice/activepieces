@@ -84,17 +84,17 @@ function itemIdsProperty({ displayName, description, required }: { displayName?:
 }
 
 async function listBrands({ auth }: { auth: Turn14AuthProps }): Promise<Turn14Brand[]> {
-    const response = await turn14Client.request<{ data?: Turn14Brand[] }>({ auth, method: 'GET', path: '/v1/brands' });
+    const response = await turn14Client.request({ auth, method: 'GET', path: '/v1/brands', validate: turn14Client.isListResponse<Turn14Brand> });
     return [...(response.data ?? [])].sort((left, right) => (left.attributes?.name ?? '').localeCompare(right.attributes?.name ?? ''));
 }
 
 async function listLocations({ auth }: { auth: Turn14AuthProps }): Promise<Turn14Location[]> {
-    const response = await turn14Client.request<{ data?: Turn14Location[] }>({ auth, method: 'GET', path: '/v1/locations' });
+    const response = await turn14Client.request({ auth, method: 'GET', path: '/v1/locations', validate: turn14Client.isListResponse<Turn14Location> });
     return response.data ?? [];
 }
 
 async function listShippingMethods({ auth }: { auth: Turn14AuthProps }): Promise<Turn14ShippingMethod[]> {
-    const response = await turn14Client.request<{ data?: Turn14ShippingMethod[] }>({ auth, method: 'GET', path: '/v1/shipping' });
+    const response = await turn14Client.request({ auth, method: 'GET', path: '/v1/shipping', validate: turn14Client.isListResponse<Turn14ShippingMethod> });
     return response.data ?? [];
 }
 
