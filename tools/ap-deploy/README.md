@@ -93,10 +93,12 @@ To resolve a drifted flow without reaching the server:
 - **Keep the staff edit:** restore the latest Drive backup onto a local test stack on the Mac
   (installer `restore`, with the warehouse's `BACKUP_PASSWORD`/`BACKUP_SALT` and
   `AP_ENCRYPTION_KEY` in that stack's `.env`), run `ap_deploy.py export <key>` against it, commit.
+  The next pass sees the server copy equals git and adopts it as the new baseline (no re-import).
 - **Discard it (let git win):** add a new `"overwrite"` token to the flow's deploy.json entry, e.g.
   `{"enabled": true, "overwrite": "2026-11-02"}`, and push. The next pass re-imports the git
   version once (also undoing a stop made in the UI) and records the token, so later edits are
-  flagged again; a new token is needed to overwrite again.
+  flagged again; a new token is needed to overwrite again. Remove the token from deploy.json once
+  it has applied: restoring an older backup (without the recorded token) would otherwise re-fire it.
 
 ## Environment
 

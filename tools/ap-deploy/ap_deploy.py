@@ -47,6 +47,7 @@ KEY_RE = re.compile(r'[a-z0-9][a-z0-9-]*')
 HASH_VERSION = 2
 # States that need a human; status exits 1 and ap-sync logs them.
 FLAGGED_STATES = ('error', 'drifted', 'missing-deps')
+GATEWAY_ERRORS = (502, 503, 504)
 
 
 class ApiError(Exception):
@@ -405,6 +406,12 @@ def _classify(client, repo, rec, connections, piece_cache):
         rec['interrupted'] = True
         meta = {**meta, 'deployedStatus': None}
     known_source = {rec['sourceHash']}
+    # The server copy already equals the git file (e.g. a staff edit was exported into git): adopt
+    # it as the new baseline instead of flagging drift or re-importing.
+    if drifted and flow['publishedVersionId'] == flow['version']['id'] and target_hash(flow) == rec['sourceHash']:
+        drifted = False
+        rec['rebaseline'] = True
+        known_source.add(meta.get('sourceHash'))
     if (meta.get('hashVersion') or 1) != HASH_VERSION:
         known_source.add(definition_hash(flow_def, meta.get('hashVersion') or 1))
     # deployedStatus is what the last apply left; a different status now means someone switched the
@@ -535,10 +542,11 @@ def _apply_one(client, rec):
         client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
     except ApiError as e:
         # The server answered with an error, so nothing was imported: drop the pending hash, or a
-        # later staff edit could be mistaken for our import and overwritten. On a timeout or
-        # connection error (no status) the import may have gone through, so keep it: the next pass
-        # then finishes the apply instead of flagging our own import as drift.
-        if e.status is not None:
+        # later staff edit could be mistaken for our import and overwritten. On a timeout,
+        # connection error or proxy gateway error (502/503/504: the app may still be working on
+        # it) the import may have gone through, so keep it: the next pass then finishes the apply
+        # instead of flagging our own import as drift.
+        if e.status is not None and e.status not in GATEWAY_ERRORS:
             _update_metadata(client, client.flow(flow['id']), {}, drop=('applyingSourceHash', 'applyingHash'))
         raise
     imported = client.flow(flow['id'])

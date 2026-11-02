@@ -186,6 +186,22 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual((r['state'], r['action']), ('drifted', 'none'))
         self.assertEqual(self.ap.flow(fid)['version']['trigger']['nextAction']['settings']['sourceCode']['code'], 'return 2')
 
+    def test_staff_edit_exported_into_git_becomes_baseline(self):
+        apply(self.ap, self.repo)
+        fid = flow_of(self.ap, 'a')['id']
+        self.ap.staff_edit(fid, 'return 99')
+        self.ap.operate(fid, 'LOCK_AND_PUBLISH', {'status': 'ENABLED'})
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+        self.repo.put('a', make_def('a', code='return 99'))  # "keep the staff edit": exported into git
+        r = evaluate(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+        calls = len(self.ap.calls)
+        apply(self.ap, self.repo)
+        self.assertNotIn('IMPORT_FLOW', [c[0] for c in self.ap.calls[calls:]])
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['action'], 'none')
+        self.ap.staff_edit(fid, 'return 100')  # later edits are drift again
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
     def test_legacy_metadata_is_rebaselined_not_reimported(self):
         apply(self.ap, self.repo)
         fid = flow_of(self.ap, 'a')['id']
@@ -269,6 +285,21 @@ class InterruptedApplyTests(unittest.TestCase):
         self.assertEqual((r['state'], r['action']), ('changed', 'update'))
         self.assertTrue(apply(self.ap, self.repo)['a'].get('applied'))
         self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'in-sync')
+
+    def test_gateway_error_on_import_keeps_pending(self):
+        self.failed = True
+        real = self.ap.operate
+
+        def import_then_gateway_timeout(flow_id, op_type, request):
+            result = real(flow_id, op_type, request)
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 504: gateway timeout', status=504)
+            return result
+        self.ap.operate = import_then_gateway_timeout
+        apply(self.ap, self.repo)
+        self.assertIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'changed')
 
     def test_died_between_import_and_recording_hash(self):
         apply(self.ap, self.repo)
