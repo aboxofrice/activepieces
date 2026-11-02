@@ -157,6 +157,16 @@ class ApplyTests(unittest.TestCase):
         r = evaluate(self.ap, self.repo)['a']
         self.assertEqual((r['state'], r['action']), ('in-sync', 'none'))
 
+    def test_new_flow_is_created_disabled_unless_enabled(self):
+        self.repo.put('b', make_def('b'))
+        self.repo.put('c', make_def('c'))
+        self.repo.deploy({'b': {}, 'c': {'enabled': False}})
+        apply(self.ap, self.repo)
+        for key in ('b', 'c'):
+            flow = flow_of(self.ap, key)
+            self.assertEqual(flow['status'], 'DISABLED', key)
+            self.assertEqual(flow['metadata']['deployedStatus'], 'DISABLED', key)
+
     def test_upgrade_migration_rebaselines_instead_of_drift(self):
         apply(self.ap, self.repo)
         fid = flow_of(self.ap, 'a')['id']

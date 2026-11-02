@@ -19,6 +19,10 @@
 #   AP_IMAGE          app image (default: the tag this installer was built with). Changing it on a
 #                     re-run is an upgrade: a backup is taken first (when backups are set up).
 #   AP_HTTP_PORT      port (default 8080)
+#   AP_EDITION        ce (default) or ee. Saved to .env; pass it again on a re-run to switch. In ee
+#                     mode every run hides the pieces in hidden-pieces.txt (never one a flow uses).
+#                     EE is for this dev/test server only (see packages/ee/LICENSE); no license key
+#                     is set and no paid features are switched on.
 #   ADMIN_EMAIL       admin login (default admin@warehouse.local)
 #   GHCR_USER / GHCR_TOKEN   registry login for private images
 #   COMPOSE_PROJECT_NAME     stack name (default activepieces); lets a test copy run beside it
@@ -34,6 +38,7 @@ DATA_DIR=${DATA_DIR:-/data}
 export DATA_DIR
 ENV_FILE=$DATA_DIR/.env
 PIECES_FILE=$DATA_DIR/pieces.txt
+HIDDEN_PIECES_FILE=$DATA_DIR/hidden-pieces.txt
 # Written once the secrets block has been shown at the end of a successful run. Until then every
 # run shows it again, so a first run that fails half-way never loses the only copy of the secrets.
 SECRETS_ACK=$DATA_DIR/.secrets-acknowledged
@@ -150,15 +155,23 @@ copy_templates() {
     log "Writing stack files to $DATA_DIR"
     cp "$TEMPLATE_DIR"/docker-compose.yml "$DATA_DIR"/
     for f in "$TEMPLATE_DIR"/compose.*.yml; do [ -f "$f" ] && cp "$f" "$DATA_DIR"/; done
-    cp "$TEMPLATE_DIR"/pieces.txt "$DATA_DIR"/
+    cp "$TEMPLATE_DIR"/pieces.txt "$TEMPLATE_DIR"/hidden-pieces.txt "$DATA_DIR"/
     # Older installers copied restore.sh / backup-setup.sh here. Remove them: scripts that drive the
     # Docker socket must come from the installer image, not from a writable data folder.
     rm -f "$DATA_DIR/restore.sh" "$DATA_DIR/backup-setup.sh"
     return 0
 }
 
+check_edition() {
+    case "$1" in
+        ce|ee) ;;
+        *) die "AP_EDITION must be ce or ee, got '$1'" ;;
+    esac
+}
+
 write_env() {
     local port=${AP_HTTP_PORT:-8080}
+    [ -z "${AP_EDITION:-}" ] || check_edition "$AP_EDITION"
     if [ ! -f "$ENV_FILE" ]; then
         [ -n "${AP_FRONTEND_URL:-}" ] || die "Set AP_FRONTEND_URL on first run, e.g. -e AP_FRONTEND_URL=http://192.168.1.50:$port"
         [ -n "${AP_IMAGE:-${DEFAULT_AP_IMAGE:-}}" ] || die "No app image: pass -e AP_IMAGE=ghcr.io/aboxofrice/activepieces:<sha> (this installer was built without one)"
@@ -171,7 +184,7 @@ COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-activepieces}
 AP_IMAGE=${AP_IMAGE:-$DEFAULT_AP_IMAGE}
 AP_HTTP_PORT=$port
 AP_FRONTEND_URL=$AP_FRONTEND_URL
-AP_EDITION=ce
+AP_EDITION=${AP_EDITION:-ce}
 AP_ENVIRONMENT=prod
 AP_EXECUTION_MODE=SANDBOX_CODE_ONLY
 AP_ENCRYPTION_KEY=$(rand_hex 16)
@@ -201,6 +214,10 @@ EOF
         [ -n "${AP_IMAGE:-}" ] && env_set AP_IMAGE "$AP_IMAGE"
         [ -n "${AP_HTTP_PORT:-}" ] && env_set AP_HTTP_PORT "$AP_HTTP_PORT"
         [ -n "${AP_FRONTEND_URL:-}" ] && env_set AP_FRONTEND_URL "$AP_FRONTEND_URL"
+        if [ -n "${AP_EDITION:-}" ] && [ "$(env_get AP_EDITION)" != "$AP_EDITION" ]; then
+            log "Switching AP_EDITION from $(env_get AP_EDITION) to $AP_EDITION"
+            env_set AP_EDITION "$AP_EDITION"
+        fi
     fi
     local var
     for var in $PASSTHROUGH_VARS; do
@@ -345,6 +362,7 @@ ensure_admin() {
             firstName:='"Warehouse"' lastName:='"Admin"' trackEvents:=false newsLetter:=false)")
     fi
     TOKEN=$(printf '%s' "$res" | json_field token)
+    PLATFORM_ID=$(printf '%s' "$res" | json_field platformId)
     [ -n "$TOKEN" ] || die "Could not create or sign in as $ADMIN_EMAIL_V: $res"
     # Community/EE sign-up of the first user only creates the login and returns an onboarding token
     # (no project); the platform is created in a second call, as the web onboarding does.
@@ -352,6 +370,7 @@ ensure_admin() {
         log "Creating the platform"
         res=$(api POST /v1/platforms '{"name":"Warehouse"}')
         TOKEN=$(printf '%s' "$res" | json_field token)
+        PLATFORM_ID=$(printf '%s' "$res" | json_field platformId)
         [ -n "$(printf '%s' "$res" | json_field projectId)" ] || die "Could not create the platform: $res"
     fi
 }
@@ -366,6 +385,36 @@ install_pieces() {
             pieceName=PIECE_NAME pieceVersion=PIECE_VERSION)")
         if printf '%s' "$res" | grep -q '"name"'; then echo "  ok  $PIECE_NAME@$PIECE_VERSION"; else echo "  !!  $PIECE_NAME@$PIECE_VERSION: $res"; fi
     done < "$PIECES_FILE"
+}
+
+# EE only: piece filtering lives in ee/pieces/filters, Community ignores the platform setting.
+# The whole list is re-applied every run, so removing a line shows that piece again (and a change
+# made in the UI's piece settings is replaced). Pieces stay installed; they are only hidden.
+apply_hidden_pieces() {
+    [ "$(env_get AP_EDITION)" = ee ] || return 0
+    [ -f "$HIDDEN_PIECES_FILE" ] || return 0
+    [ -n "${PLATFORM_ID:-}" ] || die "No platform id from sign-in; cannot apply $HIDDEN_PIECES_FILE"
+    log "Hiding pieces listed in hidden-pieces.txt"
+    local used="$WORK_DIR/used-pieces" body res count
+    # A hidden piece cannot be loaded, so a flow using it would break: collect every piece any
+    # flow version on this server references (all versions, not only the published ones).
+    compose exec -T postgres psql -X -A -t -v ON_ERROR_STOP=1 \
+        -U "$(env_get AP_POSTGRES_USERNAME)" -d "$(env_get AP_POSTGRES_DATABASE)" -c \
+        "SELECT DISTINCT p #>> '{}' FROM flow_version, jsonb_path_query(trigger, 'lax \$.**.pieceName') AS p
+         WHERE trigger IS NOT NULL AND jsonb_typeof(p) = 'string'" </dev/null > "$used" \
+        || die "Could not list the pieces flows use; nothing was hidden"
+    body=$(python3 "$TEMPLATE_DIR/hidden_pieces.py" "$HIDDEN_PIECES_FILE" "$used") \
+        || die "Could not read $HIDDEN_PIECES_FILE"
+    res=$(api POST "/v1/platforms/$PLATFORM_ID" "$body")
+    count=$(printf '%s' "$res" | python3 -c 'import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    d = None
+names = d.get("filteredPieceNames") if isinstance(d, dict) else None
+print(len(names) if isinstance(names, list) and d.get("filteredPieceBehavior") == "BLOCKED" else "")')
+    [ -n "$count" ] || die "Could not update the platform's hidden pieces: $res"
+    echo "  $count pieces hidden"
 }
 
 print_secrets() {
@@ -408,6 +457,7 @@ case "$cmd" in
         attach_to_stack
         ensure_admin
         install_pieces
+        apply_hidden_pieces
         finish
         ;;
     --show-secrets|show-secrets)
