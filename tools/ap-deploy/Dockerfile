@@ -1,5 +1,5 @@
 # ap-sync helper: pulls the flows repo and applies managed flows to the Activepieces next to it.
-FROM python:3-slim
+FROM python:3.12.12-slim-bookworm
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*

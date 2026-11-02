@@ -25,6 +25,8 @@ services:
       GIT_AUTHOR_NAME: ap-sync (${AP_DEPLOY_TARGET:-warehouse})
       GIT_AUTHOR_EMAIL: ap-sync@${AP_DEPLOY_TARGET:-warehouse}.local
       BACKUP_STATUS_FILE: /backup-status/status
+      # optional healthchecks.io-style URL: pinged after every good pass, <url>/fail after a failed one
+      SYNC_HEALTHCHECK_URL: ${SYNC_HEALTHCHECK_URL:-}
     volumes:
       # flows-repo checkout (/data/flows) + nightly-export state
       - ap_sync_data:/data

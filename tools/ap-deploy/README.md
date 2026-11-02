@@ -107,9 +107,10 @@ metadata (let git win on the next apply). For a flow turned off on the server, s
 | `AP_FLOWS_REPO` | ap_deploy.py | repo checkout (default `.`); `--repo` overrides |
 | `FLOWS_REPO_URL`, `FLOWS_BRANCH` | ap-sync | HTTPS clone URL, default branch `main` |
 | `GITHUB_TOKEN` | ap-sync | fine-grained token, contents read/write on the flows repo only; passed by a credential helper scoped to the `FLOWS_REPO_URL` host, never written to `.git/config` |
+| `SYNC_HEALTHCHECK_URL` | ap-sync | optional healthchecks.io-style URL: GET after every good pass, `<url>/fail` after a failed one (separate check from the backup's `HEALTHCHECK_URL`) |
 | `BACKUP_STATUS_FILE` | ap-sync | default `/backup-status/status` (backup service's status volume, read-only) |
 | `FLOWS_DIR`, `STATE_FILE` | ap-sync | default `/data/flows`, `/data/ap-sync-state.json` (named volume) |
-| `SYNC_INTERVAL_MINUTES` | ap-sync | default 5 |
+| `SYNC_INTERVAL_MINUTES` | ap-sync | default 5 (an invalid value logs a warning and uses the default; so does `EXPORT_HOUR`) |
 | `EXPORT_HOUR`, `TZ` | ap-sync | nightly staff export runs on the first pass at/after this local hour |
 
 ## Container

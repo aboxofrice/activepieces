@@ -23,6 +23,7 @@ import sys
 import time
 import traceback
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 import ap_deploy
@@ -31,8 +32,27 @@ REPO_URL = os.environ.get('FLOWS_REPO_URL', 'https://github.com/aboxofrice/activ
 BRANCH = os.environ.get('FLOWS_BRANCH', 'main')
 FLOWS_DIR = os.environ.get('FLOWS_DIR', '/data/flows')
 STATE_FILE = os.environ.get('STATE_FILE', '/data/ap-sync-state.json')
-INTERVAL = float(os.environ.get('SYNC_INTERVAL_MINUTES', '5')) * 60
-EXPORT_HOUR = int(os.environ.get('EXPORT_HOUR', '2'))
+
+
+def _env_number(name, default, cast, low, high):
+    """A bad value must not crash-loop the container: warn and use the default."""
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = cast(raw)
+        if low <= value <= high:
+            return value
+    except ValueError:
+        pass
+    print(f'WARNING: {name}={raw!r} is not a number in {low}..{high}; using {default}', flush=True)
+    return default
+
+
+INTERVAL = _env_number('SYNC_INTERVAL_MINUTES', 5.0, float, 0.1, 1440) * 60
+EXPORT_HOUR = _env_number('EXPORT_HOUR', 2, int, 0, 23)
+# Optional healthchecks.io-style URL: GET after every good pass, <url>/fail after a failed one.
+SYNC_HEALTHCHECK_URL = os.environ.get('SYNC_HEALTHCHECK_URL', '').strip()
 TARGET = os.environ.get('AP_DEPLOY_TARGET', 'warehouse')
 BACKUP_STATUS_FILE = os.environ.get('BACKUP_STATUS_FILE', '/backup-status/status')
 STATUS_DIR = 'status'
@@ -195,6 +215,16 @@ def tick(export_now=False, push=True):
         save_state({**state, 'lastExport': today})
 
 
+def ping_health(suffix=''):
+    """Never raises and never logs the URL (it is the check's secret)."""
+    if not SYNC_HEALTHCHECK_URL:
+        return
+    try:
+        urllib.request.urlopen(SYNC_HEALTHCHECK_URL.rstrip('/') + suffix, timeout=10).close()
+    except Exception as e:  # noqa: BLE001
+        log(f'warning: could not reach SYNC_HEALTHCHECK_URL ({type(e).__name__})')
+
+
 def main():
     p = argparse.ArgumentParser(description='ap-sync helper loop')
     p.add_argument('--once', action='store_true')
@@ -209,6 +239,7 @@ def main():
             if last_error:
                 log('recovered from the previous error')
             last_error, repeats = None, 0
+            ping_health()
         except Exception as e:  # noqa: BLE001 - never crash-loop: log, wait, try again
             msg = f'{type(e).__name__}: {e}'
             # The same failure every 5 minutes is logged once an hour, not every pass.
@@ -218,6 +249,7 @@ def main():
                     log(traceback.format_exc().rstrip())
             repeats = repeats + 1 if msg == last_error else 1
             last_error = msg
+            ping_health('/fail')
             if args.once:
                 return 1
         if args.once:
