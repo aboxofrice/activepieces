@@ -1,0 +1,41 @@
+# Warehouse (production) stack: Community edition, image pulled from GHCR, no dev-piece mounts.
+# Created and started by install.sh; secrets live in ./.env (generated, root-only, never committed).
+name: ${COMPOSE_PROJECT_NAME:-activepieces}
+
+services:
+  activepieces:
+    image: ${AP_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # File-passing steps fetch AP_FRONTEND_URL from inside the container, so the app must
+      # listen on the same port it is published on.
+      AP_PORT: ${AP_HTTP_PORT:-8080}
+    ports:
+      - '${AP_HTTP_PORT:-8080}:${AP_HTTP_PORT:-8080}'
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - cache:/usr/src/app/cache
+
+  postgres:
+    image: 'postgres:14.4'
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AP_POSTGRES_DATABASE}
+      POSTGRES_USER: ${AP_POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${AP_POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: 'redis:7.0.7'
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  cache:
+  postgres_data:
+  redis_data:
