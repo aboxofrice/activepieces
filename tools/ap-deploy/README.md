@@ -151,8 +151,7 @@ because the import may have gone through.
 
 To resolve a drifted flow without reaching the server:
 - **Keep the staff edit:** restore the latest Drive backup onto a local test stack on the Mac
-  (installer `restore`, with the warehouse's `BACKUP_PASSWORD`/`BACKUP_SALT` and
-  `AP_ENCRYPTION_KEY` in that stack's `.env`), run `ap_deploy.py export <key>` against it, commit.
+  (see "Restore a warehouse backup on another machine" in `deploy/warehouse/README.md`), run `ap_deploy.py export <key>` against it, commit.
   The next pass sees the server copy equals git and adopts it as the new baseline (no re-import).
 - **Discard it (let git win):** add a new `"overwrite"` token to the flow's deploy.json entry, e.g.
   `{"enabled": true, "overwrite": "2026-11-02"}`, and push. The next pass re-imports the git
@@ -182,11 +181,15 @@ To resolve a drifted flow without reaching the server:
 ## Container
 
 ```bash
-docker build -t ghcr.io/aboxofrice/ap-sync:<tag> tools/ap-deploy
+docker build --build-arg REVISION=$(git rev-parse HEAD) -t ghcr.io/aboxofrice/ap-sync:1.2.0 tools/ap-deploy
 ```
 
+The installer pins this tag (`compose.ap-sync.yml`) and checks the image's
+`org.opencontainers.image.revision` label; see "Images and release" in `deploy/warehouse/README.md`.
+
 Service definition: `deploy/warehouse/compose.ap-sync.yml` (named volume only; gets `ADMIN_EMAIL`,
-`ADMIN_PASSWORD`, `GITHUB_TOKEN` from the stack `.env` and nothing else). Image upgrades via
+`ADMIN_PASSWORD`, `GITHUB_TOKEN`, the `AP_DEPLOY_*` and sync settings from the stack `.env` and
+nothing else; set them with `-e` on an installer run). Image upgrades via
 `release.json` are not implemented yet: `check_release_upgrade()` in `ap_sync.py` is the hook.
 
 Tests (no server needed): `cd tools/ap-deploy && python3 -m unittest discover -s tests`.

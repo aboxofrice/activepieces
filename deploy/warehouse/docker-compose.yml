@@ -39,7 +39,9 @@ services:
       AP_WEBHOOK_TIMEOUT_SECONDS: ${AP_WEBHOOK_TIMEOUT_SECONDS:-30}
       TZ: ${TZ:-America/New_York}
     ports:
-      - '${AP_HTTP_PORT:-8080}:${AP_HTTP_PORT:-8080}'
+      # HTTP_BIND_PREFIX is set ('127.0.0.1:') only by the installer's first run, which creates the
+      # admin over the internal network before publishing the port on the LAN. Leave it unset.
+      - '${HTTP_BIND_PREFIX:-}${AP_HTTP_PORT:-8080}:${AP_HTTP_PORT:-8080}'
     depends_on:
       - postgres
       - redis

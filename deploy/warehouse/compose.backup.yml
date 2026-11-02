@@ -1,10 +1,11 @@
+# managed-by: ap-installer (removed from the data folder when an installer no longer ships it)
 # Nightly encrypted database backup to Google Drive (PLAN.md section 6).
 # Use together with docker-compose.yml:
 #   docker compose -f docker-compose.yml -f compose.backup.yml up -d
 # Named volumes only (the stack is driven by a containerized installer; host paths would not resolve).
 #
 # One-time Drive authorization:   docker compose ... run --rm backup setup     (or installer `backup-setup`)
-# Backup now (exit 1 on failure): docker compose ... run --rm backup now pre-upgrade [--no-prune]
+# Backup now (exit 1 on failure): docker compose ... run --rm backup now [label] [--no-prune]
 # List / restore:                 docker compose ... run --rm backup list      (restore: installer `restore`)
 #
 # Settings read from .env (all optional except the BACKUP_PASSWORD/BACKUP_SALT that install.sh writes).
@@ -13,13 +14,15 @@
 #   BACKUP_TIME           nightly run time HH:MM (default 03:30; avoid 02:00-03:00, which DST skips)
 #   BACKUP_DRIVE_FOLDER   Drive folder (default "Activepieces Backups/warehouse")
 #   BACKUP_KEEP_NIGHTLY / BACKUP_KEEP_WEEKLY / BACKUP_KEEP_MANUAL   (default 14 / 8 / 10)
+#   BACKUP_KEEP_PRE_UPGRADE / BACKUP_KEEP_PRE_RESTORE   safety backups the installer takes, each in
+#                         its own folder with its own retention (default 5 / 5)
 #   BACKUP_WEEKLY_DAY     1=Mon .. 7=Sun (default 7)
 #   HEALTHCHECK_URL       optional healthchecks.io-style URL: pinged after every successful backup,
 #                         <url>/fail after a failed one, so a dead backup raises an alert
 services:
   backup:
     # Pre-built and pushed to GHCR (the installer runs compose without the build context).
-    image: ${AP_BACKUP_IMAGE:-ghcr.io/aboxofrice/ap-backup:1.1.0}
+    image: ${AP_BACKUP_IMAGE:-ghcr.io/aboxofrice/ap-backup:1.2.0}
     restart: unless-stopped
     environment:
       TZ: ${TZ:-UTC}
@@ -37,6 +40,8 @@ services:
       BACKUP_KEEP_NIGHTLY: ${BACKUP_KEEP_NIGHTLY:-}
       BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-}
       BACKUP_KEEP_MANUAL: ${BACKUP_KEEP_MANUAL:-}
+      BACKUP_KEEP_PRE_UPGRADE: ${BACKUP_KEEP_PRE_UPGRADE:-}
+      BACKUP_KEEP_PRE_RESTORE: ${BACKUP_KEEP_PRE_RESTORE:-}
       BACKUP_WEEKLY_DAY: ${BACKUP_WEEKLY_DAY:-}
       HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
     depends_on:

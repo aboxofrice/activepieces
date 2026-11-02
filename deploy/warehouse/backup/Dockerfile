@@ -28,6 +28,11 @@ RUN apk add --no-cache \
     && rm -rf /tmp/rclone-* \
     && rclone version | head -1
 
+# Source revision, checked by the installer against its own (set it to the commit the release is
+# built from: --build-arg REVISION=$(git rev-parse HEAD)).
+ARG REVISION=unknown
+LABEL org.opencontainers.image.revision=$REVISION
+
 COPY --chmod=0755 backup.sh /usr/local/bin/backup
 
 ENV RCLONE_CONFIG=/config/rclone.conf

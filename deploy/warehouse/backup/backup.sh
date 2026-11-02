@@ -4,8 +4,11 @@
 #   backup daemon            run cron; nightly backup at BACKUP_TIME (default)
 #   backup nightly           one nightly run (what cron calls)
 #   backup now [label] [--no-prune]
-#                            one-shot backup into manual/ (e.g. before an upgrade); exit 1 on failure.
-#                            --no-prune skips retention (restore.sh: never delete the backup being restored)
+#                            one-shot backup; exit 1 on failure. Labels pre-upgrade and pre-restore
+#                            (the installer's safety backups) go to their own folders, anything else
+#                            to manual/. Afterwards only that folder's retention is applied, so the
+#                            kinds never prune each other; --no-prune skips it (restore.sh: never
+#                            delete the backup being restored)
 #   backup list [--plain]    list backups, oldest first ("path<TAB>bytes" with --plain)
 #   backup restore <path> [--confirm] [--disconnect]
 #                            restore one backup into the database. Refuses while anything else is
@@ -21,6 +24,9 @@
 #   nightly/activepieces-YYYYMMDDTHHMMSS-nightly.dump   newest BACKUP_KEEP_NIGHTLY kept
 #   weekly/ ...                                          newest BACKUP_KEEP_WEEKLY kept
 #   manual/activepieces-YYYYMMDDTHHMMSS-<label>.dump     newest BACKUP_KEEP_MANUAL kept
+#   pre-upgrade/ ...-pre-upgrade.dump                    newest BACKUP_KEEP_PRE_UPGRADE kept
+#   pre-restore/ ...-pre-restore.dump                    newest BACKUP_KEEP_PRE_RESTORE kept
+# The nightly run applies every folder's retention; `now` only its own folder's.
 #
 # HEALTHCHECK_URL (optional, healthchecks.io style): GET <url> after a successful backup,
 # GET <url>/fail after a failed one. Nobody can reach the server, so this is how failures surface.
@@ -38,6 +44,8 @@ set -o pipefail
 : "${BACKUP_KEEP_NIGHTLY:=14}"
 : "${BACKUP_KEEP_WEEKLY:=8}"
 : "${BACKUP_KEEP_MANUAL:=10}"
+: "${BACKUP_KEEP_PRE_UPGRADE:=5}"
+: "${BACKUP_KEEP_PRE_RESTORE:=5}"
 : "${BACKUP_WEEKLY_DAY:=7}"
 : "${RCLONE_CONFIG:=/config/rclone.conf}"
 : "${HEALTHCHECK_URL:=}"
@@ -54,6 +62,7 @@ LOCK_FILE=/status/.lock
 REMOTE=backup:
 WORK=/tmp/backup-work
 NAME_RE='^activepieces-[0-9]{8}T[0-9]{6}-[a-z0-9-]+\.dump$'
+FOLDERS='nightly weekly manual pre-upgrade pre-restore'
 
 main() {
     cmd=${1:-daemon}
@@ -66,7 +75,9 @@ main() {
             for a in "$@"; do
                 case "$a" in --no-prune) NO_PRUNE=1 ;; -*) die "unknown option: $a" ;; *) label=$a ;; esac
             done
-            locked run_backup manual "$(sanitize_label "$label")" ;;
+            label=$(sanitize_label "$label")
+            case "$label" in pre-upgrade|pre-restore) folder=$label ;; *) folder=manual ;; esac
+            locked run_backup "$folder" "$label" ;;
         list) cmd_list "${1:-}" ;;
         restore) [ $# -ge 1 ] || die "usage: backup restore <path> [--confirm] [--disconnect]"; locked cmd_restore "$@" ;;
         prune) locked cmd_prune ;;
@@ -128,7 +139,11 @@ run_backup() { # run_backup <folder> <label>
     rm -rf "$WORK"
     if [ -z "${NO_PRUNE:-}" ]; then
         STEP="pruning"
-        cmd_prune || fail "retention pruning failed"
+        if [ "$folder" = nightly ]; then
+            cmd_prune || fail "retention pruning failed"
+        else
+            configure_remote; prune_folder "$folder" "$(keep_for "$folder")" || fail "retention pruning failed"
+        fi
     fi
 
     trap - EXIT
@@ -149,12 +164,23 @@ ping_healthcheck() { # ping_healthcheck "" | /fail
 
 cmd_prune() {
     configure_remote
-    prune_folder nightly "$BACKUP_KEEP_NIGHTLY" || return 1
-    prune_folder weekly "$BACKUP_KEEP_WEEKLY" || return 1
-    prune_folder manual "$BACKUP_KEEP_MANUAL" || return 1
+    for f in $FOLDERS; do
+        prune_folder "$f" "$(keep_for "$f")" || return 1
+    done
+}
+
+keep_for() {
+    case "$1" in
+        nightly) echo "$BACKUP_KEEP_NIGHTLY" ;;
+        weekly) echo "$BACKUP_KEEP_WEEKLY" ;;
+        manual) echo "$BACKUP_KEEP_MANUAL" ;;
+        pre-upgrade) echo "$BACKUP_KEEP_PRE_UPGRADE" ;;
+        pre-restore) echo "$BACKUP_KEEP_PRE_RESTORE" ;;
+    esac
 }
 
 prune_folder() { # prune_folder <folder> <keep>
+    case "$2" in ''|*[!0-9]*) log "ERROR: retention for $1 must be a whole number, got '$2'" >&2; return 1 ;; esac
     names=$(list_names "$1") || return 1
     total=$(printf '%s' "$names" | grep -c . || true)
     excess=$((total - $2))
@@ -200,7 +226,7 @@ cmd_restore() {
             *) die "unknown restore option: $a" ;;
         esac
     done
-    echo "$path" | grep -qE '^(nightly|weekly|manual)/activepieces-[0-9]{8}T[0-9]{6}-[a-z0-9-]+\.dump$' \
+    echo "$path" | grep -qE '^(nightly|weekly|manual|pre-upgrade|pre-restore)/activepieces-[0-9]{8}T[0-9]{6}-[a-z0-9-]+\.dump$' \
         || die "not a backup path: $path"
     configure_remote
     wait_for_postgres

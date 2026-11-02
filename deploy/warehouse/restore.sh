@@ -9,8 +9,8 @@
 #   no path    list backups and pick one
 #   <path>     restore that backup, e.g. nightly/activepieces-20261101T033000-nightly.dump
 #
-# Steps: confirm -> safety backup of the current database (manual/...-pre-restore, retention
-# skipped so it cannot delete the backup being restored) -> stop the app services -> restore into a
+# Steps: confirm -> safety backup of the current database (pre-restore/..., its own folder and
+# retention, and pruning skipped so it cannot delete the backup being restored) -> stop the app services -> restore into a
 # temporary database and swap it in (the backup image does this and refuses while anything is
 # still connected) -> clear Redis -> start the app services again.
 # The replaced database is kept as <db>__before_restore_<timestamp> until you drop it.

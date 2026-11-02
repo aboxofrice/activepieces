@@ -24,13 +24,21 @@
 #                     EE is for this dev/test server only (see packages/ee/LICENSE); no license key
 #                     is set and no paid features are switched on.
 #   ADMIN_EMAIL       admin login (default admin@warehouse.local)
+#   AP_ENCRYPTION_KEY BACKUP_PASSWORD BACKUP_SALT ADMIN_PASSWORD
+#                     first run only, to set up a copy that restores another server's backups (see
+#                     README "Restore a warehouse backup on another machine"): used instead of fresh
+#                     values and never printed. Ignored, with a warning, once .env exists.
 #   GHCR_USER / GHCR_TOKEN   registry login for private images
 #   COMPOSE_PROJECT_NAME     stack name (default activepieces); lets a test copy run beside it
 #   Optional, saved to .env when given (first run or re-run; see compose.ap-sync.yml / compose.backup.yml):
 #     GITHUB_TOKEN (fine-grained, read-only "Contents: Read" on the flows repo; ap-sync only pulls)
-#     FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES SYNC_HEALTHCHECK_URL
-#     AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
-#     BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL
+#     FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET AP_DEPLOY_BASE_URL SYNC_INTERVAL_MINUTES
+#     SYNC_HEALTHCHECK_URL AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME
+#     BACKUP_DRIVE_FOLDER BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL
+#     BACKUP_KEEP_PRE_UPGRADE BACKUP_KEEP_PRE_RESTORE BACKUP_WEEKLY_DAY HEALTHCHECK_URL
+#   Every image the stack uses must be pullable or already on this machine, otherwise the installer
+#   stops before starting anything. A helper image whose revision label differs from the one this
+#   installer was built for is reported (warning only).
 set -euo pipefail
 
 TEMPLATE_DIR=${TEMPLATE_DIR:-$(cd "$(dirname "$0")" && pwd)}
@@ -42,19 +50,29 @@ HIDDEN_PIECES_FILE=$DATA_DIR/hidden-pieces.txt
 # Written once the secrets block has been shown at the end of a successful run. Until then every
 # run shows it again, so a first run that fails half-way never loses the only copy of the secrets.
 SECRETS_ACK=$DATA_DIR/.secrets-acknowledged
+# Names (never values) of the secrets a first run took from -e instead of generating; the secrets
+# block does not show those.
+SECRETS_GIVEN=$DATA_DIR/.secrets-given
+# First line of every compose.*.yml this installer ships; such a file in the data folder that the
+# installer no longer ships is removed. Files without it (your own overrides) are never touched.
+MANAGED_MARKER='# managed-by: ap-installer'
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 # Settings an installer run may pass with -e and that must survive into .env for the helper services.
-PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES
+PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET AP_DEPLOY_BASE_URL SYNC_INTERVAL_MINUTES
 AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
-BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
+BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_KEEP_PRE_UPGRADE BACKUP_KEEP_PRE_RESTORE
+BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
+# Secrets a first run may take from -e (restoring another server's backups) instead of generating.
+GIVEN_SECRET_VARS="AP_ENCRYPTION_KEY BACKUP_PASSWORD BACKUP_SALT ADMIN_PASSWORD"
 # AP_* keys docker-compose.yml passes to the app; any other AP_* key in .env is ignored there.
 APP_ENV_KEYS=" AP_PORT AP_FRONTEND_URL AP_EDITION AP_ENVIRONMENT AP_EXECUTION_MODE AP_ENCRYPTION_KEY AP_JWT_SECRET
 AP_POSTGRES_DATABASE AP_POSTGRES_HOST AP_POSTGRES_PORT AP_POSTGRES_USERNAME AP_POSTGRES_PASSWORD AP_REDIS_HOST
 AP_REDIS_PORT AP_TELEMETRY_ENABLED AP_TRIGGER_DEFAULT_POLL_INTERVAL AP_WORKER_CONCURRENCY AP_REUSE_SANDBOX
-AP_FLOW_TIMEOUT_SECONDS AP_WEBHOOK_TIMEOUT_SECONDS AP_IMAGE AP_HTTP_PORT AP_SYNC_IMAGE AP_BACKUP_IMAGE AP_DEPLOY_TARGET "
+AP_FLOW_TIMEOUT_SECONDS AP_WEBHOOK_TIMEOUT_SECONDS AP_IMAGE AP_HTTP_PORT AP_SYNC_IMAGE AP_BACKUP_IMAGE AP_DEPLOY_TARGET
+AP_DEPLOY_BASE_URL "
 
 rand_hex() { openssl rand -hex "$1"; }
 rand_pw() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
@@ -154,6 +172,13 @@ copy_templates() {
     # Compose files and the piece list ship with the installer image; refresh them on every run so
     # a newer installer brings its stack definition along. .env and app.env are never touched here.
     log "Writing stack files to $DATA_DIR"
+    local f
+    for f in "$DATA_DIR"/compose.*.yml; do
+        [ -f "$f" ] && [ ! -f "$TEMPLATE_DIR/${f##*/}" ] || continue
+        head -n 1 "$f" | grep -qF "$MANAGED_MARKER" || continue
+        echo "  removing ${f##*/} (no longer part of this installer's stack)"
+        rm -f "$f"
+    done
     cp "$TEMPLATE_DIR"/docker-compose.yml "$DATA_DIR"/
     for f in "$TEMPLATE_DIR"/compose.*.yml; do [ -f "$f" ] && cp "$f" "$DATA_DIR"/; done
     cp "$TEMPLATE_DIR"/pieces.txt "$TEMPLATE_DIR"/hidden-pieces.txt "$DATA_DIR"/
@@ -176,8 +201,9 @@ write_env() {
     if [ ! -f "$ENV_FILE" ]; then
         [ -n "${AP_FRONTEND_URL:-}" ] || die "Set AP_FRONTEND_URL on first run, e.g. -e AP_FRONTEND_URL=http://192.168.1.50:$port"
         [ -n "${AP_IMAGE:-${DEFAULT_AP_IMAGE:-}}" ] || die "No app image: pass -e AP_IMAGE=ghcr.io/aboxofrice/activepieces:<sha> (this installer was built without one)"
+        check_given_secrets
         log "Generating .env with fresh secrets"
-        rm -f "$SECRETS_ACK"
+        rm -f "$SECRETS_ACK" "$SECRETS_GIVEN"
         umask 077
         cat > "$ENV_FILE.tmp" <<EOF
 # Generated by the installer on $(date -u +%Y-%m-%dT%H:%M:%SZ). Never commit or share this file.
@@ -210,8 +236,10 @@ BACKUP_PASSWORD=$(rand_pw 32)
 BACKUP_SALT=$(rand_pw 32)
 EOF
         mv "$ENV_FILE.tmp" "$ENV_FILE"
+        apply_given_secrets
     else
         log "Keeping existing .env"
+        warn_ignored_secrets
         [ -n "${AP_IMAGE:-}" ] && env_set AP_IMAGE "$AP_IMAGE"
         [ -n "${AP_HTTP_PORT:-}" ] && env_set AP_HTTP_PORT "$AP_HTTP_PORT"
         [ -n "${AP_FRONTEND_URL:-}" ] && env_set AP_FRONTEND_URL "$AP_FRONTEND_URL"
@@ -230,6 +258,42 @@ EOF
     [ -f "$SECRETS_ACK" ] || print_secrets
 }
 
+# A first run may take the secrets of another server (to restore its backups) instead of generating
+# them. Values are checked here and written by env_set; they are never echoed.
+check_given_secrets() {
+    if [ -n "${AP_ENCRYPTION_KEY:-}" ]; then
+        printf '%s' "$AP_ENCRYPTION_KEY" | grep -qE '^[0-9a-fA-F]{32}$' \
+            || die "AP_ENCRYPTION_KEY must be 32 hex characters (as in the other server's secrets block); nothing was written"
+    fi
+    local var pw=0 salt=0
+    [ -n "${BACKUP_PASSWORD:-}" ] && pw=1
+    [ -n "${BACKUP_SALT:-}" ] && salt=1
+    [ "$pw" = "$salt" ] || die "Pass BACKUP_PASSWORD and BACKUP_SALT together (backups need both to decrypt); nothing was written"
+    for var in $GIVEN_SECRET_VARS; do
+        case "${!var:-}" in *$'\n'*) die "$var must be a single line; nothing was written" ;; esac
+    done
+}
+apply_given_secrets() {
+    local var given=''
+    for var in $GIVEN_SECRET_VARS; do
+        [ -n "${!var:-}" ] || continue
+        env_set "$var" "${!var}"
+        given="$given $var"
+    done
+    [ -n "$given" ] || return 0
+    rm -f "$ENV_FILE.bak"
+    ( umask 077; printf '%s\n' $given > "$SECRETS_GIVEN" )
+    echo "  taken from -e instead of generated:$given"
+}
+warn_ignored_secrets() {
+    local var ignored=''
+    for var in $GIVEN_SECRET_VARS; do
+        [ -n "${!var:-}" ] && [ "$(env_get "$var")" != "${!var}" ] && ignored="$ignored $var"
+    done
+    [ -z "$ignored" ] && return 0
+    warn "ignored$ignored: they are read on a first run only, and .env already exists. To change one, edit $ENV_FILE by hand (changing AP_ENCRYPTION_KEY makes saved connections unreadable)."
+}
+
 registry_login() {
     if [ -n "${GHCR_TOKEN:-}" ]; then
         log "Logging in to ghcr.io"
@@ -237,16 +301,94 @@ registry_login() {
     fi
 }
 
-start_stack() {
+# Always pull: a re-pushed tag must not be ignored because an older copy exists locally. A failed
+# pull is fine when the image is on this machine (offline, built locally) and said so; an image
+# that is neither pullable nor present stops the run before anything is started.
+pull_images() {
     log "Pulling images"
-    # Always pull: a re-pushed tag must not be ignored because an older copy exists locally. A
-    # failed pull (offline, image only built locally) is not fatal; `up` fails if one is missing.
-    compose pull --ignore-pull-failures || true
+    local svc image err missing='' images="$WORK_DIR/images"
+    service_images > "$images" || die "Could not read the stack's compose files (see above); nothing was started."
+    while read -r svc image; do
+        [ -n "$image" ] || continue
+        if docker pull -q "$image" </dev/null >/dev/null 2>"$WORK_DIR/pull.err"; then
+            echo "  pulled  $image"
+        elif docker image inspect "$image" >/dev/null 2>&1; then
+            echo "  local   $image (could not pull it; using the copy on this machine, not checked against the registry)"
+        else
+            err=$(grep . "$WORK_DIR/pull.err" | tail -n 1)
+            missing="$missing
+  $svc: $image  (setting $(image_setting "$svc"); pull said: ${err:-nothing})"
+            continue
+        fi
+        case "$svc" in ap-sync|backup) check_helper_revision "$image" ;; esac
+    done < "$images"
+    [ -z "$missing" ] && return 0
+    die "These images could not be pulled and are not on this machine:$missing
+Nothing was started. Check the network and the registry login (-e GHCR_USER / -e GHCR_TOKEN
+for private images), publish the missing tag, or point the setting at an image that exists."
+}
+
+# "service image" per line, from the merged compose config (so .env overrides are applied). Piped,
+# not saved: the resolved config holds the secrets. pipefail makes a compose error fail this.
+service_images() {
+    compose config --format json | python3 -c 'import json, sys
+for name, svc in sorted(json.load(sys.stdin).get("services", {}).items()):
+    print(name, svc.get("image", ""))'
+}
+
+image_setting() {
+    case "$1" in
+        activepieces) echo AP_IMAGE ;;
+        ap-sync) echo AP_SYNC_IMAGE ;;
+        backup) echo AP_BACKUP_IMAGE ;;
+        *) echo "in a compose file" ;;
+    esac
+}
+
+# Helper images are pinned by tag, so a tag rebuilt locally from other code would run silently.
+# Their OCI revision label is compared with the revision this installer was built for.
+check_helper_revision() {
+    local want=${HELPER_REVISION:-} have
+    case "$want" in ''|unknown) return 0 ;; esac
+    have=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$1" 2>/dev/null) || return 0
+    case "$have" in
+        ''|'<no value>'|unknown)
+            warn "$1 has no source revision label, so it cannot be checked against this installer (built for $want).
+         Pull the published tag, or rebuild it with --build-arg REVISION=$want." ;;
+        "$want"*) ;;
+        *) case "$want" in "$have"*) return 0 ;; esac
+           warn "$1 was built from revision $have, but this installer expects $want.
+         The tag was rebuilt from other code; pull the published tag or rebuild it from $want." ;;
+    esac
+}
+
+# Until the admin exists anyone who reaches the port could sign up as the first user, so a first
+# run publishes the port on this host only (127.0.0.1); publish_port opens it once ensure_admin
+# has run. The installer itself talks to the app over the stack network. A run counts as a first
+# run until one has finished (SECRETS_ACK).
+LOCAL_ONLY=
+start_stack() {
+    pull_images
     if upgrade_pending; then
         backup_before_upgrade
     fi
-    log "Starting the stack"
+    if [ ! -f "$SECRETS_ACK" ]; then
+        log "Starting the stack (port $(env_get AP_HTTP_PORT) on this host only until the admin exists)"
+        LOCAL_ONLY=1
+        export HTTP_BIND_PREFIX=127.0.0.1:
+    else
+        log "Starting the stack"
+        unset HTTP_BIND_PREFIX
+    fi
     compose up -d --remove-orphans
+}
+
+publish_port() {
+    [ -n "$LOCAL_ONLY" ] || return 0
+    unset HTTP_BIND_PREFIX
+    log "Admin exists: publishing port $(env_get AP_HTTP_PORT) on the network"
+    compose up -d activepieces
+    wait_for_app
 }
 
 # True when the app container exists and runs a different image than the one about to start.
@@ -299,6 +441,10 @@ attach_to_stack() {
     else
         API_BASE="http://localhost:$(env_get AP_HTTP_PORT)/api"
     fi
+    wait_for_app
+}
+
+wait_for_app() {
     log "Waiting for Activepieces"
     for _ in $(seq 1 120); do
         curl -fsS "$API_BASE/v1/flags" >/dev/null 2>&1 && return
@@ -403,7 +549,9 @@ install_pieces() {
         case "$PIECE_NAME" in ''|\#*) continue ;; esac
         res=$(api POST /v1/pieces "$(json_obj packageType:='"REGISTRY"' scope:='"PLATFORM"' \
             pieceName=PIECE_NAME pieceVersion=PIECE_VERSION)") || true
-        if printf '%s' "$res" | grep -q '"name"'; then echo "  ok  $PIECE_NAME@$PIECE_VERSION"; else echo "  !!  $PIECE_NAME@$PIECE_VERSION: $res"; fi
+        if printf '%s' "$res" | grep -q '"name"'; then echo "  ok  $PIECE_NAME@$PIECE_VERSION"
+        elif printf '%s' "$res" | grep -q 'piece_metadata_already_exists'; then echo "  ok  $PIECE_NAME@$PIECE_VERSION (already installed)"
+        else echo "  !!  $PIECE_NAME@$PIECE_VERSION: $res"; fi
     done < "$PIECES_FILE"
 }
 
@@ -455,7 +603,11 @@ print(len(names) if isinstance(names, list) and d.get("filteredPieceBehavior") =
     echo "  $count pieces hidden"
 }
 
+# print_secrets [all]: without "all", secrets a first run took from -e are not shown (they belong
+# to another server and are already in its secrets block).
 print_secrets() {
+    local mask=
+    [ "${1:-}" = all ] || mask=1
     cat <<EOF
 
 =====================================================================
@@ -467,12 +619,20 @@ print_secrets() {
 ---------------------------------------------------------------------
 URL:                $(env_get AP_FRONTEND_URL)
 ADMIN_EMAIL:        $(env_get ADMIN_EMAIL)
-ADMIN_PASSWORD:     $(env_get ADMIN_PASSWORD)
-AP_ENCRYPTION_KEY:  $(env_get AP_ENCRYPTION_KEY)
-BACKUP_PASSWORD:    $(env_get BACKUP_PASSWORD)
-BACKUP_SALT:        $(env_get BACKUP_SALT)
+ADMIN_PASSWORD:     $(secret_value ADMIN_PASSWORD $mask)
+AP_ENCRYPTION_KEY:  $(secret_value AP_ENCRYPTION_KEY $mask)
+BACKUP_PASSWORD:    $(secret_value BACKUP_PASSWORD $mask)
+BACKUP_SALT:        $(secret_value BACKUP_SALT $mask)
 =====================================================================
 EOF
+}
+
+secret_value() { # secret_value KEY [mask]
+    if [ -n "${2:-}" ] && [ -f "$SECRETS_GIVEN" ] && grep -qx "$1" "$SECRETS_GIVEN"; then
+        echo "(given with -e; not shown, see --show-secrets)"
+    else
+        env_get "$1"
+    fi
 }
 
 finish() {
@@ -494,6 +654,7 @@ case "$cmd" in
         start_stack
         attach_to_stack
         ensure_admin
+        publish_port
         # First thing after sign-in: after a ce->ee switch an older filter may still name pieces
         # that flows made on Community use; this re-computes it before anything else is done.
         apply_hidden_pieces
@@ -502,7 +663,7 @@ case "$cmd" in
         ;;
     --show-secrets|show-secrets)
         [ -f "$ENV_FILE" ] || die "$ENV_FILE not found; run the installer first"
-        print_secrets
+        print_secrets all
         ;;
     restore) preflight; exec "$TEMPLATE_DIR/restore.sh" "$@" ;;
     backup-setup) preflight; exec "$TEMPLATE_DIR/backup-setup.sh" "$@" ;;
