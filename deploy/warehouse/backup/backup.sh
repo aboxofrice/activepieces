@@ -3,28 +3,35 @@
 #
 #   backup daemon            run cron; nightly backup at BACKUP_TIME (default)
 #   backup nightly           one nightly run (what cron calls)
-#   backup now [label]       one-shot backup into manual/ (e.g. before an upgrade); exit 1 on failure
+#   backup now [label] [--no-prune]
+#                            one-shot backup into manual/ (e.g. before an upgrade); exit 1 on failure.
+#                            --no-prune skips retention (restore.sh: never delete the backup being restored)
 #   backup list [--plain]    list backups, oldest first ("path<TAB>bytes" with --plain)
 #   backup restore <path> [--confirm] [--disconnect]
 #                            restore one backup into the database. Refuses while anything else is
 #                            connected to it (stop activepieces/ap-sync first; restore.sh does);
 #                            --disconnect ends leftover sessions of an already-stopped app.
 #                            Without --confirm it asks you to type the database name.
+#                            The replaced database is kept as <db>__before_restore_<UTC timestamp>.
 #   backup prune             apply retention only
 #   backup status            print the status file
-#   backup setup             write the rclone config (interactive; run via backup-setup.sh)
+#   backup setup             write the rclone config (interactive; run via the installer: ... ap-installer:<tag> backup-setup)
 #
 # Remote layout (inside the encrypted folder; names are encrypted in Drive):
 #   nightly/activepieces-YYYYMMDDTHHMMSS-nightly.dump   newest BACKUP_KEEP_NIGHTLY kept
 #   weekly/ ...                                          newest BACKUP_KEEP_WEEKLY kept
 #   manual/activepieces-YYYYMMDDTHHMMSS-<label>.dump     newest BACKUP_KEEP_MANUAL kept
 #
+# HEALTHCHECK_URL (optional, healthchecks.io style): GET <url> after a successful backup,
+# GET <url>/fail after a failed one. Nobody can reach the server, so this is how failures surface.
+#
 # Dumps use pg_dump's custom format (-Fc): compressed, verifiable with `pg_restore --list` before
 # upload, and restorable with pg_restore into a fresh database.
 set -eu
 set -o pipefail
 
-: "${BACKUP_TIME:=02:30}"
+# 03:30, not 02:30: on the spring-forward night 02:00-03:00 does not exist and cron skips the run.
+: "${BACKUP_TIME:=03:30}"
 : "${BACKUP_REMOTE_TYPE:=drive}"
 : "${BACKUP_DRIVE_FOLDER:=Activepieces Backups/warehouse}"
 : "${BACKUP_LOCAL_DIR:=/local-backups}"
@@ -33,6 +40,7 @@ set -o pipefail
 : "${BACKUP_KEEP_MANUAL:=10}"
 : "${BACKUP_WEEKLY_DAY:=7}"
 : "${RCLONE_CONFIG:=/config/rclone.conf}"
+: "${HEALTHCHECK_URL:=}"
 export RCLONE_CONFIG
 
 export PGHOST="${AP_POSTGRES_HOST:-postgres}"
@@ -53,7 +61,12 @@ main() {
     case "$cmd" in
         daemon) cmd_daemon ;;
         nightly) locked run_backup nightly nightly ;;
-        now) locked run_backup manual "$(sanitize_label "${1:-manual}")" ;;
+        now)
+            label=manual; NO_PRUNE=
+            for a in "$@"; do
+                case "$a" in --no-prune) NO_PRUNE=1 ;; -*) die "unknown option: $a" ;; *) label=$a ;; esac
+            done
+            locked run_backup manual "$(sanitize_label "$label")" ;;
         list) cmd_list "${1:-}" ;;
         restore) [ $# -ge 1 ] || die "usage: backup restore <path> [--confirm] [--disconnect]"; locked cmd_restore "$@" ;;
         prune) locked cmd_prune ;;
@@ -68,12 +81,12 @@ cmd_daemon() {
     echo "$hh$mm" | grep -qE '^([01][0-9]|2[0-3])[0-5][0-9]$' || die "BACKUP_TIME must be HH:MM, got '$BACKUP_TIME'"
     # crond starts jobs with an empty environment; hand them ours through a root-only file.
     umask 077
-    export -p | grep -E '^export (AP_POSTGRES_|BACKUP_|PG|RCLONE_|TZ=)' > /run/backup.env
+    export -p | grep -E '^export (AP_POSTGRES_|BACKUP_|PG|RCLONE_|HEALTHCHECK_URL=|TZ=)' > /run/backup.env
     mkdir -p /etc/crontabs
     printf '%s %s * * * . /run/backup.env; /usr/local/bin/backup nightly > /proc/1/fd/1 2>&1\n' \
         "$(strip0 "$mm")" "$(strip0 "$hh")" > /etc/crontabs/root
     log "backup daemon started: nightly at $BACKUP_TIME ($(date +%Z)), remote type $BACKUP_REMOTE_TYPE"
-    [ -s "$RCLONE_CONFIG" ] || log "WARNING: no rclone config yet; nightly backups will fail until you run ./backup-setup.sh"
+    [ -s "$RCLONE_CONFIG" ] || log "WARNING: no rclone config yet; nightly backups will fail until you run the installer with backup-setup"
     exec crond -f -l 8
 }
 
@@ -81,7 +94,7 @@ run_backup() { # run_backup <folder> <label>
     folder=$1; label=$2
     trap 'on_error "$folder"' EXIT
     STEP="checking configuration"
-    [ -s "$RCLONE_CONFIG" ] || fail "rclone is not configured; run ./backup-setup.sh on the server"
+    [ -s "$RCLONE_CONFIG" ] || fail "rclone is not configured; run the installer with backup-setup on the server"
     configure_remote
 
     STEP="waiting for postgres"
@@ -113,12 +126,25 @@ run_backup() { # run_backup <folder> <label>
     fi
 
     rm -rf "$WORK"
-    STEP="pruning"
-    cmd_prune || fail "retention pruning failed"
+    if [ -z "${NO_PRUNE:-}" ]; then
+        STEP="pruning"
+        cmd_prune || fail "retention pruning failed"
+    fi
 
     trap - EXIT
     write_status success "$folder/$name"
     log "BACKUP OK: $folder/$name ($size bytes)"
+    ping_healthcheck ""
+}
+
+# Never fails the backup and never logs the URL (it is the check's secret).
+ping_healthcheck() { # ping_healthcheck "" | /fail
+    [ -n "$HEALTHCHECK_URL" ] || return 0
+    for _ in 1 2 3; do
+        wget -q -T 10 -O /dev/null "${HEALTHCHECK_URL%/}$1" 2>/dev/null && return 0
+        sleep 5
+    done
+    log "WARNING: could not reach HEALTHCHECK_URL"
 }
 
 cmd_prune() {
@@ -178,7 +204,7 @@ cmd_restore() {
         || die "not a backup path: $path"
     configure_remote
     wait_for_postgres
-    db=$PGDATABASE; tmp_db="${db}__restoring"; old_db="${db}__before_restore"
+    db=$PGDATABASE; tmp_db="${db}__restoring"; old_db="${db}__before_restore_$(date -u +%Y%m%dT%H%M%S)"
     rclone lsf "$REMOTE$path" 2>/dev/null | grep -q . || die "backup not found: $path"
     if [ -z "$confirmed" ]; then
         warn_replace "$path"
@@ -210,7 +236,6 @@ cmd_restore() {
         die "pg_restore failed; the current database was NOT changed"
     fi
     log "swapping databases: $db -> $old_db, $tmp_db -> $db"
-    psql_admin -c "DROP DATABASE IF EXISTS \"$old_db\""
     [ -n "$disconnect" ] && terminate_sessions "$db"
     psql_admin -c "BEGIN" \
         -c "ALTER DATABASE \"$db\" RENAME TO \"$old_db\"" \
@@ -285,7 +310,7 @@ warn_replace() {
   !!  with backup: $1
   !!  Everything changed since that backup (flows, connections, runs, flow
   !!  store records) is lost. The current database is kept as
-  !!  ${PGDATABASE}__before_restore until the next restore.
+  !!  ${PGDATABASE}__before_restore_<timestamp> until you drop it.
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 EOF
@@ -298,7 +323,7 @@ base_path() {
 
 # The folder comes from .env on every run, so changing BACKUP_DRIVE_FOLDER needs no new setup.
 configure_remote() {
-    [ -s "$RCLONE_CONFIG" ] || die "rclone is not configured; run ./backup-setup.sh on the server"
+    [ -s "$RCLONE_CONFIG" ] || die "rclone is not configured; run the installer with backup-setup on the server"
     RCLONE_CONFIG_BACKUP_REMOTE=$(base_path)
     export RCLONE_CONFIG_BACKUP_REMOTE
 }
@@ -332,6 +357,7 @@ on_error() {
     [ "$rc" -ne 0 ] || return 0
     write_status failure "${FAIL_REASON:-$STEP failed}"
     log "BACKUP FAILED ($1): ${FAIL_REASON:-$STEP failed}" >&2
+    ping_healthcheck /fail
     exit "$rc"
 }
 

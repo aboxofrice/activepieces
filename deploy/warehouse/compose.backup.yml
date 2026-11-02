@@ -3,25 +3,42 @@
 #   docker compose -f docker-compose.yml -f compose.backup.yml up -d
 # Named volumes only (the stack is driven by a containerized installer; host paths would not resolve).
 #
-# One-time Drive authorization:   docker compose ... run --rm backup setup     (or ./backup-setup.sh)
-# Backup now (exit 1 on failure): docker compose ... run --rm backup now pre-upgrade
-# List / restore:                 docker compose ... run --rm backup list      (restore: ./restore.sh)
+# One-time Drive authorization:   docker compose ... run --rm backup setup     (or installer `backup-setup`)
+# Backup now (exit 1 on failure): docker compose ... run --rm backup now pre-upgrade [--no-prune]
+# List / restore:                 docker compose ... run --rm backup list      (restore: installer `restore`)
 #
-# Settings read from .env (all optional except the BACKUP_PASSWORD/BACKUP_SALT that install.sh writes):
+# Settings read from .env (all optional except the BACKUP_PASSWORD/BACKUP_SALT that install.sh writes).
+# Only these and the AP_POSTGRES_* connection settings reach the container (no env_file):
 #   TZ                    timezone for BACKUP_TIME, e.g. America/Los_Angeles (default UTC)
-#   BACKUP_TIME           nightly run time HH:MM (default 02:30)
+#   BACKUP_TIME           nightly run time HH:MM (default 03:30; avoid 02:00-03:00, which DST skips)
 #   BACKUP_DRIVE_FOLDER   Drive folder (default "Activepieces Backups/warehouse")
 #   BACKUP_KEEP_NIGHTLY / BACKUP_KEEP_WEEKLY / BACKUP_KEEP_MANUAL   (default 14 / 8 / 10)
 #   BACKUP_WEEKLY_DAY     1=Mon .. 7=Sun (default 7)
+#   HEALTHCHECK_URL       optional healthchecks.io-style URL: pinged after every successful backup,
+#                         <url>/fail after a failed one, so a dead backup raises an alert
 services:
   backup:
     # Pre-built and pushed to GHCR (the installer runs compose without the build context).
-    image: ${AP_BACKUP_IMAGE:-ghcr.io/aboxofrice/ap-backup:1.0.0}
+    image: ${AP_BACKUP_IMAGE:-ghcr.io/aboxofrice/ap-backup:1.1.0}
     restart: unless-stopped
-    env_file: .env
     environment:
       TZ: ${TZ:-UTC}
+      AP_POSTGRES_HOST: ${AP_POSTGRES_HOST:-postgres}
+      AP_POSTGRES_PORT: ${AP_POSTGRES_PORT:-5432}
+      AP_POSTGRES_DATABASE: ${AP_POSTGRES_DATABASE}
+      AP_POSTGRES_USERNAME: ${AP_POSTGRES_USERNAME}
+      AP_POSTGRES_PASSWORD: ${AP_POSTGRES_PASSWORD}
+      BACKUP_PASSWORD: ${BACKUP_PASSWORD}
+      BACKUP_SALT: ${BACKUP_SALT}
       BACKUP_REMOTE_TYPE: ${BACKUP_REMOTE_TYPE:-drive}
+      # Empty means "use the default in backup.sh".
+      BACKUP_TIME: ${BACKUP_TIME:-}
+      BACKUP_DRIVE_FOLDER: ${BACKUP_DRIVE_FOLDER:-}
+      BACKUP_KEEP_NIGHTLY: ${BACKUP_KEEP_NIGHTLY:-}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-}
+      BACKUP_KEEP_MANUAL: ${BACKUP_KEEP_MANUAL:-}
+      BACKUP_WEEKLY_DAY: ${BACKUP_WEEKLY_DAY:-}
+      HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
     depends_on:
       - postgres
     volumes:
@@ -33,6 +50,6 @@ services:
 volumes:
   # rclone.conf (Drive token + obscured crypt passwords), mode 600, root only.
   backup_config:
-  # status file: last_success / last_failure timestamps, readable by other services.
+  # status file (last_success / last_failure, see `backup status`) and the backup/restore lock.
   backup_status:
   backup_local:

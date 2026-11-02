@@ -1,16 +1,28 @@
 #!/bin/sh
 # Restore the Activepieces database from an encrypted Drive backup. POSIX sh; needs only
-# `docker compose`, so it also runs inside the installer container.
+# `docker compose`. Run it through the installer image (it uses the copy baked into the image,
+# never a copy in the data folder):
 #
-#   ./restore.sh                 list backups and pick one
-#   ./restore.sh <path>          restore that backup, e.g. nightly/activepieces-20261101T023000-nightly.dump
+#   docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ~/activepieces:/data \
+#     ghcr.io/aboxofrice/ap-installer:<tag> restore [<path>]
 #
-# Steps: confirm -> safety backup of the current database (manual/...-pre-restore) -> stop the app
-# services -> restore into a temporary database and swap it in (the backup image does this and
-# refuses while anything is still connected) -> start the app services again.
-# The replaced database is kept as <db>__before_restore until the next restore.
+#   no path    list backups and pick one
+#   <path>     restore that backup, e.g. nightly/activepieces-20261101T033000-nightly.dump
+#
+# Steps: confirm -> safety backup of the current database (manual/...-pre-restore, retention
+# skipped so it cannot delete the backup being restored) -> stop the app services -> restore into a
+# temporary database and swap it in (the backup image does this and refuses while anything is
+# still connected) -> clear Redis -> start the app services again.
+# The replaced database is kept as <db>__before_restore_<timestamp> until you drop it.
+#
+# Why Redis is cleared: it holds the BullMQ jobs (polling-trigger schedules, webhook renewals,
+# queued runs) for the database being replaced. Activepieces rebuilds polling and webhook-renewal
+# jobs from the database only when the Redis key `worker_jobs_version` is missing
+# (packages/server/api/src/app/workers/migrations/queue-migration-runner.ts), and system jobs and
+# paused runs on every start. Without the flush, flows that are enabled in the restored database
+# but were turned off after the backup would never poll again.
 set -eu
-cd "$(dirname "$0")"
+cd "${DATA_DIR:-$(dirname "$0")}"
 [ -f .env ] || { echo "ERROR: .env not found" >&2; exit 1; }
 if [ -z "${COMPOSE_FILE:-}" ]; then
     # Same file set install.sh uses, so helper services (ap-sync) are stopped and started too.
@@ -51,7 +63,7 @@ read -r answer
 [ "$answer" = "$db" ] || { echo "Not confirmed; nothing changed."; exit 1; }
 
 echo "==> Safety backup of the current database"
-if ! dc run --rm -T backup now pre-restore; then
+if ! dc run --rm -T backup now pre-restore --no-prune; then
     printf 'Safety backup FAILED. Type CONTINUE to restore anyway: '
     read -r answer
     [ "$answer" = CONTINUE ] || { echo "Aborted; nothing changed."; exit 1; }
@@ -66,6 +78,14 @@ dc stop $app_services
 echo "==> Restoring $path"
 rc=0
 dc run --rm -T backup restore "$path" --confirm --disconnect || rc=$?
+if [ "$rc" -eq 0 ]; then
+    echo "==> Clearing Redis (jobs of the replaced database; rebuilt from the restored one on start)"
+    dc up -d redis >/dev/null
+    dc exec -T redis redis-cli FLUSHALL >/dev/null || {
+        echo "WARNING: could not clear Redis; polling triggers may be out of step. Run:" >&2
+        echo "  docker compose exec redis redis-cli FLUSHALL   (with the app stopped), then start it" >&2
+    }
+fi
 
 echo "==> Starting: $(echo $app_services)"
 # shellcheck disable=SC2086
@@ -74,5 +94,6 @@ if [ "$rc" -ne 0 ]; then
     echo "RESTORE FAILED (exit $rc). The previous database is still in place." >&2
     exit "$rc"
 fi
-echo "Restore complete. Previous database kept as ${db}__before_restore; drop it once you are happy:"
-echo "  docker compose exec postgres psql -U <user> -d postgres -c 'DROP DATABASE \"${db}__before_restore\"'"
+echo "Restore complete. The previous database was kept (name in the RESTORE OK line above,"
+echo "${db}__before_restore_<timestamp>). Drop it once you are happy:"
+echo "  docker compose exec postgres psql -U <user> -d postgres -c 'DROP DATABASE \"${db}__before_restore_<timestamp>\"'"
