@@ -361,6 +361,7 @@ ensure_admin() {
     res=$(api POST /v1/authentication/sign-in "$(json_obj email=ADMIN_EMAIL_V password=ADMIN_PASSWORD_V)") || true
     if [ -z "$(printf '%s' "$res" | json_field token)" ]; then
         user_created=$(api GET /v1/flags | json_field USER_CREATED) || true
+        [ -n "$user_created" ] || die "Sign-in as $ADMIN_EMAIL_V failed and the server flags could not be read. Server said: $res"
         if [ "$user_created" = True ]; then
             die "Sign-in as $ADMIN_EMAIL_V failed, but this server already has a user, so no new admin is created.
   If the admin password was changed in the web UI, put the current password in ADMIN_PASSWORD in
