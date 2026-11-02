@@ -9,13 +9,13 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 // one sandbox are spaced out instead of being fired in parallel and retried.
 let nextSlotAt = 0;
 
-async function getToken({ auth }: { auth: Turn14AuthProps }): Promise<string> {
+async function getToken({ auth, deadline }: { auth: Turn14AuthProps; deadline?: number }): Promise<string> {
     const cacheKey = tokenCacheKey({ auth });
     const cached = tokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.token;
     }
-    const response = await requestToken({ auth });
+    const response = await requestToken({ auth, deadline });
     const lifetimeMs = (response.expires_in ?? DEFAULT_TOKEN_LIFETIME_S) * 1000;
     tokenCache.set(cacheKey, { token: response.access_token, expiresAt: Date.now() + Math.max(MIN_TOKEN_TTL_MS, lifetimeMs - TOKEN_RENEW_EARLY_MS) });
     return response.access_token;
@@ -25,8 +25,9 @@ async function getToken({ auth }: { auth: Turn14AuthProps }): Promise<string> {
 // is the client secret. The token goes to a fixed Turn14 host, so it uses fetch and builds its
 // error from Turn14's error title alone. Exchanging credentials creates nothing, so every failure
 // may be retried.
-async function requestToken({ auth, attempt = 1 }: { auth: Turn14AuthProps; attempt?: number }): Promise<TokenResponse> {
-    await waitForSlot();
+async function requestToken({ auth, deadline, attempt = 1 }: { auth: Turn14AuthProps; deadline?: number; attempt?: number }): Promise<TokenResponse> {
+    await waitForSlot({ deadline, what: 'token request' });
+    const timeout = timeoutFor({ deadline, what: 'token request' });
     const { data: response, error } = await tryCatch(() => fetch(`${apiBase({ auth })}/v1/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -35,25 +36,30 @@ async function requestToken({ auth, attempt = 1 }: { auth: Turn14AuthProps; atte
             client_id: auth.clientId.trim(),
             client_secret: auth.clientSecret.trim(),
         }),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeout.ms),
     }));
     if (error) {
-        if (attempt < MAX_ATTEMPTS) {
-            await sleep({ ms: backoffMs({ attempt }) });
-            return requestToken({ auth, attempt: attempt + 1 });
+        const reason = `Turn14 token request failed: ${isTimeout({ error }) ? `no answer within ${Math.round(timeout.ms / 1000)}s` : error.message}`;
+        if (timeout.capped && isTimeout({ error })) {
+            throw new Turn14DeadlineError({ message: reason });
         }
-        throw new Error(`Turn14 token request failed: ${isTimeout({ error }) ? `no answer within ${REQUEST_TIMEOUT_MS / 1000}s` : error.message}`);
+        if (attempt < MAX_ATTEMPTS) {
+            await pauseOrGiveUp({ waitMs: backoffMs({ attempt }), deadline, reason });
+            return requestToken({ auth, deadline, attempt: attempt + 1 });
+        }
+        throw new Error(reason);
     }
     const { data: text } = await tryCatch(() => response.text());
     const body = parseBody({ text: text ?? '' });
     if (response.ok && isRecord(body) && typeof body['access_token'] === 'string') {
         return { access_token: body['access_token'], expires_in: typeof body['expires_in'] === 'number' ? body['expires_in'] : undefined };
     }
+    const message = `Turn14 token request failed: HTTP ${response.status}: ${errorText({ body })}`;
     if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {
-        await pauseBeforeRetry({ response, attempt });
-        return requestToken({ auth, attempt: attempt + 1 });
+        await pauseBeforeRetry({ response, attempt, deadline, reason: message });
+        return requestToken({ auth, deadline, attempt: attempt + 1 });
     }
-    throw new Turn14Error({ status: response.status, message: `Turn14 token request failed: HTTP ${response.status}: ${errorText({ body })}` });
+    throw new Turn14Error({ status: response.status, message });
 }
 
 async function tryGetToken({ auth }: { auth: Turn14AuthProps }): Promise<{ error: string | null }> {
@@ -72,9 +78,10 @@ function isTestingHost({ auth }: { auth: Turn14AuthProps }): boolean {
 // Every Turn14 call goes through fetch so that no failure path can echo a request body: quote and
 // order bodies carry the recipient's name, address and phone number. `validate` checks the parsed
 // body, so an empty or unexpected answer fails here with a clear message instead of later with a
-// TypeError.
-async function request<T>({ auth, method, path, queryParams, body, validate }: Turn14Request<T>): Promise<T> {
-    const first = await tryCatch(() => send({ auth, method, path, queryParams, body, validate }));
+// TypeError. With a deadline, no attempt, wait or retry runs past it: the call fails with a
+// Turn14DeadlineError instead.
+async function request<T>({ auth, method, path, queryParams, body, validate, deadline }: Turn14Request<T>): Promise<T> {
+    const first = await tryCatch(() => send({ auth, method, path, queryParams, body, validate, deadline }));
     if (!first.error) {
         return first.data;
     }
@@ -84,14 +91,16 @@ async function request<T>({ auth, method, path, queryParams, body, validate }: T
     // A cached token can be revoked or expire early; one fresh exchange settles which it is.
     // A 401 means Turn14 did not process the call, so a POST may repeat too.
     tokenCache.delete(tokenCacheKey({ auth }));
-    return send({ auth, method, path, queryParams, body, validate });
+    return send({ auth, method, path, queryParams, body, validate, deadline });
 }
 
-async function send<T>({ auth, method, path, queryParams, body, validate, attempt = 1 }: Turn14Request<T> & { attempt?: number }): Promise<T> {
-    const token = await getToken({ auth });
-    await waitForSlot();
+async function send<T>({ auth, method, path, queryParams, body, validate, deadline, attempt = 1 }: Turn14Request<T> & { attempt?: number }): Promise<T> {
+    const token = await getToken({ auth, deadline });
+    const what = `${method} ${path}`;
+    await waitForSlot({ deadline, what });
+    const timeout = timeoutFor({ deadline, what });
     const url = `${apiBase({ auth })}${normalizePath({ path })}${queryString({ queryParams })}`;
-    const retry = (): Promise<T> => send({ auth, method, path, queryParams, body, validate, attempt: attempt + 1 });
+    const retry = (): Promise<T> => send({ auth, method, path, queryParams, body, validate, deadline, attempt: attempt + 1 });
     const { data: response, error } = await tryCatch(() => fetch(url, {
         method,
         headers: {
@@ -100,23 +109,29 @@ async function send<T>({ auth, method, path, queryParams, body, validate, attemp
             ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeout.ms),
     }));
-    if (error) {
+    const onTransportFailure = async (failure: Error): Promise<T> => {
+        if (method === 'GET' && timeout.capped && isTimeout({ error: failure })) {
+            throw new Turn14DeadlineError({ message: `Turn14 ${what} stopped at the run's time limit.` });
+        }
         if (method === 'GET' && attempt < MAX_ATTEMPTS) {
-            await sleep({ ms: backoffMs({ attempt }) });
+            await pauseOrGiveUp({ waitMs: backoffMs({ attempt }), deadline, reason: `Turn14 ${what} failed: ${failure.message}` });
             return retry();
         }
-        throw transportError({ method, path, error });
+        throw transportError({ method, path, error: failure, timeoutMs: timeout.ms });
+    };
+    if (error) {
+        return onTransportFailure(error);
     }
     const { data: text, error: readError } = await tryCatch(() => response.text());
     if (readError) {
-        if (method === 'GET' && attempt < MAX_ATTEMPTS) {
-            await sleep({ ms: backoffMs({ attempt }) });
-            return retry();
-        }
-        throw transportError({ method, path, error: readError });
+        return onTransportFailure(readError);
     }
+    return handleResponse({ response, text, method, path, validate, attempt, deadline, retry });
+}
+
+async function handleResponse<T>({ response, text, method, path, validate, attempt, deadline, retry }: HandleResponseParams<T>): Promise<T> {
     const parsed = parseBody({ text });
     if (response.ok) {
         if (validate(parsed)) {
@@ -127,14 +142,14 @@ async function send<T>({ auth, method, path, queryParams, body, validate, attemp
             message: `Turn14 ${method} ${path} returned ${parsed === null ? 'an empty response' : 'a response in an unexpected format'} (HTTP ${response.status}).`,
         });
     }
+    const message = `Turn14 ${method} ${path} failed: HTTP ${response.status}: ${errorText({ body: parsed })}`;
     // A 429 is refused before any work is done, so every method may repeat it. A 5xx may mean a
     // quote or order was created before the gateway gave up, so only reads repeat those.
     const retryable = response.status === 429 || (method === 'GET' && response.status >= 500);
     if (retryable && attempt < MAX_ATTEMPTS) {
-        await pauseBeforeRetry({ response, attempt });
+        await pauseBeforeRetry({ response, attempt, deadline, reason: message });
         return retry();
     }
-    const message = `Turn14 ${method} ${path} failed: HTTP ${response.status}: ${errorText({ body: parsed })}`;
     if (method === 'POST' && response.status >= 500) {
         throw new Turn14OutcomeUnknownError({ status: response.status, message: `${message}. ${OUTCOME_UNKNOWN_ADVICE}` });
     }
@@ -142,14 +157,22 @@ async function send<T>({ auth, method, path, queryParams, body, validate, attemp
 }
 
 // Turn14 list endpoints page with ?page=N and report meta.total_pages. The reducer sees each page
-// as it arrives and may stop the scan; nothing is accumulated beyond what it keeps.
+// as it arrives and may stop the scan; nothing is accumulated beyond what it keeps. Reaching the
+// deadline, before or during a page request, ends the scan with that page as nextPage.
 async function scanPages<T, A>({ auth, path, queryParams, maxPages, startPage = 1, deadline, initial, reduce }: ScanPagesParams<T, A>): Promise<ScanResult<A>> {
-    const step = async ({ page, acc }: { page: number; acc: A }): Promise<ScanResult<A>> => {
+    const step = async ({ page, acc, lastTotal }: { page: number; acc: A; lastTotal: number | null }): Promise<ScanResult<A>> => {
         const pagesRead = page - startPage;
+        const stopped: ScanResult<A> = { acc, totalPages: lastTotal, pagesRead, nextPage: page, stoppedBy: 'deadline' };
         if (deadline !== undefined && Date.now() >= deadline) {
-            return { acc, totalPages: null, pagesRead, nextPage: page, stoppedBy: 'deadline' };
+            return stopped;
         }
-        const response = await request({ auth, method: 'GET', path, queryParams: { ...queryParams, page }, validate: isListResponse<T> });
+        const { data: response, error } = await tryCatch(() => request({ auth, method: 'GET', path, queryParams: { ...queryParams, page }, validate: isListResponse<T>, deadline }));
+        if (error) {
+            if (error instanceof Turn14DeadlineError) {
+                return stopped;
+            }
+            throw error;
+        }
         const rows = response.data ?? [];
         const totalPages = response.meta?.total_pages ?? page;
         const reduced = reduce({ acc, rows, page });
@@ -163,9 +186,9 @@ async function scanPages<T, A>({ auth, path, queryParams, maxPages, startPage = 
         if (pagesRead + 1 >= maxPages) {
             return { acc: reduced.acc, totalPages, pagesRead: pagesRead + 1, nextPage: page + 1, stoppedBy: 'maxPages' };
         }
-        return step({ page: page + 1, acc: reduced.acc });
+        return step({ page: page + 1, acc: reduced.acc, lastTotal: totalPages });
     };
-    return step({ page: startPage, acc: initial });
+    return step({ page: startPage, acc: initial, lastTotal: null });
 }
 
 async function fetchPages<T>({ auth, path, queryParams, maxPages, startPage, deadline }: FetchPagesParams): Promise<FetchPagesResult<T>> {
@@ -188,9 +211,12 @@ async function fetchPages<T>({ auth, path, queryParams, maxPages, startPage, dea
     };
 }
 
-async function waitForSlot(): Promise<void> {
+async function waitForSlot({ deadline, what }: { deadline?: number; what: string }): Promise<void> {
     const now = Date.now();
     const slot = Math.max(now, nextSlotAt);
+    if (deadline !== undefined && slot >= deadline) {
+        throw new Turn14DeadlineError({ message: `Turn14 ${what} not sent: the run's time limit was reached.` });
+    }
     nextSlotAt = slot + MIN_REQUEST_SPACING_MS;
     if (slot > now) {
         await sleep({ ms: slot - now });
@@ -198,10 +224,29 @@ async function waitForSlot(): Promise<void> {
 }
 
 // Honour Turn14's Retry-After, and hold back every other request from this sandbox until then.
-async function pauseBeforeRetry({ response, attempt }: { response: Response; attempt: number }): Promise<void> {
+async function pauseBeforeRetry({ response, attempt, deadline, reason }: { response: Response; attempt: number; deadline?: number; reason: string }): Promise<void> {
     const waitMs = retryAfterMs({ header: response.headers.get('retry-after'), now: Date.now() }) ?? backoffMs({ attempt });
     nextSlotAt = Math.max(nextSlotAt, Date.now() + waitMs);
+    await pauseOrGiveUp({ waitMs, deadline, reason });
+}
+
+async function pauseOrGiveUp({ waitMs, deadline, reason }: { waitMs: number; deadline?: number; reason: string }): Promise<void> {
+    if (deadline !== undefined && Date.now() + waitMs >= deadline) {
+        throw new Turn14DeadlineError({ message: `${reason} (no retry: the run's time limit would be passed).` });
+    }
     await sleep({ ms: waitMs });
+}
+
+// The per-attempt timeout, shortened to the time left before the deadline.
+function timeoutFor({ deadline, what }: { deadline?: number; what: string }): { ms: number; capped: boolean } {
+    if (deadline === undefined) {
+        return { ms: REQUEST_TIMEOUT_MS, capped: false };
+    }
+    const left = deadline - Date.now();
+    if (left < MIN_ATTEMPT_MS) {
+        throw new Turn14DeadlineError({ message: `Turn14 ${what} not sent: the run's time limit was reached.` });
+    }
+    return left < REQUEST_TIMEOUT_MS ? { ms: left, capped: true } : { ms: REQUEST_TIMEOUT_MS, capped: false };
 }
 
 function retryAfterMs({ header, now }: { header: string | null; now: number }): number | null {
@@ -216,8 +261,8 @@ function retryAfterMs({ header, now }: { header: string | null; now: number }): 
     return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, seconds));
 }
 
-function transportError({ method, path, error }: { method: Turn14Method; path: string; error: Error }): Error {
-    const reason = isTimeout({ error }) ? `no answer within ${REQUEST_TIMEOUT_MS / 1000}s` : error.message;
+function transportError({ method, path, error, timeoutMs }: { method: Turn14Method; path: string; error: Error; timeoutMs: number }): Error {
+    const reason = isTimeout({ error }) ? `no answer within ${Math.round(timeoutMs / 1000)}s` : error.message;
     if (method === 'POST') {
         return new Turn14OutcomeUnknownError({ status: 0, message: `Turn14 POST ${path}: ${reason}. ${OUTCOME_UNKNOWN_ADVICE}` });
     }
@@ -319,6 +364,14 @@ class Turn14Error extends Error {
 // gateway error after the body was sent).
 class Turn14OutcomeUnknownError extends Turn14Error {}
 
+// The caller's time budget ran out before the request could be made or finished.
+class Turn14DeadlineError extends Error {
+    constructor({ message }: { message: string }) {
+        super(message);
+        this.name = 'Turn14DeadlineError';
+    }
+}
+
 const PRODUCTION_BASE_URL = 'https://api.turn14.com';
 const TESTING_BASE_URL = 'https://apitest.turn14.com';
 const DEFAULT_TOKEN_LIFETIME_S = 3600;
@@ -326,6 +379,7 @@ const TOKEN_RENEW_EARLY_MS = 5 * 60 * 1000;
 const MIN_TOKEN_TTL_MS = 60 * 1000;
 const MIN_REQUEST_SPACING_MS = 220;
 const REQUEST_TIMEOUT_MS = 30_000;
+const MIN_ATTEMPT_MS = 1000;
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 20000;
@@ -349,6 +403,7 @@ export const turn14Client = {
     isAnyBody,
     Turn14Error,
     Turn14OutcomeUnknownError,
+    Turn14DeadlineError,
     REQUEST_TIMEOUT_MS,
 };
 
@@ -393,6 +448,18 @@ type Turn14Request<T> = {
     queryParams?: Turn14Query;
     body?: unknown;
     validate: (value: unknown) => value is T;
+    deadline?: number;
+};
+
+type HandleResponseParams<T> = {
+    response: Response;
+    text: string;
+    method: Turn14Method;
+    path: string;
+    validate: (value: unknown) => value is T;
+    attempt: number;
+    deadline?: number;
+    retry: () => Promise<T>;
 };
 
 type ScanPagesParams<T, A> = {

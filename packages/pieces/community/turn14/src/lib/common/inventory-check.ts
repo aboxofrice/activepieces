@@ -5,31 +5,30 @@ import { turn14Polling } from './polling';
 
 // One Inventory Changed poll. /v1/inventory/updates only takes fixed look-back windows, so each
 // poll reads a window that overlaps the previous one, and a persisted set of (item, fingerprint)
-// entries makes each change fire once. Turn14 posts most of a day's updates in one burst
-// (hundreds of pages), so a read that hits the deadline keeps its place: the watermark is held and
-// the next poll continues from the next page.
+// entries makes each change fire once. Entries are kept for a full day plus overlap whatever the
+// window, so an item that reappears after a long gap is not mistaken for a new change; they are
+// stored in hourly buckets so a poll only rewrites the current hour. Turn14 posts most of a day's
+// updates in one burst (hundreds of pages), so a read that hits the deadline keeps its place: the
+// watermark is held, the next poll continues from the next page, and when the scan finishes the
+// watermark becomes the time the scan started, so nothing posted mid-scan is skipped.
 async function runInventoryCheck({ store, now, deadline, filter, includeEta, readUpdates }: InventoryCheckParams): Promise<InventoryCheckResult> {
     const state = (await turn14Polling.readState({ store, key: STATE_KEY, isValid: isState })) ?? { lastPollAt: now - DEFAULT_LOOKBACK_MS };
     const lagMinutes = Math.ceil((now - state.lastPollAt) / 60000) + WINDOW_OVERLAP_MINUTES;
     const bucket = windowFor({ minutes: lagMinutes });
     const resume = state.resume && state.resume.window >= bucket ? state.resume : null;
     const window = resume ? resume.window : bucket;
+    const scanStartedAt = resume ? resume.scanStartedAt : now;
     const { rows, nextPage } = await readUpdates({ window, startPage: resume ? resume.nextPage : 1, deadline });
     // Turn14 keeps at most a day of updates; anything older than that is gone.
     const truncated = lagMinutes > MAX_WINDOW_MINUTES;
-    const seen = await readSeen({ store });
+    const buckets = await readBuckets({ store, hours: state.buckets ?? [] });
+    const oldestHour = oldestKeptHour({ now, window });
+    const seen = new Map(buckets.filter((entry) => entry.hour >= oldestHour).flatMap((entry) => [...entry.entries]));
     const changes = detectChanges({ rows: rows.filter((row) => filter === null || filter.has(row.id)), seen, includeEta, now, truncated });
-    const keepAfter = now - (window + WINDOW_OVERLAP_MINUTES * 2) * 60000;
-    const merged = new Map([...seen, ...changes.map((change): [string, SeenEntry] => [change.id, change.entry])]);
-    await turn14Polling.writeIdSet({
-        store,
-        prefix: SEEN_PREFIX,
-        ids: [...merged.entries()].filter(([, entry]) => entry.at >= keepAfter).map(([id, entry]) => encodeEntry({ id, entry })),
-        chunkSize: SEEN_CHUNK_SIZE,
-    });
+    const hours = await writeBuckets({ store, buckets, changes, now, window });
     const nextState: InventoryState = nextPage === null
-        ? { lastPollAt: now }
-        : { lastPollAt: state.lastPollAt, resume: { window, nextPage } };
+        ? { lastPollAt: scanStartedAt, buckets: hours }
+        : { lastPollAt: state.lastPollAt, resume: { window, nextPage, scanStartedAt }, buckets: hours };
     await store.put(STATE_KEY, nextState);
     if (nextPage !== null || truncated) {
         console.warn(`[turn14] Inventory Changed: ${truncated ? `last check was ${lagMinutes} minutes ago, beyond Turn14's ${MAX_WINDOW_MINUTES}-minute limit, so older changes were missed. ` : ''}${nextPage !== null ? `Window of ${window} minutes not finished; the next check continues at page ${nextPage}.` : ''}`);
@@ -42,8 +41,8 @@ async function seedInventoryState({ store, now, deadline, filter, includeEta, re
     await clearInventoryState({ store });
     const { rows } = await readUpdates({ window: UPDATE_WINDOWS_MINUTES[0], startPage: 1, deadline });
     const changes = detectChanges({ rows: rows.filter((row) => filter === null || filter.has(row.id)), seen: new Map(), includeEta, now, truncated: false });
-    await turn14Polling.writeIdSet({ store, prefix: SEEN_PREFIX, ids: changes.map((change) => encodeEntry({ id: change.id, entry: change.entry })), chunkSize: SEEN_CHUNK_SIZE });
-    await store.put(STATE_KEY, { lastPollAt: now });
+    const hours = await writeBuckets({ store, buckets: [], changes, now, window: UPDATE_WINDOWS_MINUTES[0] });
+    await store.put(STATE_KEY, { lastPollAt: now, buckets: hours });
 }
 
 async function hasInventoryState({ store }: { store: Store }): Promise<boolean> {
@@ -51,8 +50,41 @@ async function hasInventoryState({ store }: { store: Store }): Promise<boolean> 
 }
 
 async function clearInventoryState({ store }: { store: Store }): Promise<void> {
-    await turn14Polling.deleteIdSet({ store, prefix: SEEN_PREFIX });
+    const state = await turn14Polling.readState({ store, key: STATE_KEY, isValid: isState });
+    await Promise.all((state?.buckets ?? []).map((hour) => turn14Polling.deleteIdSet({ store, prefix: bucketPrefix({ hour }) })));
     await store.delete(STATE_KEY);
+}
+
+async function readBuckets({ store, hours }: { store: Store; hours: number[] }): Promise<SeenBucket[]> {
+    const sorted = [...hours].sort((left, right) => left - right);
+    return Promise.all(sorted.map(async (hour) => {
+        const encoded = await turn14Polling.readIdSet({ store, prefix: bucketPrefix({ hour }) });
+        return { hour, entries: new Map([...encoded].flatMap((value) => decodeEntry({ encoded: value }))) };
+    }));
+}
+
+// Adds this poll's changes to the current hour's bucket, drops buckets older than the retention and
+// returns the hours still stored.
+async function writeBuckets({ store, buckets, changes, now, window }: { store: Store; buckets: SeenBucket[]; changes: InventoryChange[]; now: number; window: number }): Promise<number[]> {
+    const oldestHour = oldestKeptHour({ now, window });
+    const currentHour = Math.floor(now / HOUR_MS);
+    const expired = buckets.filter((entry) => entry.hour < oldestHour);
+    await Promise.all(expired.map((entry) => turn14Polling.deleteIdSet({ store, prefix: bucketPrefix({ hour: entry.hour }) })));
+    const current = buckets.find((entry) => entry.hour === currentHour);
+    if (changes.length > 0 || current === undefined) {
+        const entries = new Map([...(current?.entries ?? []), ...changes.map((change): [string, SeenEntry] => [change.id, change.entry])]);
+        await turn14Polling.writeIdSet({ store, prefix: bucketPrefix({ hour: currentHour }), ids: [...entries].map(([id, entry]) => encodeEntry({ id, entry })), chunkSize: SEEN_CHUNK_SIZE });
+    }
+    return [...new Set([...buckets.filter((entry) => entry.hour >= oldestHour).map((entry) => entry.hour), currentHour])].sort((left, right) => left - right);
+}
+
+function oldestKeptHour({ now, window }: { now: number; window: number }): number {
+    const retentionMs = Math.max(window + WINDOW_OVERLAP_MINUTES * 2, SEEN_RETENTION_MINUTES) * 60000;
+    return Math.floor((now - retentionMs) / HOUR_MS);
+}
+
+function bucketPrefix({ hour }: { hour: number }): string {
+    return `${SEEN_PREFIX}_${hour}`;
 }
 
 function detectChanges({ rows, seen, includeEta, now, truncated }: { rows: Turn14Inventory[]; seen: Map<string, SeenEntry>; includeEta: boolean; now: number; truncated: boolean }): InventoryChange[] {
@@ -86,11 +118,6 @@ function fingerprintSource({ row, includeEta }: { row: Turn14Inventory; includeE
         : [sortedInventory, row.attributes?.manufacturer?.stock ?? null];
 }
 
-async function readSeen({ store }: { store: Store }): Promise<Map<string, SeenEntry>> {
-    const entries = await turn14Polling.readIdSet({ store, prefix: SEEN_PREFIX });
-    return new Map([...entries].flatMap((encoded) => decodeEntry({ encoded })));
-}
-
 function encodeEntry({ id, entry }: { id: string; entry: SeenEntry }): string {
     return `${id}|${entry.hash}|${entry.at}|${entry.quantity}`;
 }
@@ -114,7 +141,9 @@ function isState(value: unknown): value is InventoryState {
         return false;
     }
     const resume = value['resume'];
-    return resume === undefined || (turn14Client.isRecord(resume) && turn14Polling.isNumber(resume['window']) && turn14Polling.isNumber(resume['nextPage']));
+    const buckets = value['buckets'];
+    const resumeValid = resume === undefined || (turn14Client.isRecord(resume) && turn14Polling.isNumber(resume['window']) && turn14Polling.isNumber(resume['nextPage']) && turn14Polling.isNumber(resume['scanStartedAt']));
+    return resumeValid && (buckets === undefined || (Array.isArray(buckets) && buckets.every(turn14Polling.isNumber)));
 }
 
 // Turn14 only accepts these window sizes for /v1/inventory/updates.
@@ -122,6 +151,8 @@ const UPDATE_WINDOWS_MINUTES = [15, 30, 60, 240, 480, 1440];
 const MAX_WINDOW_MINUTES = 1440;
 const WINDOW_OVERLAP_MINUTES = 5;
 const DEFAULT_LOOKBACK_MS = 15 * 60 * 1000;
+const SEEN_RETENTION_MINUTES = MAX_WINDOW_MINUTES + WINDOW_OVERLAP_MINUTES * 2;
+const HOUR_MS = 60 * 60 * 1000;
 // "078595|0123456789ab|1700000000000|12345" is about 40 characters; 8,000 stay well under 512 KB.
 const SEEN_CHUNK_SIZE = 8000;
 const STATE_KEY = 'turn14_inventory_changed_state';
@@ -137,7 +168,9 @@ export type SeenEntry = { hash: string; at: number; quantity: number };
 
 export type InventoryChange = { id: string; entry: SeenEntry; output: Record<string, unknown> };
 
-type InventoryState = { lastPollAt: number; resume?: { window: number; nextPage: number } };
+type InventoryState = { lastPollAt: number; resume?: { window: number; nextPage: number; scanStartedAt: number }; buckets?: number[] };
+
+type SeenBucket = { hour: number; entries: Map<string, SeenEntry> };
 
 type InventoryCheckParams = {
     store: Store;
