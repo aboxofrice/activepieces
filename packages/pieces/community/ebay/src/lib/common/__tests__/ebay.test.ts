@@ -1,6 +1,7 @@
-import { AxiosError } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HttpError, HttpMethod, httpClient } from '@activepieces/pieces-common';
+import { HttpMethod, httpClient } from '@activepieces/pieces-common';
+import { cancelOrder } from '../../actions/cancellation/cancel-order';
+import { cancellationCommon } from '../cancellation';
 import { ebayClient } from '../client';
 import { fulfillmentCommon } from '../fulfillment';
 import { inventoryCommon } from '../inventory';
@@ -10,32 +11,67 @@ import { EbayOrder } from '../order';
 describe('ebayClient secrets', () => {
     afterEach(() => {
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
-    it('never puts the refresh token in a failed token error', async () => {
+    it('never puts the refresh token in a failed token error or in any log line', async () => {
         const auth = { appId: 'app-1', certId: 'cert-secret-1', refreshToken: 'v^1.1#i^1#SECRET-REFRESH', environment: 'production' };
-        vi.spyOn(httpClient, 'sendRequest').mockImplementation(async (request) => {
-            throw new HttpError(request.body, httpFailure({ status: 400, data: { error: 'invalid_grant', error_description: 'the provided authorization refresh token is invalid' } }));
-        });
+        const logged = captureConsole();
+        const sendRequest = vi.spyOn(httpClient, 'sendRequest');
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ status: 400, body: { error: 'invalid_grant', error_description: 'the provided authorization refresh token is invalid' } })));
         const { error } = await ebayClient.tryGetAccessToken({ auth });
         const thrown = await ebayClient.request({ auth, method: HttpMethod.GET, path: '/sell/fulfillment/v1/order' }).catch((caught: unknown) => caught);
         const message = thrown instanceof Error ? thrown.message : String(thrown);
-        for (const text of [error ?? '', message]) {
-            expect(text).toContain('400');
+        for (const text of [error ?? '', message, ...logged()]) {
             expect(text).not.toContain('SECRET-REFRESH');
             expect(text).not.toContain(encodeURIComponent(auth.refreshToken));
             expect(text).not.toContain('refresh_token=');
+            expect(text).not.toContain(auth.certId);
         }
+        expect(error).toContain('400');
+        expect(message).toContain('invalid_grant');
+        expect(sendRequest).not.toHaveBeenCalled();
     });
 
     it('caches the application token per connection until it expires', async () => {
         const auth = { appId: 'app-cache', certId: 'cert-cache', refreshToken: 'r', environment: 'production' };
-        const send = vi.spyOn(httpClient, 'sendRequest').mockResolvedValue({ status: 200, headers: {}, body: { access_token: 'app-token', expires_in: 7200 } });
+        const fetchMock = vi.fn(async () => jsonResponse({ status: 200, body: { access_token: 'app-token', expires_in: 7200 } }));
+        vi.stubGlobal('fetch', fetchMock);
         expect(await ebayClient.getApplicationToken({ auth })).toBe('app-token');
         expect(await ebayClient.getApplicationToken({ auth })).toBe('app-token');
-        expect(send).toHaveBeenCalledTimes(1);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
         await ebayClient.getApplicationToken({ auth: { ...auth, appId: 'app-other' } });
-        expect(send).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('Cancel Order', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it('reads the payment from the order and sends buyerPaid and buyerPaidDate', async () => {
+        const auth = { appId: 'app-cancel', certId: 'cert-cancel', refreshToken: 'refresh-cancel', environment: 'production' };
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ status: 200, body: { access_token: 'user-token', expires_in: 7200 } })));
+        const sent: unknown[] = [];
+        vi.spyOn(httpClient, 'sendRequest').mockImplementation(async (request) => {
+            if (request.method === HttpMethod.GET) {
+                return { status: 200, headers: {}, body: { orderId: '01-2', orderPaymentStatus: 'PAID', paymentSummary: { payments: [{ paymentDate: '2026-10-30T13:28:36.000Z' }] } } };
+            }
+            sent.push(request.body);
+            return { status: 200, headers: {}, body: { cancelId: '5000123' } };
+        });
+        // Only auth and propsValue are read by this action; the rest of the context is not needed.
+        const context: Parameters<typeof cancelOrder.run>[0] = Object.assign(Object.create(null), { auth: { props: auth }, propsValue: { orderId: ' 01-2 ', reason: 'OUT_OF_STOCK_OR_CANNOT_FULFILL' } });
+        const result = await cancelOrder.run(context);
+        expect(result).toEqual({ order_id: '01-2', cancel_id: '5000123', reason: 'OUT_OF_STOCK_OR_CANNOT_FULFILL', buyer_paid: true });
+        expect(sent).toEqual([{ legacyOrderId: '01-2', cancelReason: 'OUT_OF_STOCK_OR_CANNOT_FULFILL', buyerPaid: true, buyerPaidDate: { value: '2026-10-30T13:28:36.000Z' } }]);
+    });
+
+    it('builds the body without payment fields when the order could not be read', () => {
+        expect(cancellationCommon.cancelBody({ orderId: '1', reason: 'BUYER_ASKED_CANCEL', payment: null })).toEqual({ legacyOrderId: '1', cancelReason: 'BUYER_ASKED_CANCEL' });
+        expect(cancellationCommon.paymentInfoFromOrder({ order: { orderId: '1', orderPaymentStatus: 'PENDING' } })).toEqual({ buyerPaid: false, buyerPaidDate: null });
     });
 });
 
@@ -79,8 +115,15 @@ describe('Add Tracking plan', () => {
     });
 
     it('returns the existing fulfillment for the same tracking number instead of creating another', () => {
-        const plan = fulfillmentCommon.plan({ order, existing, wantedLineItemIds: [], trackingNumber: '94001000' });
+        const plan = fulfillmentCommon.plan({ order, existing, wantedLineItemIds: ['A'], trackingNumber: '94001000' });
         expect(plan.kind).toBe('already_exists');
+    });
+
+    it('ships the rest when the same tracking number covered only some of the lines', () => {
+        expect(fulfillmentCommon.plan({ order, existing, wantedLineItemIds: [], trackingNumber: '94001000' })).toEqual({
+            kind: 'create',
+            lineItems: [{ lineItemId: 'B', quantity: 2 }, { lineItemId: 'C', quantity: 1 }],
+        });
     });
 
     it('refuses when everything selected is already shipped', () => {
@@ -177,10 +220,20 @@ function memoryStore(): NewOrderStore {
     };
 }
 
-function httpFailure({ status, data }: { status: number; data?: unknown }): AxiosError {
-    return Object.assign(new AxiosError('Request failed'), {
-        response: { status, data, statusText: '', headers: {}, config: {} },
-    });
+function jsonResponse({ status, body }: { status: number; body: unknown }): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+// Everything written to the console during the test, as text.
+function captureConsole(): () => string[] {
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => {
+        lines.push(args.map((arg) => (arg instanceof Error ? `${arg.message} ${JSON.stringify(arg)}` : typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+    };
+    vi.spyOn(console, 'error').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+    vi.spyOn(console, 'log').mockImplementation(record);
+    return () => lines;
 }
 
 const FP = 'order_new_order:';

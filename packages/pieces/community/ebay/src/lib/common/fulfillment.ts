@@ -1,9 +1,10 @@
 import { EbayOrder, EbayShippingFulfillment } from './order';
 
 // Decides what Add Tracking should do, without side effects, so a retry is safe:
-// - a fulfillment that already carries this tracking number is the result (a retried
-//   step, or one whose follow-up read failed, does not create a duplicate);
 // - lines (or quantities) already shipped are left out;
+// - when nothing selected is left to ship, a fulfillment that already carries this
+//   tracking number is the result (a retried step, or one whose follow-up read failed,
+//   does not create a duplicate);
 // - nothing left to ship is an error rather than an empty POST.
 function plan({ order, existing, wantedLineItemIds, trackingNumber }: PlanParams): FulfillmentPlan {
     const wanted = wantedLineItemIds.map((id) => id.trim()).filter((id) => id !== '');
@@ -11,20 +12,22 @@ function plan({ order, existing, wantedLineItemIds, trackingNumber }: PlanParams
     if (selected.length === 0 || selected.length < wanted.length) {
         return { kind: 'no_matching_lines' };
     }
-    const sameTracking = existing.find((fulfillment) => normalizeTracking({ value: fulfillment.shipmentTrackingNumber }) === normalizeTracking({ value: trackingNumber })
-        && (fulfillment.lineItems ?? []).some((lineItem) => selected.some((candidate) => candidate.lineItemId === lineItem.lineItemId)));
-    if (sameTracking) {
-        return { kind: 'already_exists', fulfillment: sameTracking };
-    }
     const shipped = shippedQuantities({ existing });
     const lineItems = selected
         .filter((lineItem) => lineItem.lineItemFulfillmentStatus !== 'FULFILLED' && lineItem.lineItemId !== undefined)
         .map((lineItem) => ({ lineItemId: lineItem.lineItemId ?? '', quantity: Math.max(0, (lineItem.quantity ?? 1) - (shipped.get(lineItem.lineItemId ?? '') ?? 0)) }))
         .filter((lineItem) => lineItem.quantity > 0);
-    if (lineItems.length === 0) {
-        return { kind: 'already_shipped', existing };
+    if (lineItems.length > 0) {
+        // Something selected is still unshipped, so an earlier fulfillment with this tracking
+        // number did not cover it: ship the rest rather than returning that one.
+        return { kind: 'create', lineItems };
     }
-    return { kind: 'create', lineItems };
+    const sameTracking = existing.find((fulfillment) => normalizeTracking({ value: fulfillment.shipmentTrackingNumber }) === normalizeTracking({ value: trackingNumber })
+        && (fulfillment.lineItems ?? []).some((lineItem) => selected.some((candidate) => candidate.lineItemId === lineItem.lineItemId)));
+    if (sameTracking) {
+        return { kind: 'already_exists', fulfillment: sameTracking };
+    }
+    return { kind: 'already_shipped', existing };
 }
 
 function shippedQuantities({ existing }: { existing: EbayShippingFulfillment[] }): Map<string, number> {

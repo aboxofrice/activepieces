@@ -1,6 +1,6 @@
 import { createTrigger, TriggerStrategy } from '@activepieces/pieces-framework';
 import { ebayAuth } from '../../auth';
-import { EbayAuthProps } from '../../common/client';
+import { EbayAuthProps, ebayClient } from '../../common/client';
 import { FetchOrders, newOrderPoll } from '../../common/new-order-poll';
 import { EbayOrder, orderCommon } from '../../common/order';
 
@@ -64,7 +64,7 @@ export const newOrder = createTrigger({
         await newOrderPoll.enable({
             store: context.store,
             fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
-            fingerprint: fingerprint({ fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: fingerprint({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
         });
     },
     // State is kept on purpose: a publish disables and re-enables the trigger, and the
@@ -84,7 +84,7 @@ export const newOrder = createTrigger({
         const orders = await newOrderPoll.poll({
             store: context.store,
             fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
-            fingerprint: fingerprint({ fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: fingerprint({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
         });
         return orders.map((order) => orderCommon.flattenOrder({ order }));
     },
@@ -99,8 +99,10 @@ function buildFetch({ auth, fulfillmentStatus }: { auth: EbayAuthProps; fulfillm
     });
 }
 
-function fingerprint({ fulfillmentStatus }: { fulfillmentStatus: string | undefined }): string {
-    return `order_new_order:${fulfillmentStatus ?? ''}`;
+// Includes the connection, so switching the trigger to another account starts from a
+// fresh seed instead of replaying that account's recent orders.
+function fingerprint({ auth, fulfillmentStatus }: { auth: EbayAuthProps; fulfillmentStatus: string | undefined }): string {
+    return `order_new_order:${ebayClient.connectionKey({ auth })}:${fulfillmentStatus ?? ''}`;
 }
 
 const TEST_ORDERS = 5;

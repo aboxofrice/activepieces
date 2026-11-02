@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { HttpError, HttpMethod, QueryParams, httpClient } from '@activepieces/pieces-common';
-import { tryCatch } from '@activepieces/shared';
+import { tryCatch, tryCatchSync } from '@activepieces/shared';
 
 async function getAccessToken({ auth }: { auth: EbayAuthProps }): Promise<string> {
     // Paginated actions make many calls per run; reuse the 2-hour user token instead of minting one per request.
@@ -26,23 +26,59 @@ async function cachedToken({ cache, cacheKey, auth, form }: { cache: Map<string,
     return body.access_token;
 }
 
-// The framework's HttpError serialises the request body into its message, and this body
-// is the refresh token. Only the status and eBay's reply may leave this function. Minting
-// a token changes nothing on eBay's side, so a 5xx is retried like a read.
-async function fetchToken({ auth, form }: { auth: EbayAuthProps; form: Record<string, string> }): Promise<{ access_token: string; expires_in?: number }> {
-    const { data, error } = await withRetry({ attempts: MAX_READ_ATTEMPTS, fn: () => httpClient.sendRequest<{ access_token: string; expires_in?: number }>({
-        method: HttpMethod.POST,
-        url: `${hosts({ auth }).api}/identity/v1/oauth2/token`,
+// Token calls do not go through the framework's httpClient: on failure it console.errors
+// the whole HttpError, request body included, so the refresh token would land in the
+// worker logs. Only the status and eBay's reply may leave this function. Minting a token
+// changes nothing on eBay's side, so a 5xx/429 or network error is retried like a read.
+async function fetchToken({ auth, form, attempt = 1 }: { auth: EbayAuthProps; form: Record<string, string>; attempt?: number }): Promise<{ access_token: string; expires_in?: number }> {
+    const { data: response, error } = await tryCatch(() => postToken({ auth, form }));
+    if (!error) {
+        const token = stringField({ value: response.body, field: 'access_token' });
+        if (response.status >= 200 && response.status < 300 && token !== null) {
+            const expiresIn = numberField({ value: response.body, field: 'expires_in' });
+            return { access_token: token, ...(expiresIn === null ? {} : { expires_in: expiresIn }) };
+        }
+    }
+    const retryable = error !== null || (response !== null && RETRYABLE_STATUSES.includes(response.status));
+    if (retryable && attempt < MAX_READ_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * attempt));
+        return fetchToken({ auth, form, attempt: attempt + 1 });
+    }
+    const detail = error ? error.message : describeResponse({ status: response?.status ?? 0, body: response?.body });
+    throw new Error(`eBay token request failed: ${redact({ text: detail, auth })}`);
+}
+
+async function postToken({ auth, form }: { auth: EbayAuthProps; form: Record<string, string> }): Promise<{ status: number; body: unknown }> {
+    const response = await fetch(`${hosts({ auth }).api}/identity/v1/oauth2/token`, {
+        method: 'POST',
         headers: {
             Authorization: `Basic ${basicCredentials({ auth })}`,
             'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
         },
         body: new URLSearchParams(form).toString(),
-    }) });
-    if (error) {
-        throw new Error(`eBay token request failed: ${safeErrorMessage({ error, auth })}`);
+        signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    const parsed = tryCatchSync(() => JSON.parse(text));
+    return { status: response.status, body: parsed.error ? text : parsed.data };
+}
+
+function stringField({ value, field }: { value: unknown; field: string }): string | null {
+    const found = fieldOf({ value, field });
+    return typeof found === 'string' && found !== '' ? found : null;
+}
+
+function numberField({ value, field }: { value: unknown; field: string }): number | null {
+    const found = fieldOf({ value, field });
+    return typeof found === 'number' && Number.isFinite(found) ? found : null;
+}
+
+function fieldOf({ value, field }: { value: unknown; field: string }): unknown {
+    if (typeof value !== 'object' || value === null) {
+        return undefined;
     }
-    return data.body;
+    return Object.entries(value).find(([key]) => key === field)?.[1];
 }
 
 function cacheKeyFor({ parts }: { parts: string[] }): string {
@@ -147,13 +183,16 @@ function compactQuery({ queryParams }: { queryParams?: Record<string, string | n
     );
 }
 
-// Never reads HttpError.message: the framework puts the request body (the refresh token on
-// a token call, a message body or listing XML otherwise) in it.
+// Never reads HttpError.message: the framework puts the request body (a message body or
+// listing XML) in it.
 function describeError({ error }: { error: Error }): string {
     if (!(error instanceof HttpError)) {
         return error.message;
     }
-    const { status, body } = error.response;
+    return describeResponse({ status: error.response.status, body: error.response.body });
+}
+
+function describeResponse({ status, body }: { status: number; body: unknown }): string {
     const text = typeof body === 'string' ? body : JSON.stringify(body ?? null);
     return `${status} ${text.length > MAX_ERROR_BODY_CHARS ? `${text.slice(0, MAX_ERROR_BODY_CHARS)}…` : text}`;
 }
@@ -161,9 +200,18 @@ function describeError({ error }: { error: Error }): string {
 // Every message that can reach a step error goes through here, so a reply that echoes a
 // credential back is masked as well.
 function safeErrorMessage({ error, auth }: { error: unknown; auth?: EbayAuthProps }): string {
-    const message = error instanceof Error ? describeError({ error }) : String(error);
-    const secrets = [auth?.refreshToken, auth?.certId].filter((secret): secret is string => typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH);
-    return secrets.reduce((text, secret) => text.split(secret).join('[redacted]'), message);
+    return redact({ text: error instanceof Error ? describeError({ error }) : String(error), auth });
+}
+
+function redact({ text, auth }: { text: string; auth?: EbayAuthProps }): string {
+    const secrets = [auth?.refreshToken, auth?.refreshToken ? encodeURIComponent(auth.refreshToken) : undefined, auth?.certId]
+        .filter((secret): secret is string => typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH);
+    return secrets.reduce((result, secret) => result.split(secret).join('[redacted]'), text);
+}
+
+// Identifies the connection without exposing it, e.g. for trigger state.
+function connectionKey({ auth }: { auth: EbayAuthProps }): string {
+    return cacheKeyFor({ parts: [auth.environment ?? 'production', auth.appId, auth.refreshToken] }).slice(0, 24);
 }
 
 const TRADING_COMPATIBILITY_LEVEL = '1331';
@@ -173,6 +221,7 @@ const MAX_READ_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1500;
 const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
 const MIN_TOKEN_TTL_MS = 60 * 1000;
+const TOKEN_TIMEOUT_MS = 30 * 1000;
 const MAX_ERROR_BODY_CHARS = 600;
 const MIN_SECRET_LENGTH = 3;
 const userTokenCache = new Map<string, CachedToken>();
@@ -187,6 +236,7 @@ export const ebayClient = {
     tradingCall,
     getUsername,
     safeErrorMessage,
+    connectionKey,
     baseUrl: ({ auth }: { auth: EbayAuthProps }) => hosts({ auth }).api,
 };
 
