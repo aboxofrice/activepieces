@@ -41,6 +41,21 @@ async function getOrder({ auth, orderId }: { auth: EbayAuthProps; orderId: strin
     });
 }
 
+async function listShippingFulfillments({ auth, orderId }: { auth: EbayAuthProps; orderId: string }): Promise<FlatShippingFulfillment[]> {
+    const response = await ebayClient.request<{ fulfillments?: EbayShippingFulfillment[] }>({
+        auth,
+        method: HttpMethod.GET,
+        path: `${FULFILLMENT_PATH}/order/${encodeURIComponent(orderId.trim())}/shipping_fulfillment`,
+    });
+    return (response.fulfillments ?? []).map((fulfillment) => ({
+        fulfillment_id: fulfillment.fulfillmentId ?? null,
+        shipped_date: fulfillment.shippedDate ?? null,
+        carrier: fulfillment.shippingCarrierCode ?? null,
+        tracking_number: fulfillment.shipmentTrackingNumber ?? null,
+        line_item_ids: (fulfillment.lineItems ?? []).map((lineItem) => lineItem.lineItemId).filter((id): id is string => !!id).join(', '),
+    }));
+}
+
 function flattenOrder({ order }: { order: EbayOrder }): FlatOrder {
     const instruction = order.fulfillmentStartInstructions?.[0];
     const shipTo = instruction?.shippingStep?.shipTo;
@@ -145,6 +160,8 @@ export const orderCommon = {
     listOrders,
     getOrder,
     flattenOrder,
+    listShippingFulfillments,
+    fulfillmentPath: FULFILLMENT_PATH,
 };
 
 export type OrderFilter = {
@@ -269,4 +286,20 @@ export type FlatOrder = {
     line_item_count: number;
     skus: string;
     line_items: FlatLineItem[];
+};
+
+export type EbayShippingFulfillment = {
+    fulfillmentId?: string;
+    shippedDate?: string;
+    shippingCarrierCode?: string;
+    shipmentTrackingNumber?: string;
+    lineItems?: { lineItemId?: string; quantity?: number }[];
+};
+
+export type FlatShippingFulfillment = {
+    fulfillment_id: string | null;
+    shipped_date: string | null;
+    carrier: string | null;
+    tracking_number: string | null;
+    line_item_ids: string;
 };

@@ -39,6 +39,31 @@ async function updateListingQuantity({ auth, itemId, sku, quantity, method, isVa
     };
 }
 
+async function updateListingPrice({ auth, itemId, sku, price, quantity }: PriceUpdate): Promise<PriceUpdateResult> {
+    const xml = await ebayClient.tradingCall({
+        auth,
+        callName: 'ReviseInventoryStatus',
+        innerXml: tag({
+            name: 'InventoryStatus',
+            value: `${optionalTag({ name: 'ItemID', value: itemId })}${optionalTag({ name: 'SKU', value: sku })}<StartPrice>${price.toFixed(2)}</StartPrice>${quantity === undefined ? '' : `<Quantity>${quantity}</Quantity>`}`,
+            raw: true,
+        }),
+    });
+    const result = parseResult({ xml });
+    const statusXml = xmlUtils.blocks({ xml, tag: 'InventoryStatus' })[0] ?? '';
+    return {
+        ...result,
+        call: 'ReviseInventoryStatus',
+        updated: result.ack !== 'Failure',
+        item_id: xmlUtils.firstTag({ xml: statusXml, tag: 'ItemID' }) ?? itemId ?? null,
+        sku: xmlUtils.firstTag({ xml: statusXml, tag: 'SKU' }) ?? sku ?? null,
+        requested_price: price,
+        requested_quantity: quantity ?? null,
+        price_now: toNumber({ value: xmlUtils.firstTag({ xml: statusXml, tag: 'StartPrice' }) }),
+        quantity_now: toNumber({ value: xmlUtils.firstTag({ xml: statusXml, tag: 'Quantity' }) }),
+    };
+}
+
 function parseResult({ xml }: { xml: string }): TradingResult {
     const errors = xmlUtils.blocks({ xml, tag: 'Errors' }).map((errorXml) => {
         const code = Number(xmlUtils.firstTag({ xml: errorXml, tag: 'ErrorCode' }));
@@ -153,6 +178,8 @@ const GET_ITEM_OUTPUT_SELECTORS = [
 export const inventoryCommon = {
     getListingQuantity,
     updateListingQuantity,
+    updateListingPrice,
+    parseResult,
     hasOnlyKnownListingIssues,
 };
 
@@ -215,4 +242,23 @@ export type QuantityUpdateResult = TradingResult & {
     item_id: string | null;
     sku: string | null;
     requested_quantity: number;
+};
+
+export type PriceUpdate = {
+    auth: EbayAuthProps;
+    itemId?: string;
+    sku?: string;
+    price: number;
+    quantity?: number;
+};
+
+export type PriceUpdateResult = TradingResult & {
+    call: string;
+    updated: boolean;
+    item_id: string | null;
+    sku: string | null;
+    requested_price: number;
+    requested_quantity: number | null;
+    price_now: number | null;
+    quantity_now: number | null;
 };

@@ -48,7 +48,7 @@ async function tryGetAccessToken({ auth }: { auth: EbayAuthProps }): Promise<{ e
     return { error: error ? describeError({ error }) : null };
 }
 
-async function request<T>({ auth, method, path, queryParams, body, host = 'api', tokenType = 'user' }: EbayRequest): Promise<T> {
+async function request<T>({ auth, method, path, queryParams, body, host = 'api', tokenType = 'user', authScheme = 'Bearer' }: EbayRequest): Promise<T> {
     const accessToken = tokenType === 'application' ? await getApplicationToken({ auth }) : await getAccessToken({ auth });
     // Only reads are retried: replaying a POST could double-send a message or double-apply a change.
     const attempts = method === HttpMethod.GET ? MAX_READ_ATTEMPTS : 1;
@@ -56,7 +56,7 @@ async function request<T>({ auth, method, path, queryParams, body, host = 'api',
         method,
         url: `${hosts({ auth })[host]}${path}`,
         headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `${authScheme} ${accessToken}`,
             'Content-Type': 'application/json',
             'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
         },
@@ -177,4 +177,6 @@ type EbayRequest = {
     body?: unknown;
     host?: EbayHost;
     tokenType?: 'user' | 'application';
+    // The Post-Order API (cancellations, returns) takes the OAuth user token as `IAF <token>`.
+    authScheme?: 'Bearer' | 'IAF';
 };
