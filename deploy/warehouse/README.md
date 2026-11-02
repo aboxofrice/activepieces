@@ -15,9 +15,42 @@ Tests: `python3 -m unittest discover -s tests`.
 
 ## Images and release
 
-The compose files pin the helper images to `ghcr.io/aboxofrice/ap-sync:1.2.0` and
-`ghcr.io/aboxofrice/ap-backup:1.2.0` (override with `AP_SYNC_IMAGE` / `AP_BACKUP_IMAGE`). Build and
-push all three images from the same commit (repo root):
+Four images, all **private** on GHCR: the app image contains EE code (`packages/ee`), whose license
+forbids distributing it, so none of them may be made public.
+
+| Image | Built from |
+|---|---|
+| `ghcr.io/aboxofrice/activepieces` | repo root `Dockerfile` |
+| `ghcr.io/aboxofrice/ap-installer` | `deploy/warehouse/installer/Dockerfile` (its default `AP_IMAGE` is the app image of the same release, by digest) |
+| `ghcr.io/aboxofrice/ap-sync` | `tools/ap-deploy` |
+| `ghcr.io/aboxofrice/ap-backup` | `deploy/warehouse/backup` |
+
+Release flow:
+
+1. Bump the helper tags to the new version `X.Y.Z` in `compose.ap-sync.yml` and
+   `compose.backup.yml` (and in the docs that name them), commit.
+2. Tag that commit `warehouse-vX.Y.Z` and push the tag. `.github/workflows/warehouse-images.yml`
+   checks that the compose files pin `X.Y.Z`, builds all four images from that commit and pushes
+   them as `X.Y.Z` and `sha-<short>` (never `latest`), with OCI revision/source/version labels,
+   then runs a report-only vulnerability scan. It can also be started by hand (Actions, "Warehouse
+   images", optional version). After the first push, check each package is **Private** under the
+   account's Packages settings.
+3. On the warehouse, re-run the new installer and move the app image:
+   `... -e AP_IMAGE=ghcr.io/aboxofrice/activepieces:X.Y.Z ghcr.io/aboxofrice/ap-installer:X.Y.Z`
+   (`.env` keeps its `AP_IMAGE` otherwise; the installer's built-in default only applies to a
+   first install). A changed app image is an upgrade: a pre-upgrade backup is taken first (when
+   backups are set up), then the containers are recreated. The helpers move to `X.Y.Z` through the
+   new installer's compose files, unless `.env` overrides `AP_SYNC_IMAGE` / `AP_BACKUP_IMAGE`.
+
+Registry access for the warehouse: create a **classic** personal access token (GitHub, Settings,
+Developer settings, Personal access tokens, Tokens (classic)) with only the `read:packages` scope,
+from an account that can read the packages, with an expiry you will track. Pass it once:
+`-e GHCR_USER=<that github user> -e GHCR_TOKEN=<token>`. It is saved in `.env` (mode 600), used
+for `docker login ghcr.io` before every pull, and never printed. Fine-grained tokens do not cover
+GHCR packages. Without a token, images already on the machine still work (local builds on a Mac).
+
+Local build (repo root), e.g. for a Mac test; tags matching the compose pins are used as-is when
+they cannot be pulled:
 
 ```bash
 rev=$(git rev-parse HEAD)
@@ -27,9 +60,8 @@ docker build --build-arg REVISION=$rev --build-arg AP_IMAGE=<app image> \
   -f deploy/warehouse/installer/Dockerfile -t ghcr.io/aboxofrice/ap-installer:<tag> deploy/warehouse
 ```
 
-Helper code changed? Bump the tag (compose files, this section, `tools/ap-deploy/README.md`) and
-publish it before shipping an installer that uses it. A new installer that reuses the current
-helper tags gets `--build-arg HELPER_REVISION=<commit the helpers were built from>`.
+A new installer that reuses existing helper tags gets
+`--build-arg HELPER_REVISION=<commit the helpers were built from>`.
 
 On every run the installer pulls each image of the stack and then:
 

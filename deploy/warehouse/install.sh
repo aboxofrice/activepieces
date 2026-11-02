@@ -28,7 +28,9 @@
 #                     first run only, to set up a copy that restores another server's backups (see
 #                     README "Restore a warehouse backup on another machine"): used instead of fresh
 #                     values and never printed. Ignored, with a warning, once .env exists.
-#   GHCR_USER / GHCR_TOKEN   registry login for private images
+#   GHCR_USER / GHCR_TOKEN   login for the private ghcr.io images: GitHub user (default aboxofrice)
+#                     and a classic token with read:packages only. Any run; saved to .env, never
+#                     printed. Without them, images already on this machine still work.
 #   COMPOSE_PROJECT_NAME     stack name (default activepieces); lets a test copy run beside it
 #   Optional, saved to .env when given (first run or re-run; see compose.ap-sync.yml / compose.backup.yml):
 #     GITHUB_TOKEN (fine-grained, read-only "Contents: Read" on the flows repo; ap-sync only pulls)
@@ -61,7 +63,7 @@ log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 # Settings an installer run may pass with -e and that must survive into .env for the helper services.
-PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET AP_DEPLOY_BASE_URL SYNC_INTERVAL_MINUTES
+PASSTHROUGH_VARS="GHCR_USER GHCR_TOKEN GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET AP_DEPLOY_BASE_URL SYNC_INTERVAL_MINUTES
 AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
 BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_KEEP_PRE_UPGRADE BACKUP_KEEP_PRE_RESTORE
 BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
@@ -294,10 +296,22 @@ warn_ignored_secrets() {
     warn "ignored$ignored: they are read on a first run only, and .env already exists. To change one, edit $ENV_FILE by hand (changing AP_ENCRYPTION_KEY makes saved connections unreadable)."
 }
 
+# The token comes from .env (saved there by write_env when given with -e). The login lives in a
+# Docker config inside WORK_DIR, deleted when the run ends. A failed login is not fatal: images
+# already on this machine still work, and pull_images names any that are missing.
+REGISTRY_LOGIN=
 registry_login() {
-    if [ -n "${GHCR_TOKEN:-}" ]; then
-        log "Logging in to ghcr.io"
-        printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-aboxofrice}" --password-stdin
+    local token user
+    token=$(env_get GHCR_TOKEN); user=$(env_get GHCR_USER)
+    [ -n "$token" ] || return 0
+    log "Logging in to ghcr.io as ${user:-aboxofrice}"
+    export DOCKER_CONFIG="$WORK_DIR/docker"
+    mkdir -p "$DOCKER_CONFIG"
+    if printf '%s' "$token" | docker login ghcr.io -u "${user:-aboxofrice}" --password-stdin >/dev/null 2>"$WORK_DIR/login.err"; then
+        REGISTRY_LOGIN=ok
+    else
+        REGISTRY_LOGIN=failed
+        warn "ghcr.io login failed ($(grep . "$WORK_DIR/login.err" | tail -n 1)). GHCR_TOKEN may be expired or lack read:packages; pass a new one with -e GHCR_TOKEN=..."
     fi
 }
 
@@ -323,9 +337,16 @@ pull_images() {
         case "$svc" in ap-sync|backup) check_helper_revision "$image" ;; esac
     done < "$images"
     [ -z "$missing" ] && return 0
+    local hint
+    case "$REGISTRY_LOGIN" in
+        ok) hint="Logged in to ghcr.io, so the tag may not be published yet, or the token's user cannot read that package." ;;
+        failed) hint="The ghcr.io login failed (see the warning above): pass a valid token with -e GHCR_TOKEN=..." ;;
+        *) hint="No GHCR_TOKEN is set and the ghcr.io images are private: pass -e GHCR_USER=<github user>
+-e GHCR_TOKEN=<classic token with read:packages only> (saved to .env for later runs)." ;;
+    esac
     die "These images could not be pulled and are not on this machine:$missing
-Nothing was started. Check the network and the registry login (-e GHCR_USER / -e GHCR_TOKEN
-for private images), publish the missing tag, or point the setting at an image that exists."
+Nothing was started. $hint
+Otherwise check the network, publish the missing tag, or point the setting at an image that exists."
 }
 
 # "service image" per line, from the merged compose config (so .env overrides are applied). Piped,
