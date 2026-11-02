@@ -5,7 +5,7 @@ import { sellercloudClient } from './common/client';
 export const sellercloudAuth = PieceAuth.CustomAuth({
     description: `Connect a SellerCloud account with a username and password (SellerCloud's REST API has no OAuth or API keys).
 
-1. **REST API URL**: open \`https://api.sellercloud.com/api/server-by-team/?team=<your team>\` and copy \`RestApiEndpoint\`, e.g. \`https://allwholesale.api.sellercloud.us/rest\`.
+1. **REST API URL**: open \`https://api.sellercloud.com/api/server-by-team/?team=<your team>\` and copy \`RestApiEndpoint\`, e.g. \`https://<your-team>.api.sellercloud.us/rest\`.
 2. **Username / Password**: use a dedicated API user with only the permissions your flows need.
 3. **PIN**: only needed when the company setting "Require PIN to change inventory quantity" is on.`,
     required: true,
