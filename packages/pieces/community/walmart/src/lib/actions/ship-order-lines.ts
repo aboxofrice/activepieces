@@ -13,7 +13,7 @@ export const shipOrderLines = createAction({
     auth: walmartAuth,
     name: 'ship_order_lines',
     displayName: 'Ship Order Lines',
-    description: 'Mark lines of an acknowledged Walmart order as shipped and send the tracking number to the customer.',
+    description: 'Mark lines of an acknowledged Walmart order as shipped and send the tracking number to the customer. Only acknowledged quantities can be shipped.',
     props: {
         purchaseOrderId: Property.ShortText({
             displayName: 'Purchase Order ID',
@@ -66,7 +66,7 @@ export const shipOrderLines = createAction({
         if (carrier === OTHER_CARRIER && (!otherCarrier || !trackingUrl)) {
             throw new Error('With carrier "Other", both Other Carrier Name and Tracking URL are required by Walmart.');
         }
-        const lines = await walmartOrderLines.resolveLines({ auth, purchaseOrderId, lines: context.propsValue.lines });
+        const lines = await walmartOrderLines.resolveLines({ auth, purchaseOrderId, lines: context.propsValue.lines, statuses: ['Acknowledged'], action: 'shipped' });
         const trackingInfo = {
             shipDateTime: shipDateTime ? new Date(shipDateTime).getTime() : Date.now(),
             carrierName: carrier === OTHER_CARRIER ? { otherCarrier } : { carrier },

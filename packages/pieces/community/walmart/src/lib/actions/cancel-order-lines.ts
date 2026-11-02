@@ -36,7 +36,7 @@ export const cancelOrderLines = createAction({
     async run(context) {
         const auth = walmartAuthProps(context.auth);
         const purchaseOrderId = context.propsValue.purchaseOrderId.trim();
-        const lines = await walmartOrderLines.resolveLines({ auth, purchaseOrderId, lines: context.propsValue.lines });
+        const lines = await walmartOrderLines.resolveLines({ auth, purchaseOrderId, lines: context.propsValue.lines, statuses: ['Created', 'Acknowledged'], action: 'cancelled' });
         const response = await walmartClient.request<unknown>({
             auth,
             method: HttpMethod.POST,
