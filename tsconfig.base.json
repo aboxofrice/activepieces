@@ -1141,6 +1141,9 @@
       "@activepieces/piece-sendfox": [
         "packages/pieces/community/sendfox/src/index.ts"
       ],
+      "@activepieces/piece-sellercloud": [
+        "packages/pieces/community/sellercloud/src/index.ts"
+      ],
       "@activepieces/piece-sendgrid": [
         "packages/pieces/community/sendgrid/src/index.ts"
       ],
@@ -1757,6 +1760,9 @@
       ],
       "@activepieces/piece-easy-peasy-ai": [
         "packages/pieces/community/easy-peasy-ai/src/index.ts"
+      ],
+      "@activepieces/piece-ebay": [
+        "packages/pieces/community/ebay/src/index.ts"
       ],
       "@activepieces/piece-leexi": [
         "packages/pieces/community/leexi/src/index.ts"
