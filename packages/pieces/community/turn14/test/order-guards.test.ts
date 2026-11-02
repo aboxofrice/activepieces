@@ -115,18 +115,43 @@ describe('turn14OrderGuards with the repeat-quote guard off or a stuck claim', (
         expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '555' })).toEqual(placed);
     });
 
-    it('tells the user how to clear a stuck claim, and clears it only when asked', async () => {
+    const OLD = '2026-11-01T10:00:00.000Z';
+    const LATER = Date.parse(OLD) + 20 * 60 * 1000;
+    const stuck = { status: 'sending' as const, token: 'stale-token', at: OLD, poNumber: 'PO-1001', environment: 'testing' as const, orderId: null };
+
+    it('tells the user which token to paste, and clears only that exact claim, once', async () => {
         const store = memoryStore();
-        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { status: 'sending', token: 'stale', at: 'x', poNumber: 'PO-1001', environment: 'testing', orderId: null } });
-        await expect(turn14OrderGuards.claimOrder(guardParams({ store }))).rejects.toThrow(/Check PO "PO-1001" in Turn14.*tick "Clear Stuck Claim for This Quote"/);
-        const claim = await turn14OrderGuards.claimOrder(guardParams({ store, clearStuckClaim: true }));
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: stuck });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER }))).rejects.toThrow(/Check PO "PO-1001" in Turn14.*paste stale-token into "Stuck Claim Token to Clear"/);
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: 'other-token' }))).rejects.toThrow(/does not match this claim/);
+        const claim = await turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: ' stale-token ' }));
         expect((await turn14OrderGuards.readAttempt({ store, auth, quoteId: '555' }))?.token).toBe(claim.token);
+        // The pasted value stays in the flow, but it no longer matches the new claim.
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: 'stale-token' }))).rejects.toThrow(/does not match this claim/);
+    });
+
+    it('also accepts the claim time shown in the message', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: stuck });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: OLD }))).resolves.toMatchObject({ owned: true });
+    });
+
+    it('refuses to clear a sending claim younger than 15 minutes', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: stuck });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: Date.parse(OLD) + 5 * 60 * 1000, clearClaim: 'stale-token' }))).rejects.toThrow(/less than 15 minutes ago/);
+    });
+
+    it('requires the open-PO check while clearing', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: stuck });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: 'stale-token', refuseOpenPo: false }))).rejects.toThrow(/needs "Refuse if an Open Order Has This PO" switched on/);
     });
 
     it('refuses to clear a claim recorded as placed', async () => {
         const store = memoryStore();
-        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { status: 'placed', token: 'other', at: 'x', poNumber: 'PO-1001', environment: 'testing', orderId: '77' } });
-        await expect(turn14OrderGuards.claimOrder(guardParams({ store, clearStuckClaim: true }))).rejects.toThrow(/does not apply to a placed order/);
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { ...stuck, status: 'placed', orderId: '77' } });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: 'stale-token' }))).rejects.toThrow(/placed cannot be cleared/);
     });
 });
 

@@ -152,4 +152,15 @@ describe('turn14PriceCheck.runPriceCheck', () => {
         await run(31 * 60000);
         expect(order).toEqual([TODAY, YESTERDAY, TODAY, TODAY, YESTERDAY]);
     });
+
+    it('records a yesterday item emitted from the pending list while yesterday is not re-swept', async () => {
+        const store = memoryStore();
+        const fetchChangedIds = changes({ byDate: { [YESTERDAY]: ['1', '2'] } });
+        const run = (offset: number, budget?: number) => turn14PriceCheck.runPriceCheck({ store, now: NOW + offset, deadline: NOW + offset + 40000, fetchChangedIds, priceItems: pricer({ log: [], budget }), includePricing: true, maxLookups: 10 });
+        const first = await run(0, 1);
+        expect(first.rows.map((row) => row.item_id)).toEqual(['1']);
+        const second = await run(5 * 60000);
+        expect(second.rows.map((row) => row.item_id)).toEqual(['2']);
+        expect((await run(31 * 60000)).rows).toEqual([]);
+    });
 });

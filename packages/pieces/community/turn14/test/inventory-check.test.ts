@@ -114,4 +114,19 @@ describe('turn14InventoryCheck.runInventoryCheck', () => {
         expect(state?.lastPollAt).toBe(NOW);
         expect(state?.unsure).toBeUndefined();
     });
+
+    it('keeps flagging possibly_before_enable when the seed\'s scan is restarted, until a scan completes', async () => {
+        const store = memoryStore();
+        const twoPages: ReadUpdates = async ({ startPage }) => (startPage === 1 ? { rows: [row({ id: '1', qty: 1 })], nextPage: 2 } : { rows: [], nextPage: null });
+        await turn14InventoryCheck.seedInventoryState(params({ store, now: NOW, readUpdates: twoPages }));
+        // 40 minutes later the window grows past the seed's, so the scan restarts at page 1 and is cut short again.
+        const restartedCutShort: ReadUpdates = async () => ({ rows: [row({ id: '2', qty: 2 })], nextPage: 2 });
+        const restarted = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 40 * MINUTE, readUpdates: restartedCutShort }));
+        expect(restarted.outputs.map((output) => output['possibly_before_enable'])).toEqual([true]);
+        const finishing: ReadUpdates = async () => ({ rows: [row({ id: '3', qty: 3 })], nextPage: null });
+        const finished = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 45 * MINUTE, readUpdates: finishing }));
+        expect(finished.outputs.map((output) => output['possibly_before_enable'])).toEqual([true]);
+        const after = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 50 * MINUTE, readUpdates: async () => ({ rows: [row({ id: '4', qty: 4 })], nextPage: null }) }));
+        expect(after.outputs.map((output) => output['possibly_before_enable'])).toEqual([false]);
+    });
 });

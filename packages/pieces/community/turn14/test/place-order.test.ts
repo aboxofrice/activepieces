@@ -17,7 +17,6 @@ function input() {
         acknowledgeEpa: false,
         refuseOpenPo: true,
         refuseRepeatQuote: true,
-        clearStuckClaim: false,
     };
 }
 
