@@ -26,6 +26,10 @@ describe('listingPatches.fulfillmentAvailability', () => {
         ]);
     });
 
+    it('refuses to add a merchant entry to an FBA-only listing', () => {
+        expect(() => listingPatches.fulfillmentAvailability({ current: [{ fulfillment_channel_code: 'AMAZON_NA' }], marketplaceId: US, quantity: 5 })).toThrow(/FBA listing.*managed by Amazon/);
+    });
+
     it('creates the merchant entry when the listing has none', () => {
         const result = listingPatches.fulfillmentAvailability({ current: undefined, marketplaceId: US, quantity: 5 });
         expect(result).toEqual([{ fulfillment_channel_code: 'DEFAULT', quantity: 5, marketplace_id: US }]);
@@ -62,6 +66,18 @@ describe('listingPatches.purchasableOffer', () => {
         const result = listingPatches.purchasableOffer({ current, marketplaceId: US, currency: 'USD', price: 42.5, minimumPrice: 25 });
         expect(result[0]['minimum_seller_allowed_price']).toEqual([{ schedule: [{ value_with_tax: 25 }] }]);
         expect(result[0]['maximum_seller_allowed_price']).toEqual(current[0].maximum_seller_allowed_price);
+    });
+
+    it('keeps extra price and schedule entries', () => {
+        const multi = [{ marketplace_id: US, our_price: [
+            { schedule: [{ value_with_tax: 40 }, { value_with_tax: 45, start_at: '2027-01-01' }] },
+            { schedule: [{ value_with_tax: 50 }] },
+        ] }];
+        const result = listingPatches.purchasableOffer({ current: multi, marketplaceId: US, currency: 'USD', price: 41 });
+        expect(result[0]['our_price']).toEqual([
+            { schedule: [{ value_with_tax: 41 }, { value_with_tax: 45, start_at: '2027-01-01' }] },
+            { schedule: [{ value_with_tax: 50 }] },
+        ]);
     });
 
     it('creates a consumer entry when there is none', () => {

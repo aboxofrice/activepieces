@@ -4,6 +4,11 @@
 function fulfillmentAvailability({ current, marketplaceId, quantity, handlingTime }: FulfillmentParams): Record<string, unknown>[] {
     const entries = recordsOf({ value: current });
     const index = entries.findIndex((entry) => entry['fulfillment_channel_code'] === MFN_CHANNEL_CODE);
+    // Adding a DEFAULT entry to an FBA-only listing could switch it to merchant-fulfilled.
+    const fbaChannels = entries.map((entry) => entry['fulfillment_channel_code']).filter((code): code is string => typeof code === 'string' && code.startsWith('AMAZON_'));
+    if (index === -1 && fbaChannels.length > 0) {
+        throw new Error(`This is an FBA listing (${fbaChannels.join(', ')}); its quantity is managed by Amazon and cannot be set here.`);
+    }
     const existing = index === -1 ? {} : entries[index];
     const updated: Record<string, unknown> = {
         ...existing,
@@ -39,12 +44,13 @@ function isConsumerOffer({ entry, marketplaceId }: { entry: Record<string, unkno
     return (audience === undefined || audience === 'ALL') && (entryMarketplace === undefined || entryMarketplace === marketplaceId);
 }
 
-// Price attributes are [{ schedule: [{ value_with_tax }] }]; any other keys Amazon returned
-// on the first schedule entry are kept.
+// Price attributes are [{ schedule: [{ value_with_tax }, ...] }, ...]. Only the first schedule
+// entry's value changes; every other key and entry Amazon returned is kept.
 function withScheduleValue({ current, amount }: { current: unknown; amount: number }): Record<string, unknown>[] {
-    const outer = recordsOf({ value: current })[0] ?? {};
-    const schedule = recordsOf({ value: outer['schedule'] })[0] ?? {};
-    return [{ ...outer, schedule: [{ ...schedule, value_with_tax: amount }] }];
+    const outers = recordsOf({ value: current });
+    const [first = {}, ...otherOuters] = outers;
+    const [schedule = {}, ...otherSchedules] = recordsOf({ value: first['schedule'] });
+    return [{ ...first, schedule: [{ ...schedule, value_with_tax: amount }, ...otherSchedules] }, ...otherOuters];
 }
 
 function recordsOf({ value }: { value: unknown }): Record<string, unknown>[] {
