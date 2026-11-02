@@ -10,6 +10,8 @@ on:
 
 jobs:
   validate-publishable-packages:
+    # The fork publishes @vqnguyen1 pieces by hand from tested tarballs; this gate is for upstream's @activepieces releases.
+    if: github.repository == 'activepieces/activepieces'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
