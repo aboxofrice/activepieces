@@ -692,7 +692,7 @@
     },
     "packages/pieces/community/amazon-seller": {
       "name": "@vqnguyen1/piece-amazon-seller",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -2432,7 +2432,7 @@
     },
     "packages/pieces/community/ebay": {
       "name": "@activepieces/piece-ebay",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -6379,7 +6379,7 @@
     },
     "packages/pieces/community/sellercloud": {
       "name": "@activepieces/piece-sellercloud",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -7299,6 +7299,16 @@
         "tslib": "2.6.2",
       },
     },
+    "packages/pieces/community/turn14": {
+      "name": "@vqnguyen1/piece-turn14",
+      "version": "0.1.1",
+      "dependencies": {
+        "@activepieces/pieces-common": "workspace:*",
+        "@activepieces/pieces-framework": "workspace:*",
+        "@activepieces/shared": "workspace:*",
+        "tslib": "2.6.2",
+      },
+    },
     "packages/pieces/community/twenty": {
       "name": "@activepieces/piece-twenty",
       "version": "0.0.2",
@@ -7654,7 +7664,7 @@
     },
     "packages/pieces/community/walmart": {
       "name": "@vqnguyen1/piece-walmart",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@activepieces/pieces-common": "workspace:*",
         "@activepieces/pieces-framework": "workspace:*",
@@ -12705,6 +12715,8 @@
     "@vqnguyen1/piece-plaid": ["@vqnguyen1/piece-plaid@workspace:packages/pieces/custom/plaid"],
 
     "@vqnguyen1/piece-sageworks": ["@vqnguyen1/piece-sageworks@workspace:packages/pieces/custom/sageworks"],
+
+    "@vqnguyen1/piece-turn14": ["@vqnguyen1/piece-turn14@workspace:packages/pieces/community/turn14"],
 
     "@vqnguyen1/piece-walmart": ["@vqnguyen1/piece-walmart@workspace:packages/pieces/community/walmart"],
 
