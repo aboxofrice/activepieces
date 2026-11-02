@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { tenantTime } from './tenant-time';
 
 // One polling engine for every SellerCloud trigger. Each poll fetches a window that
@@ -18,17 +19,32 @@ async function poll<T>({ store, fingerprint, fetchItems, emitUnseen, retentionMs
     }
     const cursor = state.cursor ?? { sinceMs: state.lastPollAt - overlapMs, page: 1, startedAt: now, baseline: false };
     const result = await fetchItems({ since: new Date(cursor.sinceMs), startPage: cursor.page, seen: state.seen });
-    const emissions = result.items
+    if (result.partialError) {
+        console.warn(`SellerCloud trigger: stopped after the pages read so far (${result.partialError}); the next poll continues from there.`);
+    }
+    const forgotten = parseEvicted({ evicted: state.evicted });
+    const emissions = lastPerKey({ items: result.items })
         .filter((item) => item.eligible)
         .flatMap((item): TimedEmission<T>[] => {
             const previous = state.seen[item.key];
-            if (previous === undefined) {
-                return emitUnseen && !isHistory({ item, cursor }) ? [{ item: item.data, previousState: null, eventTime: item.eventTime }] : [];
+            if (previous !== undefined) {
+                return previous[0] === item.state ? [] : [{ item: item.data, previousState: previous[0], eventTime: item.eventTime }];
             }
-            return previous[0] === item.state ? [] : [{ item: item.data, previousState: previous[0], eventTime: item.eventTime }];
+            const forgottenState = forgotten.get(shortHash({ text: item.key, length: KEY_HASH_CHARS }));
+            if (forgottenState !== undefined) {
+                // Trimmed for space, not new: report it only if its state is different now.
+                return forgottenState === shortHash({ text: item.state, length: STATE_HASH_CHARS }) ? [] : [{ item: item.data, previousState: null, eventTime: item.eventTime }];
+            }
+            return emitUnseen && !isHistory({ item, cursor }) ? [{ item: item.data, previousState: null, eventTime: item.eventTime }] : [];
         });
     await writeState({ store, state: nextState({ state, cursor, result, now, retentionMs, fingerprint }) });
     return sortByEventTime({ emissions });
+}
+
+// A record that shifts across a page boundary between two page reads comes back twice;
+// the later copy is the fresher one.
+function lastPerKey<T>({ items }: { items: PolledItem<T>[] }): PolledItem<T>[] {
+    return [...new Map(items.map((item) => [item.key, item])).values()];
 }
 
 // While a baseline is still being read, an unseen record is history unless it happened
@@ -42,7 +58,7 @@ function isHistory<T>({ item, cursor }: { item: PolledItem<T>; cursor: PollCurso
 async function baseline<T>({ store, fingerprint, fetchItems, retentionMs, now = Date.now(), sinceMs }: BaselineParams<T>): Promise<void> {
     const cursor: PollCursor = { sinceMs, page: 1, startedAt: now, baseline: true };
     const result = await fetchItems({ since: new Date(sinceMs), startPage: 1, seen: {} });
-    const empty: PollState = { v: STATE_VERSION, fp: fingerprint, lastPollAt: now, seen: {}, cursor: null };
+    const empty: PollState = { v: STATE_VERSION, fp: fingerprint, lastPollAt: now, seen: {}, evicted: '', cursor: null };
     await writeState({ store, state: nextState({ state: empty, cursor, result, now, retentionMs, fingerprint }) });
 }
 
@@ -66,15 +82,16 @@ async function disable(): Promise<void> {
 }
 
 function nextState<T>({ state, cursor, result, now, retentionMs, fingerprint }: NextStateParams<T>): PollState {
-    const seen = mergeSeen({ seen: state.seen, items: result.items, now, retentionMs });
+    const { seen, trimmed } = mergeSeen({ seen: state.seen, items: lastPerKey({ items: result.items }), now, retentionMs });
+    const evicted = mergeEvicted({ evicted: state.evicted, trimmed, seen });
     if (result.truncated && result.nextPage > cursor.page) {
         // Re-read the last page next time: records added mid-window shift the pages.
-        return { v: STATE_VERSION, fp: fingerprint, lastPollAt: state.lastPollAt, seen, cursor: { ...cursor, page: Math.max(cursor.page + 1, result.nextPage - 1) } };
+        return { v: STATE_VERSION, fp: fingerprint, lastPollAt: state.lastPollAt, seen, evicted, cursor: { ...cursor, page: Math.max(cursor.page + 1, result.nextPage - 1) } };
     }
-    return { v: STATE_VERSION, fp: fingerprint, lastPollAt: cursor.startedAt, seen, cursor: null };
+    return { v: STATE_VERSION, fp: fingerprint, lastPollAt: cursor.startedAt, seen, evicted, cursor: null };
 }
 
-function mergeSeen<T>({ seen, items, now, retentionMs }: { seen: Record<string, SeenEntry>; items: PolledItem<T>[]; now: number; retentionMs: number }): Record<string, SeenEntry> {
+function mergeSeen<T>({ seen, items, now, retentionMs }: { seen: Record<string, SeenEntry>; items: PolledItem<T>[]; now: number; retentionMs: number }): { seen: Record<string, SeenEntry>; trimmed: [string, SeenEntry][] } {
     const nowSec = Math.floor(now / 1000);
     const cutoffSec = Math.floor((now - retentionMs) / 1000);
     const merged: Record<string, SeenEntry> = {
@@ -84,16 +101,52 @@ function mergeSeen<T>({ seen, items, now, retentionMs }: { seen: Record<string, 
     const newestFirst = Object.entries(merged)
         .filter(([, entry]) => entry[1] >= cutoffSec)
         .sort((a, b) => b[1][1] - a[1][1]);
-    return Object.fromEntries(fitToStore({ entries: newestFirst }));
+    const fit = fitCount({ entries: newestFirst });
+    return { seen: Object.fromEntries(newestFirst.slice(0, fit)), trimmed: newestFirst.slice(fit) };
 }
 
 // Store values are capped at 512 KB. Keys vary in length (order IDs vs SKU|warehouse),
 // so the cap is on the serialised size rather than an entry count.
-function fitToStore({ entries }: { entries: [string, SeenEntry][] }): [string, SeenEntry][] {
-    const sizes = entries.map(([key, entry]) => key.length + JSON.stringify(entry).length + ENTRY_OVERHEAD_CHARS);
-    const totals = sizes.reduce<number[]>((acc, size) => [...acc, (acc[acc.length - 1] ?? 0) + size], []);
-    const fit = totals.findIndex((total) => total > MAX_SEEN_CHARS);
-    return fit === -1 ? entries : entries.slice(0, fit);
+function fitCount({ entries }: { entries: [string, SeenEntry][] }): number {
+    let total = 0;
+    for (let index = 0; index < entries.length; index++) {
+        const [key, entry] = entries[index];
+        total += key.length + JSON.stringify(entry).length + ENTRY_OVERHEAD_CHARS;
+        if (total > MAX_SEEN_CHARS) {
+            return index;
+        }
+    }
+    return entries.length;
+}
+
+// Entries trimmed for space keep a fixed-width fingerprint (key hash + state hash), about
+// a third of the size, so a busy warehouse whose low products outgrow the full entries
+// does not report every one of them again after the next bulk update. Fingerprints are
+// dropped only past their own cap, and that is logged.
+function mergeEvicted({ evicted, trimmed, seen }: { evicted: string; trimmed: [string, SeenEntry][]; seen: Record<string, SeenEntry> }): string {
+    const tokenWidth = KEY_HASH_CHARS + STATE_HASH_CHARS;
+    const remembered = new Set(Object.keys(seen).map((key) => shortHash({ text: key, length: KEY_HASH_CHARS })));
+    const fresh = trimmed.map(([key, entry]) => shortHash({ text: key, length: KEY_HASH_CHARS }) + shortHash({ text: entry[0], length: STATE_HASH_CHARS }));
+    const freshKeys = new Set(fresh.map((token) => token.slice(0, KEY_HASH_CHARS)));
+    const older = tokensOf({ evicted }).filter((token) => !freshKeys.has(token.slice(0, KEY_HASH_CHARS)));
+    const all = [...fresh, ...older].filter((token) => !remembered.has(token.slice(0, KEY_HASH_CHARS)));
+    if (all.length > MAX_EVICTED) {
+        console.warn(`SellerCloud trigger: watching more records than its state can hold (${all.length + Object.keys(seen).length}); ${all.length - MAX_EVICTED} of the least recently seen may be reported again. Narrow the trigger (warehouse, company or threshold).`);
+    }
+    return all.slice(0, MAX_EVICTED).join('').slice(0, MAX_EVICTED * tokenWidth);
+}
+
+function parseEvicted({ evicted }: { evicted: string }): Map<string, string> {
+    return new Map(tokensOf({ evicted }).map((token) => [token.slice(0, KEY_HASH_CHARS), token.slice(KEY_HASH_CHARS)]));
+}
+
+function tokensOf({ evicted }: { evicted: string }): string[] {
+    const width = KEY_HASH_CHARS + STATE_HASH_CHARS;
+    return Array.from({ length: Math.floor(evicted.length / width) }, (_, index) => evicted.slice(index * width, (index + 1) * width));
+}
+
+function shortHash({ text, length }: { text: string; length: number }): string {
+    return createHash('sha1').update(text).digest('hex').slice(0, length);
 }
 
 function sortByEventTime<T>({ emissions }: { emissions: TimedEmission<T>[] }): PollEmission<T>[] {
@@ -110,7 +163,7 @@ async function readState({ store, fingerprint }: { store: PollStore; fingerprint
     if (!isPollState(data) || data.fp !== fingerprint) {
         return null;
     }
-    return data;
+    return { ...data, evicted: data.evicted ?? '' };
 }
 
 function isPollState(value: unknown): value is PollState {
@@ -120,6 +173,7 @@ function isPollState(value: unknown): value is PollState {
     const candidate: Partial<Record<keyof PollState, unknown>> = Object.fromEntries(Object.entries(value));
     return candidate.v === STATE_VERSION
         && typeof candidate.fp === 'string'
+        && (candidate.evicted === undefined || typeof candidate.evicted === 'string')
         && typeof candidate.lastPollAt === 'number'
         && typeof candidate.seen === 'object' && candidate.seen !== null
         && (candidate.cursor === null || candidate.cursor === undefined || isCursor(candidate.cursor));
@@ -153,7 +207,10 @@ const STATE_VERSION = 2;
 // Covers a late poll and clock skew between this worker and SellerCloud.
 const OVERLAP_MS = 10 * 60 * 1000;
 const MAX_RESUME_GAP_MS = 6 * 60 * 60 * 1000;
-const MAX_SEEN_CHARS = 400 * 1024;
+const MAX_SEEN_CHARS = 340 * 1024;
+const KEY_HASH_CHARS = 8;
+const STATE_HASH_CHARS = 2;
+const MAX_EVICTED = 12000;
 const ENTRY_OVERHEAD_CHARS = 6;
 
 export const sellercloudPoller = { poll, baseline, enable, disable, fingerprintOf, toEventTime, OVERLAP_MS };
@@ -175,6 +232,7 @@ export type FetchResult<T> = {
     items: PolledItem<T>[];
     truncated: boolean;
     nextPage: number;
+    partialError?: string;
 };
 
 export type SeenEntry = [string, number];
@@ -201,6 +259,7 @@ type PollState = {
     fp: string;
     lastPollAt: number;
     seen: Record<string, SeenEntry>;
+    evicted: string;
     cursor: PollCursor | null;
 };
 

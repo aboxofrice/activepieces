@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sellercloudClient } from '../client';
+import { sellercloudListing } from '../listing';
 import { lowStock } from '../low-stock';
 import { FetchItems, PolledItem, PollStore, sellercloudPoller } from '../poller';
 
@@ -98,6 +100,72 @@ describe('sellercloudPoller', () => {
         source.records.push(record({ id: 2, state: '1' }));
         const emissions = await sellercloudPoller.poll({ store, fingerprint: FP, fetchItems: source.fetch, emitUnseen: false, retentionMs: DAY, overlapMs: sellercloudPoller.OVERLAP_MS, now: T0 + MINUTE });
         expect(emissions).toEqual([{ item: '1', previousState: '1' }]);
+    });
+});
+
+describe('sellercloudPoller round 2', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('reports a record once when it comes back twice in one poll (page shift)', async () => {
+        const store = memoryStore();
+        const source = fakeSource({ records: [] });
+        await sellercloudPoller.enable({ store, fingerprint: FP, fetchItems: source.fetch, retentionMs: DAY, sinceMs: 0, now: T0 });
+        source.records.push(record({ id: 5 }), record({ id: 6 }), record({ id: 5 }));
+        expect(await poll({ store, fetchItems: source.fetch, now: T0 + MINUTE })).toEqual(['5', '6']);
+    });
+
+    it('does not re-report records trimmed for space when they come back unchanged', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const store = memoryStore();
+        const lowProducts = Array.from({ length: 12000 }, (_, index) => ({ ...record({ id: index, state: 'low' }), key: `PDC-SKU-${String(index).padStart(8, '0')}-AWP|5` }));
+        const source = fakeSource({ records: [...lowProducts], maxPages: 1000 });
+        await sellercloudPoller.enable({ store, fingerprint: FP, fetchItems: source.fetch, retentionMs: 7 * DAY, sinceMs: 0, now: T0 });
+        const stored = await store.get<{ seen: Record<string, unknown>; evicted: string }>('sellercloud_poll_state');
+        expect(Object.keys(stored?.seen ?? {}).length).toBeLessThan(12000);
+        expect(stored?.evicted.length).toBeGreaterThan(0);
+        // The next day's bulk update touches every product again, still low.
+        const nextDay = await poll({ store, fetchItems: source.fetch, now: T0 + DAY });
+        expect(nextDay).toEqual([]);
+        // A trimmed product whose state did change is still reported.
+        source.records[0] = { ...lowProducts[0], state: 'ok' };
+        source.records[1] = { ...lowProducts[1], state: 'ok' };
+        const changed = await poll({ store, fetchItems: source.fetch, now: T0 + DAY + MINUTE });
+        expect(changed.length).toBeGreaterThan(0);
+        expect(changed.length).toBeLessThanOrEqual(2);
+        const size = Buffer.byteLength(JSON.stringify(await store.get('sellercloud_poll_state')), 'utf8');
+        expect(size).toBeLessThan(512 * 1024);
+    });
+
+    it('keeps the progress of a poll whose later page failed', async () => {
+        const store = memoryStore();
+        const source = fakeSource({ records: [] });
+        await sellercloudPoller.enable({ store, fingerprint: FP, fetchItems: source.fetch, retentionMs: DAY, sinceMs: 0, now: T0 });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const failing: FetchItems<string> = async ({ startPage }) => (startPage === 1
+            ? { items: [record({ id: 1 }), record({ id: 2 })], truncated: true, nextPage: 3, partialError: 'page 3 failed' }
+            : { items: [record({ id: 2 }), record({ id: 3 })], truncated: false, nextPage: 4 });
+        expect(await poll({ store, fetchItems: failing, now: T0 + MINUTE })).toEqual(['1', '2']);
+        const saved = await store.get<{ cursor: { page: number } | null }>('sellercloud_poll_state');
+        expect(saved?.cursor?.page).toBe(2);
+        expect(await poll({ store, fetchItems: failing, now: T0 + 2 * MINUTE })).toEqual(['3']);
+    });
+
+    it('returns the pages read when a later page fails, and throws when the first does', async () => {
+        const auth = { serverUrl: 'https://p.example.test/rest', username: 'u', password: 'p' };
+        vi.spyOn(sellercloudClient, 'request').mockImplementation(async ({ queryParams }) => {
+            const page = Number(queryParams?.['model.pageNumber']);
+            if (page >= 3) {
+                throw new Error('SellerCloud GET /Orders failed: 504');
+            }
+            return { Items: [{ ID: page * 10 }], TotalResults: 500 };
+        });
+        const partial = await sellercloudListing.listPages<{ ID: number }>({ auth, token: 't', path: '/Orders', maxPages: 5, keepPartialOnError: true });
+        expect(partial.items.map((item) => item.ID)).toEqual([10, 20]);
+        expect(partial).toMatchObject({ truncated: true, nextPage: 3, partialError: 'SellerCloud GET /Orders failed: 504' });
+        await expect(sellercloudListing.listPages({ auth, token: 't', path: '/Orders', maxPages: 5, startPage: 3, keepPartialOnError: true })).rejects.toThrow('504');
+        await expect(sellercloudListing.listPages({ auth, token: 't', path: '/Orders', maxPages: 5 })).rejects.toThrow('504');
     });
 });
 

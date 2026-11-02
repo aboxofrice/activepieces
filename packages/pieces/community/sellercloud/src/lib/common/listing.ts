@@ -1,19 +1,28 @@
 import { HttpMethod } from '@activepieces/pieces-common';
+import { tryCatch } from '@activepieces/shared';
 import { SellercloudAuthProps, sellercloudClient } from './client';
 
 // SellerCloud list endpoints cap pageSize at 50 regardless of what is asked for, so page
 // on the running total. `maxPages` bounds a single call against a rate-limited API; a
-// truncated result says which page to start from to read the rest.
-async function listPages<T>({ auth, token, path, query, arrayQuery, maxPages, startPage = 1 }: ListPagesParams): Promise<ListPagesResult<T>> {
+// truncated result says which page to start from to read the rest. With
+// `keepPartialOnError`, a page failing after earlier pages were read returns those pages
+// as a truncated result (with the error) so a poller can keep its progress.
+async function listPages<T>({ auth, token, path, query, arrayQuery, maxPages, startPage = 1, keepPartialOnError = false }: ListPagesParams): Promise<ListPagesResult<T>> {
     const firstPage = Math.max(1, Math.floor(startPage));
     const collect = async ({ pageNumber, collected }: { pageNumber: number; collected: T[] }): Promise<ListPagesResult<T>> => {
-        const page = await sellercloudClient.request<PagedResponse<T>>({
+        const { data: page, error } = await tryCatch(() => sellercloudClient.request<PagedResponse<T>>({
             auth,
             token,
             method: HttpMethod.GET,
             path: path + buildArrayQuery({ arrayQuery }),
             queryParams: { ...query, 'model.pageSize': PAGE_SIZE, 'model.pageNumber': pageNumber },
-        });
+        }));
+        if (error) {
+            if (!keepPartialOnError || pageNumber === firstPage) {
+                throw error;
+            }
+            return { items: collected, total: (firstPage - 1) * PAGE_SIZE + collected.length, truncated: true, nextPage: pageNumber, partialError: error.message };
+        }
         const items = page.Items ?? [];
         const all = [...collected, ...items];
         const total = page.TotalResults ?? (firstPage - 1) * PAGE_SIZE + all.length;
@@ -44,6 +53,7 @@ export type ListPagesResult<T> = {
     total: number;
     truncated: boolean;
     nextPage: number;
+    partialError?: string;
 };
 
 type PagedResponse<T> = {
@@ -59,4 +69,5 @@ type ListPagesParams = {
     arrayQuery?: Record<string, (string | number)[] | undefined>;
     maxPages: number;
     startPage?: number;
+    keepPartialOnError?: boolean;
 };

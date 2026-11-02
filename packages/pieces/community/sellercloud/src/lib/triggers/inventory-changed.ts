@@ -1,5 +1,5 @@
 import { createTrigger, Property, TriggerStrategy } from '@activepieces/pieces-framework';
-import { isNil } from '@activepieces/shared';
+import { isNil, tryCatch } from '@activepieces/shared';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { sellercloudClient } from '../common/client';
@@ -61,7 +61,7 @@ export const inventoryChanged = createTrigger({
     async onEnable(context) {
         await sellercloudPoller.enable({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now() - sellercloudPoller.OVERLAP_MS,
@@ -78,7 +78,7 @@ export const inventoryChanged = createTrigger({
         const watchingWarehouseOnly = parseSkus({ value: context.propsValue.skus }).length === 0;
         const emissions = await sellercloudPoller.poll({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             overlapMs: sellercloudPoller.OVERLAP_MS,
             // Watching a warehouse by "updated since", a product is often first seen when it
@@ -132,14 +132,18 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<I
         const recheck = skus.length === 0 && warehouseId !== null
             ? lowStock.skusToRecheck({ seen, returned: new Set(lowItems.map((item) => item.key)), warehouseId })
             : [];
-        const rechecked = recheck.length === 0 ? [] : (await sellercloudFeeds.inventoryBySku({
+        // The recovery re-read is best effort: failing it must not cost the low-stock results.
+        const { data: rechecked, error: recheckError } = recheck.length === 0 ? { data: [], error: null } : await tryCatch(async () => (await sellercloudFeeds.inventoryBySku({
             auth: sellercloudAuthProps(auth),
             token: await sellercloudClient.getToken({ auth: sellercloudAuthProps(auth), store }),
             skus: recheck,
             warehouseId,
             companies,
-        })).map(toItem);
-        return { truncated: page.truncated, nextPage: page.nextPage, items: [...lowItems, ...rechecked] };
+        })).map(toItem));
+        if (recheckError) {
+            console.warn(`SellerCloud low stock: re-reading remembered low products failed (${recheckError.message}); retried next poll.`);
+        }
+        return { truncated: page.truncated, nextPage: page.nextPage, partialError: page.partialError, items: [...lowItems, ...(rechecked ?? [])] };
     };
 }
 
@@ -147,10 +151,11 @@ function itemKey({ sku, warehouseId }: { sku: string; warehouseId: number | null
     return `${sku}|${warehouseId ?? 'all'}`;
 }
 
-function fingerprint({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string {
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
     return sellercloudPoller.fingerprintOf({
         trigger: 'inventory_changed',
         settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
             mode: propsValue.mode === 'CHANGED' ? 'CHANGED' : 'LOW_STOCK',
             skus: parseSkus({ value: propsValue.skus }).sort(),
             warehouse: isNil(propsValue.warehouse) ? null : Number(propsValue.warehouse),

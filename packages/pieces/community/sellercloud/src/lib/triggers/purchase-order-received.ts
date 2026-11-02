@@ -1,5 +1,6 @@
 import { createTrigger, Property, TriggerStrategy } from '@activepieces/pieces-framework';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
+import { sellercloudClient } from '../common/client';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { FetchItems, PollStore, sellercloudPoller } from '../common/poller';
 import { sellercloudRecords } from '../common/records';
@@ -27,7 +28,7 @@ export const purchaseOrderReceived = createTrigger({
     async onEnable(context) {
         await sellercloudPoller.enable({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now(),
@@ -43,7 +44,7 @@ export const purchaseOrderReceived = createTrigger({
     async run(context) {
         const emissions = await sellercloudPoller.poll({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             emitUnseen: true,
             retentionMs: RETENTION_MS,
@@ -78,16 +79,17 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<R
                 data: sellercloudRecords.flattenPurchaseOrder({ po }),
             };
         });
-        return { truncated: page.truncated, nextPage: page.nextPage, items };
+        return { truncated: page.truncated, nextPage: page.nextPage, partialError: page.partialError, items };
     };
 }
 
 // Whether partial receipts are reported only filters emissions; the remembered receiving
 // state is the same either way, so it is left out.
-function fingerprint({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string {
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
     return sellercloudPoller.fingerprintOf({
         trigger: 'purchase_order_received',
         settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
             warehouses: (propsValue.warehouses ?? []).map(Number).sort(),
             companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
         },

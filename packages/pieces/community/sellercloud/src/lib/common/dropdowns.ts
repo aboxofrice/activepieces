@@ -81,16 +81,19 @@ function probeCandidates({ known }: { known: number[] }): number[] {
     if (sorted.length === 0) {
         return [];
     }
-    const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
     const gaps = sorted.slice(1).flatMap((id, index) => {
         const previous = sorted[index];
-        return id - previous - 1 <= COMPANY_PROBE_MAX_GAP ? range(previous + 1, id - 1) : [];
+        return id - previous - 1 <= COMPANY_PROBE_MAX_GAP ? range({ from: previous + 1, to: id - 1 }) : [];
     });
     const edges = [
-        ...range(sorted[sorted.length - 1] + 1, sorted[sorted.length - 1] + COMPANY_PROBE_MARGIN),
-        ...range(Math.max(1, sorted[0] - COMPANY_PROBE_MARGIN), sorted[0] - 1),
+        ...range({ from: sorted[sorted.length - 1] + 1, to: sorted[sorted.length - 1] + COMPANY_PROBE_MARGIN }),
+        ...range({ from: Math.max(1, sorted[0] - COMPANY_PROBE_MARGIN), to: sorted[0] - 1 }),
     ];
     return unique([...gaps, ...edges]).slice(0, COMPANY_PROBE_MAX_CALLS);
+}
+
+function range({ from, to }: { from: number; to: number }): number[] {
+    return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
 }
 
 function unique(values: number[]): number[] {

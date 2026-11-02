@@ -1,5 +1,6 @@
 import { createTrigger, TriggerStrategy } from '@activepieces/pieces-framework';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
+import { sellercloudClient } from '../common/client';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { FetchItems, PollStore, sellercloudPoller } from '../common/poller';
 import { FlatOrder, sellercloudRecords } from '../common/records';
@@ -26,7 +27,7 @@ export const newOrder = createTrigger({
     async onEnable(context) {
         await sellercloudPoller.enable({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue, maxPages: MAX_PAGES }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now() - OVERLAP_MS,
@@ -43,7 +44,7 @@ export const newOrder = createTrigger({
     async run(context) {
         const emissions = await sellercloudPoller.poll({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue, maxPages: MAX_PAGES }),
             emitUnseen: true,
             retentionMs: RETENTION_MS,
@@ -69,6 +70,7 @@ function buildFetch({ auth, store, propsValue, maxPages }: BuildFetchParams): Fe
         return {
             truncated: page.truncated,
             nextPage: page.nextPage,
+            partialError: page.partialError,
             items: page.items.map((order) => ({
                 key: String(order.ID),
                 state: 'seen',
@@ -80,10 +82,11 @@ function buildFetch({ auth, store, propsValue, maxPages }: BuildFetchParams): Fe
     };
 }
 
-function fingerprint({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string {
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
     return sellercloudPoller.fingerprintOf({
         trigger: 'new_order',
         settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
             channels: (propsValue.channels ?? []).map(Number).sort(),
             companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
         },

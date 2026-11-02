@@ -17,6 +17,7 @@ async function orders({ auth, store, since, dateField, channels, companies, maxP
         arrayQuery: { 'model.channel': channels, 'model.companyID': companies },
         maxPages,
         startPage,
+        keepPartialOnError: true,
     });
 }
 
@@ -30,6 +31,7 @@ async function returns({ auth, store, since, channels, companies, maxPages, star
         arrayQuery: { 'model.orderSources': channels, 'model.companyIDList': companies },
         maxPages,
         startPage,
+        keepPartialOnError: true,
     });
 }
 
@@ -43,6 +45,7 @@ async function receivedPurchaseOrders({ auth, store, since, companies, warehouse
         arrayQuery: { 'model.companyIDList': companies, 'model.receiveWarehouseID': warehouses },
         maxPages,
         startPage,
+        keepPartialOnError: true,
     });
 }
 
@@ -61,6 +64,7 @@ async function inventory({ auth, store, since, skus, warehouseId, companies, max
             arrayQuery,
             maxPages,
             startPage,
+            keepPartialOnError: true,
         });
     }
     const items = await inventoryBySku({ auth, token, skus, warehouseId, companies });

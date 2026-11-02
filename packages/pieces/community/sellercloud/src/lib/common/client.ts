@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { HttpError, HttpMethod, QueryParams, httpClient } from '@activepieces/pieces-common';
-import { tryCatch } from '@activepieces/shared';
+import { tryCatch, tryCatchSync } from '@activepieces/shared';
 
 // Tokens last an hour and /token is itself rate limited, so a flow that runs many
 // actions must not log in once per request.
@@ -9,7 +9,7 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 // `store` is the flow's key-value store. The engine forks a process per sandbox, so the
 // module cache dies with the run; passing the store keeps one login alive across runs.
 async function getToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<string> {
-    const cacheKey = connectionKey({ auth });
+    const cacheKey = tokenKey({ auth });
     const cached = tokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
         return cached.token;
@@ -28,21 +28,50 @@ async function getToken({ auth, store }: { auth: SellercloudAuthProps; store?: T
     return entry.token;
 }
 
-// The framework's HttpError serialises the request body into its message, and the login
-// body is the password. Only the status and SellerCloud's own reply may leave this function.
-async function fetchToken({ auth }: { auth: SellercloudAuthProps }): Promise<CreateTokenResponse> {
-    const { data, error } = await tryCatch(() => sendWithRetry<CreateTokenResponse>({
-        request: {
-            method: HttpMethod.POST,
-            url: `${apiBase({ auth })}/token`,
-            headers: { 'Content-Type': 'application/json' },
-            body: { Username: auth.username, Password: auth.password },
-        },
+// Login does not go through the framework's httpClient: on failure it console.errors the
+// whole HttpError, request body included, so the password would land in the worker logs.
+// Only the status and SellerCloud's own reply may leave this function.
+async function fetchToken({ auth, attempt = 1 }: { auth: SellercloudAuthProps; attempt?: number }): Promise<CreateTokenResponse> {
+    const { data: response, error } = await tryCatch(() => postForm({
+        url: `${apiBase({ auth })}/token`,
+        contentType: 'application/json',
+        body: JSON.stringify({ Username: auth.username, Password: auth.password }),
     }));
     if (error) {
+        if (attempt < MAX_ATTEMPTS) {
+            await sleep({ ms: BASE_BACKOFF_MS * 2 ** (attempt - 1) });
+            return fetchToken({ auth, attempt: attempt + 1 });
+        }
         throw new Error(`SellerCloud login failed: ${safeErrorMessage({ error, auth })}`);
     }
-    return data;
+    const token = recordField({ value: response.body, field: 'access_token' });
+    if (response.status >= 200 && response.status < 300 && token !== null) {
+        const expiresIn = numberField({ value: response.body, field: 'expires_in' });
+        return { access_token: token, ...(expiresIn === null ? {} : { expires_in: expiresIn }) };
+    }
+    const delay = retryDelayMs({ status: response.status, body: response.body, attempt, safeToRepeat: true });
+    if (delay === null) {
+        throw new Error(`SellerCloud login failed: ${redact({ text: describeResponse({ status: response.status, body: response.body }), auth })}`);
+    }
+    await sleep({ ms: delay });
+    return fetchToken({ auth, attempt: attempt + 1 });
+}
+
+// A plain fetch with a timeout; the reply body is parsed as JSON when it is JSON.
+async function postForm({ url, contentType, body, headers = {} }: { url: string; contentType: string; body: string; headers?: Record<string, string> }): Promise<{ status: number; body: unknown }> {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': contentType, Accept: 'application/json' },
+        body,
+        signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    const parsed = tryCatchSync(() => JSON.parse(text));
+    return { status: response.status, body: parsed.error ? text : parsed.data };
+}
+
+function sleep({ ms }: { ms: number }): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // A flow can hold steps on different SellerCloud connections, and the store is shared by
@@ -50,6 +79,12 @@ async function fetchToken({ auth }: { auth: SellercloudAuthProps }): Promise<Cre
 // not written into the key.
 function connectionKey({ auth }: { auth: SellercloudAuthProps }): string {
     return createHash('sha256').update(`${apiBase({ auth })}|${auth.username.trim().toLowerCase()}`).digest('hex').slice(0, 24);
+}
+
+// The token cache also covers the password, so a connection saved with a wrong password
+// cannot pass validation on a token cached for the right one.
+function tokenKey({ auth }: { auth: SellercloudAuthProps }): string {
+    return createHash('sha256').update(`${connectionKey({ auth })}|${auth.password}`).digest('hex').slice(0, 24);
 }
 
 function tokenStoreKey({ cacheKey }: { cacheKey: string }): string {
@@ -78,7 +113,9 @@ async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<
     if (!error) {
         return data.body;
     }
-    const delay = retryDelayMs({ error, attempt, safeToRepeat: isSafeToRepeat({ request }) });
+    const delay = error instanceof HttpError
+        ? retryDelayMs({ status: error.response.status, body: error.response.body, attempt, safeToRepeat: isSafeToRepeat({ request }) })
+        : null;
     if (delay === null) {
         throw error;
     }
@@ -92,14 +129,13 @@ async function sendWithRetry<T>({ request, attempt = 1 }: { request: Parameters<
 // SKUs at minus their original stock. A write is only retried on SellerCloud's rate-limit
 // reply, which it sends before doing any work; any other 409 is a real conflict.
 function isSafeToRepeat({ request }: { request: Parameters<typeof httpClient.sendRequest>[0] }): boolean {
-    return request.method === HttpMethod.GET || /\/token\/?$/.test(request.url);
+    return request.method === HttpMethod.GET;
 }
 
-function retryDelayMs({ error, attempt, safeToRepeat }: { error: Error; attempt: number; safeToRepeat: boolean }): number | null {
-    if (attempt >= MAX_ATTEMPTS || !(error instanceof HttpError)) {
+function retryDelayMs({ status, body, attempt, safeToRepeat }: { status: number; body: unknown; attempt: number; safeToRepeat: boolean }): number | null {
+    if (attempt >= MAX_ATTEMPTS) {
         return null;
     }
-    const { status, body } = error.response;
     if (isRateLimited({ status, body })) {
         const wait = rateLimitWaitMs({ body });
         return wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
@@ -128,6 +164,14 @@ function rateLimitWaitMs({ body }: { body: unknown }): number {
         return BASE_BACKOFF_MS;
     }
     return Math.max(BASE_BACKOFF_MS, resetAt - Date.now() + RATE_LIMIT_PADDING_MS);
+}
+
+function numberField({ value, field }: { value: unknown; field: string }): number | null {
+    if (typeof value !== 'object' || value === null || !(field in value)) {
+        return null;
+    }
+    const found: unknown = Object.entries(value).find(([key]) => key === field)?.[1];
+    return typeof found === 'number' && Number.isFinite(found) ? found : null;
 }
 
 function recordField({ value, field }: { value: unknown; field: string }): string | null {
@@ -182,7 +226,7 @@ function isUnauthorized({ error }: { error: Error }): boolean {
 }
 
 async function invalidateToken({ auth, store }: { auth: SellercloudAuthProps; store?: TokenStore }): Promise<void> {
-    const cacheKey = connectionKey({ auth });
+    const cacheKey = tokenKey({ auth });
     tokenCache.delete(cacheKey);
     if (store) {
         await tryCatch(() => store.put(tokenStoreKey({ cacheKey }), null));
@@ -262,7 +306,10 @@ function describeError({ error }: { error: Error }): string {
     if (!(error instanceof HttpError)) {
         return error.message;
     }
-    const { status, body } = error.response;
+    return describeResponse({ status: error.response.status, body: error.response.body });
+}
+
+function describeResponse({ status, body }: { status: number; body: unknown }): string {
     if (isRateLimited({ status, body })) {
         const resetTime = recordField({ value: body, field: 'RateLimitResetTime' });
         return `rate limited by SellerCloud${resetTime ? `, resets at ${resetTime}` : ''}`;
@@ -274,9 +321,12 @@ function describeError({ error }: { error: Error }): string {
 // Every message that can reach a step error or a dropdown goes through here, so a reply
 // that echoes a credential back is masked as well.
 function safeErrorMessage({ error, auth }: { error: unknown; auth?: SellercloudAuthProps }): string {
-    const message = error instanceof Error ? describeError({ error }) : String(error);
+    return redact({ text: error instanceof Error ? describeError({ error }) : String(error), auth });
+}
+
+function redact({ text, auth }: { text: string; auth?: SellercloudAuthProps }): string {
     const secrets = [auth?.password, auth?.pinCode].filter((secret): secret is string => typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH);
-    return secrets.reduce((text, secret) => text.split(secret).join('[redacted]'), message);
+    return secrets.reduce((result, secret) => result.split(secret).join('[redacted]'), text);
 }
 
 const MAX_PAGE_SIZE = 500;
@@ -293,6 +343,7 @@ const MAX_ERROR_BODY_CHARS = 600;
 const MIN_SECRET_LENGTH = 3;
 const TRANSIENT_STATUSES = [502, 503, 504];
 const MAX_ATTEMPTS = 4;
+const TOKEN_TIMEOUT_MS = 30 * 1000;
 const BASE_BACKOFF_MS = 2000;
 const RATE_LIMIT_PADDING_MS = 1000;
 // A flow step has a budget, so a long lockout should fail with the reset time rather than hang.
@@ -308,6 +359,7 @@ export const sellercloudClient = {
     apiBase,
     safeErrorMessage,
     isRateLimited,
+    connectionKey,
 };
 
 export type SellercloudAuthProps = {

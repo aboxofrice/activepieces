@@ -1,5 +1,6 @@
 import { createTrigger, TriggerStrategy } from '@activepieces/pieces-framework';
 import { sellercloudAuth, sellercloudAuthProps, SellercloudAuthValue } from '../auth';
+import { sellercloudClient } from '../common/client';
 import { sellercloudDropdowns } from '../common/dropdowns';
 import { FetchItems, PollStore, sellercloudPoller } from '../common/poller';
 import { sellercloudRecords } from '../common/records';
@@ -21,7 +22,7 @@ export const newReturn = createTrigger({
     async onEnable(context) {
         await sellercloudPoller.enable({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             retentionMs: RETENTION_MS,
             sinceMs: Date.now(),
@@ -37,7 +38,7 @@ export const newReturn = createTrigger({
     async run(context) {
         const emissions = await sellercloudPoller.poll({
             store: context.store,
-            fingerprint: fingerprint({ propsValue: context.propsValue }),
+            fingerprint: fingerprint({ auth: context.auth, propsValue: context.propsValue }),
             fetchItems: buildFetch({ auth: context.auth, store: context.store, propsValue: context.propsValue }),
             emitUnseen: true,
             retentionMs: RETENTION_MS,
@@ -64,6 +65,7 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<R
         return {
             truncated: page.truncated,
             nextPage: page.nextPage,
+            partialError: page.partialError,
             items: page.items.map((rma) => ({
                 key: String(rma.ID),
                 state: 'seen',
@@ -75,10 +77,11 @@ function buildFetch({ auth, store, propsValue }: BuildFetchParams): FetchItems<R
     };
 }
 
-function fingerprint({ propsValue }: { propsValue: BuildFetchParams['propsValue'] }): string {
+function fingerprint({ auth, propsValue }: { auth: SellercloudAuthValue; propsValue: BuildFetchParams['propsValue'] }): string {
     return sellercloudPoller.fingerprintOf({
         trigger: 'new_return',
         settings: {
+            connection: sellercloudClient.connectionKey({ auth: sellercloudAuthProps(auth) }),
             channels: (propsValue.channels ?? []).map(Number).sort(),
             companies: sellercloudDropdowns.resolveCompanyIds({ selected: propsValue.companies, other: propsValue.otherCompanyIds })?.sort() ?? null,
         },
