@@ -51,8 +51,10 @@ describe('turn14InventoryCheck.runInventoryCheck', () => {
         expect(second.finished).toBe(true);
         expect(second.outputs.map((output) => output['item_id'])).toEqual(['2']);
         expect(calls).toEqual([{ window: 15, startPage: 1 }, { window: 15, startPage: 2 }]);
+        // The watermark is the time the scan started, not when it finished.
         const state = await store.get<{ lastPollAt: number; resume?: unknown }>('turn14_inventory_changed_state');
-        expect(state).toEqual({ lastPollAt: NOW + 3 * MINUTE });
+        expect(state?.lastPollAt).toBe(NOW);
+        expect(state?.resume).toBeUndefined();
     });
 
     it('marks outputs truncated after more than a day without a check', async () => {
@@ -71,5 +73,29 @@ describe('turn14InventoryCheck.runInventoryCheck', () => {
         await turn14InventoryCheck.seedInventoryState(params({ store, now: NOW, readUpdates: reader({ pages: [rows] }) }));
         const result = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 5 * MINUTE, readUpdates: reader({ pages: [[...rows, row({ id: '3', qty: 3 })]] }) }));
         expect(result.outputs.map((output) => output['item_id'])).toEqual(['3']);
+    });
+
+    it('does not refire unchanged items after a gap longer than the window', async () => {
+        const store = memoryStore();
+        await store.put('turn14_inventory_changed_state', { lastPollAt: NOW - 5 * MINUTE });
+        const rows = [row({ id: '1', qty: 1 })];
+        expect((await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW, readUpdates: reader({ pages: [rows] }) }))).outputs).toHaveLength(1);
+        const gapOk = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 5 * MINUTE, readUpdates: reader({ pages: [[]] }) }));
+        expect(gapOk.outputs).toHaveLength(0);
+        const afterGap = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 125 * MINUTE, readUpdates: reader({ pages: [rows] }) }));
+        expect(afterGap.outputs).toHaveLength(0);
+        const nextDay = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 26 * 60 * MINUTE, readUpdates: reader({ pages: [rows] }) }));
+        expect(nextDay.outputs).toHaveLength(1);
+    });
+
+    it('rewrites only the current hour of the seen set', async () => {
+        const store = memoryStore();
+        await store.put('turn14_inventory_changed_state', { lastPollAt: NOW - 5 * MINUTE });
+        await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW, readUpdates: reader({ pages: [[row({ id: '1', qty: 1 })]] }) }));
+        store.log.length = 0;
+        await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 65 * MINUTE, readUpdates: reader({ pages: [[row({ id: '2', qty: 2 })]] }) }));
+        const hour = Math.floor((NOW + 65 * MINUTE) / (60 * MINUTE));
+        const chunkWrites = store.log.filter((entry) => entry.startsWith('put:turn14_inventory_seen_') && !entry.endsWith('_meta'));
+        expect(chunkWrites).toEqual([`put:turn14_inventory_seen_${hour}_0`]);
     });
 });

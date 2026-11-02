@@ -6,7 +6,19 @@ const NOW = Date.parse('2026-11-01T15:00:00Z');
 const TODAY = '2026-11-01';
 
 function changes({ byDate }: { byDate: Record<string, string[]> }): FetchChangedIds {
-    return async ({ date }) => ({ itemIds: byDate[date] ?? [], truncated: false });
+    return async ({ date }) => ({ itemIds: byDate[date] ?? [], nextPage: null });
+}
+
+// A day split into pages; each call reads `perCall` pages from startPage.
+function pagedChanges({ pages, perCall, calls }: { pages: string[][]; perCall: number; calls?: { startPage: number; deadline: number }[] }): FetchChangedIds {
+    return async ({ date, startPage, deadline }) => {
+        if (date !== TODAY) {
+            return { itemIds: [], nextPage: null };
+        }
+        calls?.push({ startPage, deadline });
+        const last = Math.min(pages.length, startPage + perCall - 1);
+        return { itemIds: pages.slice(startPage - 1, last).flat(), nextPage: last >= pages.length ? null : last + 1 };
+    };
 }
 
 function pricer({ log, failWith, budget }: { log: string[]; failWith?: Error; budget?: number }): PriceItems {
@@ -61,7 +73,7 @@ describe('turn14PriceCheck.runPriceCheck', () => {
 
     it('marks rows truncated when a day\'s change list was not read in full', async () => {
         const store = memoryStore();
-        const fetchChangedIds: FetchChangedIds = async ({ date }) => ({ itemIds: date === TODAY ? ['1'] : [], truncated: date === TODAY });
+        const fetchChangedIds: FetchChangedIds = async ({ date }) => ({ itemIds: date === TODAY ? ['1'] : [], nextPage: date === TODAY ? 2 : null });
         const result = await turn14PriceCheck.runPriceCheck({ store, now: NOW, deadline: NOW + 40000, fetchChangedIds, priceItems: pricer({ log: [] }), includePricing: false, maxLookups: 0 });
         expect(result.truncated).toBe(true);
         expect(result.rows[0].truncated).toBe(true);
@@ -73,5 +85,44 @@ describe('turn14PriceCheck.runPriceCheck', () => {
         await turn14PriceCheck.seedPriceState({ store, now: NOW, deadline: NOW + 40000, fetchChangedIds });
         const result = await turn14PriceCheck.runPriceCheck({ store, now: NOW, deadline: NOW + 40000, fetchChangedIds: changes({ byDate: { [TODAY]: ['1', '2', '3'] } }), priceItems: pricer({ log: [] }), includePricing: true, maxLookups: 10 });
         expect(result.rows.map((row) => row.item_id)).toEqual(['3']);
+    });
+
+    it('continues a long day from its page cursor and wraps to page 1 after the last page', async () => {
+        const store = memoryStore();
+        const calls: { startPage: number; deadline: number }[] = [];
+        const fetchChangedIds = pagedChanges({ pages: [['1'], ['2'], ['3'], ['4'], ['5']], perCall: 2, calls });
+        const run = (offset: number) => turn14PriceCheck.runPriceCheck({ store, now: NOW + offset, deadline: NOW + offset + 40000, fetchChangedIds, priceItems: pricer({ log: [] }), includePricing: false, maxLookups: 0 });
+        const first = await run(0);
+        const second = await run(60000);
+        const third = await run(120000);
+        const fourth = await run(180000);
+        expect([first, second, third].map((result) => result.rows.map((row) => row.item_id))).toEqual([['1', '2'], ['3', '4'], ['5']]);
+        expect([first.truncated, second.truncated, third.truncated]).toEqual([true, true, false]);
+        expect(calls.map((call) => call.startPage)).toEqual([1, 3, 5, 1]);
+        expect(fourth.rows).toEqual([]);
+    });
+
+    it('reserves part of the time budget for price lookups', async () => {
+        const store = memoryStore();
+        const calls: { startPage: number; deadline: number }[] = [];
+        const lookupDeadlines: number[] = [];
+        const priceItems: PriceItems = async ({ itemIds, deadline }) => {
+            lookupDeadlines.push(deadline);
+            return itemIds.map((itemId) => ({ item_id: itemId, error: null }));
+        };
+        await turn14PriceCheck.runPriceCheck({ store, now: NOW, deadline: NOW + 40000, fetchChangedIds: pagedChanges({ pages: [['1']], perCall: 1, calls }), priceItems, includePricing: true, maxLookups: 10 });
+        expect(calls[0].deadline).toBeLessThan(NOW + 30000);
+        expect(lookupDeadlines).toEqual([NOW + 40000]);
+    });
+
+    it('keeps seeding a day that could not be read in full when enabled, without firing old changes', async () => {
+        const store = memoryStore();
+        const pages = [['1'], ['2'], ['3']];
+        await turn14PriceCheck.seedPriceState({ store, now: NOW, deadline: NOW + 40000, fetchChangedIds: pagedChanges({ pages, perCall: 1 }) });
+        const run = (offset: number, fetchChangedIds: FetchChangedIds) => turn14PriceCheck.runPriceCheck({ store, now: NOW + offset, deadline: NOW + offset + 40000, fetchChangedIds, priceItems: pricer({ log: [] }), includePricing: false, maxLookups: 0 });
+        expect((await run(60000, pagedChanges({ pages, perCall: 1 }))).rows).toEqual([]);
+        expect((await run(120000, pagedChanges({ pages, perCall: 1 }))).rows).toEqual([]);
+        const later = await run(180000, pagedChanges({ pages: [['1', '4'], ['2'], ['3']], perCall: 3 }));
+        expect(later.rows.map((row) => row.item_id)).toEqual(['4']);
     });
 });
