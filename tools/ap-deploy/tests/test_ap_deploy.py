@@ -235,6 +235,21 @@ class InterruptedApplyTests(unittest.TestCase):
         self.ap.staff_edit(self.fid, 'return 99')
         self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
 
+    def test_failed_import_clears_pending_so_staff_edit_is_drift(self):
+        real = self.ap.operate
+
+        def import_fails(flow_id, op_type, request):
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 500: import rejected')
+            return real(flow_id, op_type, request)
+        self.ap.operate = import_fails
+        r = apply(self.ap, self.repo)['a']
+        self.assertIn('import rejected', r['error'])
+        self.assertNotIn('applyingSourceHash', self.ap.flow(self.fid)['metadata'])
+        self.ap.operate = real
+        self.ap.staff_edit(self.fid, 'return 2')  # same content as the git version
+        self.assertEqual(evaluate(self.ap, self.repo)['a']['state'], 'drifted')
+
     def test_died_between_import_and_recording_hash(self):
         apply(self.ap, self.repo)
         meta = self.ap._flows[self.fid]['metadata']
@@ -415,6 +430,24 @@ class RedactionTests(unittest.TestCase):
         for key in ('X-SC-Pass', 'x_api_key', 'APIKey', 'accessToken', 'client_secret', 'sftpPassword', 'auth'):
             out, found = self.redact({'headers': {key: 'ab12'}})
             self.assertEqual(out['settings']['input']['headers'][key], R, key)
+
+    def test_round3_leaks(self):
+        R = ap_deploy.REDACTED
+        for q in ('api_token', 'auth_token', 'apiToken', 'refresh_token', 'client_secret', 'x_sig'):
+            out, found = self.redact({'url': f'https://api.example.com/v1?a=1&{q}=v1&b=2'})
+            self.assertEqual(out['settings']['input']['url'], f'https://api.example.com/v1?a=1&{q}={R}&b=2', q)
+        for key in ('auth_key', 'Cookie', 'session-cookie'):
+            out, _ = self.redact({'headers': {key: 'abc'}})
+            self.assertEqual(out['settings']['input']['headers'][key], R, key)
+        aws = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+        out, found = self.redact({'note': f'secret {aws} end'})
+        self.assertEqual(out['settings']['input']['note'], f'secret {R} end')
+
+    def test_round3_no_false_positives(self):
+        inp = {'url': 'https://example.com/search?keyword=pads&monkey=1&page=2',
+               'path': '/usr/src/app/cache/v11/common/node_modules/x/index.js'}
+        out, found = self.redact(inp)
+        self.assertEqual(out['settings']['input'], inp)
 
     def test_no_false_positives(self):
         hexid = '8f14e45fceea167a5a36dedd4bea2543'

@@ -524,7 +524,13 @@ def _apply_one(client, rec):
             'folderName': MANAGED_FOLDER, 'metadata': {'deployKey': rec['key'], **pending}})
     else:
         _update_metadata(client, client.flow(flow['id']), pending)
-    client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
+    try:
+        client.operate(flow['id'], 'IMPORT_FLOW', to_import_request(flow_def))
+    except Exception:
+        # Nothing was imported, so there is no half-applied version to finish. Leaving the pending
+        # hash would let a later staff edit be mistaken for our import and overwritten.
+        _update_metadata(client, client.flow(flow['id']), {}, drop=('applyingSourceHash', 'applyingHash'))
+        raise
     imported = client.flow(flow['id'])
     _update_metadata(client, imported, {'applyingHash': target_hash(imported)})
     published = client.operate(flow['id'], 'LOCK_AND_PUBLISH', {'status': rec['desired']})
@@ -657,6 +663,13 @@ def _is_secret_key(key):
     return last in SECRET_LAST_WORDS or (last == 'key' and prev in KEY_PREFIXES) or ''.join(words[-2:]) in SECRET_LAST_WORDS
 
 
+def _is_secret_param(name):
+    """Query parameter names judged by their last word, like field names (api_token, apiToken,
+    refresh_token, auth_key), plus bare credential names (key, sig); not keyword or monkey."""
+    words = [w.lower() for w in KEY_WORD_RE.findall(name)]
+    return bool(words) and (words[-1] in BARE_SECRET_PARAMS or words[-1] in SECRET_LAST_WORDS or _is_secret_key(name))
+
+
 def _only_templates(value):
     rest = TEMPLATE_RE.sub('', value)
     return not re.sub(r'(?i)\b(bearer|basic|token)\b', '', rest).strip()
@@ -665,9 +678,11 @@ def _only_templates(value):
 def _redact_text(text):
     text = BEARER_RE.sub(lambda m: m.group(1) + REDACTED, text)
     text = URL_USERINFO_RE.sub(lambda m: m.group(1) + REDACTED + '@', text)
-    text = QUERY_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = QUERY_PARAM_RE.sub(lambda m: m.group(1) + REDACTED if _is_secret_param(m.group(2)) else m.group(0), text)
     text = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + REDACTED + m.group(2), text)
     text = KNOWN_TOKEN_RE.sub(REDACTED, text)
+    keep = [m.span(2) for m in GOOGLE_ID_RE.finditer(text)]
+    text = AWS_SECRET_RE.sub(lambda m: m.group(0) if any(a <= m.start() < b for a, b in keep) else REDACTED, text)
     keep = [m.span(2) for m in GOOGLE_ID_RE.finditer(text)]
 
     def long_token(m):
@@ -695,16 +710,17 @@ def _looks_random(s):
 
 KEY_WORD_RE = re.compile(r'[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+')
 SECRET_LAST_WORDS = {'password', 'passwd', 'pass', 'pwd', 'passphrase', 'passcode', 'secret', 'token',
-                     'authorization', 'auth', 'credential', 'credentials', 'apikey', 'signature', 'privatekey'}
-KEY_PREFIXES = {'api', 'private', 'access', 'secret', 'app', 'client', 'license', 'subscription', 'signing', 'encryption'}
+                     'authorization', 'auth', 'credential', 'credentials', 'apikey', 'signature', 'privatekey', 'cookie'}
+KEY_PREFIXES = {'api', 'private', 'access', 'secret', 'app', 'client', 'license', 'subscription', 'signing', 'encryption', 'auth'}
 # Record ids are kept when they are the whole value of a field named like an id.
 ID_KEY_RE = re.compile(r'^(?:[Ii][Dd]s?|uuid|UUID)$|[_-](?:[Ii][Dd]s?|uuid|UUID)$|[a-z0-9](?:Id|ID|Ids|IDs|Uuid)$')
 ID_VALUE_RE = re.compile(r'[A-Za-z0-9_-]{8,}')
 TEMPLATE_RE = re.compile(r'\{\{.*?\}\}', re.S)
 BEARER_RE = re.compile(r'(?i)\b((?:bearer|basic)\s+)(?!\{\{)[A-Za-z0-9._~+/=-]{8,}')
 URL_USERINFO_RE = re.compile(r'''(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@'"{}]+:)(?!\{\{)[^@\s/'"]+@''')
-QUERY_SECRET_RE = re.compile(
-    r'''(?i)([?&](?:api[_-]?key|apikey|key|token|access[_-]?token|auth|secret|client[_-]?secret|password|pass|pwd|sig|signature)=)(?!\{\{)[^&#\s"']+''')
+# Query parameters; the name decides (see _is_secret_param): ?key=, ?api_token=, ?apiToken=, ?refresh_token=.
+QUERY_PARAM_RE = re.compile(r'''([?&]([A-Za-z0-9_-]+)=)(?!\{\{)([^&#\s"']+)''')
+BARE_SECRET_PARAMS = {'key', 'sig', 'token', 'auth', 'secret', 'pass', 'password', 'pwd', 'signature'}
 # password = "..." / apiKey: '...' inside code steps or free text.
 ASSIGNED_SECRET_RE = re.compile(
     r'''(?i)((?:passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*)(["'])(?!\{\{)[^"'\n]{4,}\2''')
@@ -712,6 +728,8 @@ KNOWN_TOKEN_RE = re.compile(
     r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}'
     r'|AKIA[0-9A-Z]{16}|shp(?:at|ss|ca|pa)_[0-9a-fA-F]{32}|AIza[0-9A-Za-z_-]{35})\b')
 LONG_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])')
+# AWS secret access keys: exactly 40 chars of base64 alphabet (may contain / and +).
+AWS_SECRET_RE = re.compile(r'(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]*[0-9])(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])')
 HEX_RE = re.compile(r'[0-9a-fA-F]{32,}')
 # Google Sheets / Docs / Drive ids inside their URLs are document ids, not credentials.
 GOOGLE_ID_RE = re.compile(r'(https?://(?:docs|drive|sheets)\.google\.com/[^\s"\']*?(?:/d/|/folders/|[?&]id=))([A-Za-z0-9_-]{20,})')
