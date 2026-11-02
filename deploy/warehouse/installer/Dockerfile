@@ -2,7 +2,7 @@
 # Docker. Build from deploy/warehouse:
 #   docker build -f installer/Dockerfile --build-arg AP_IMAGE=ghcr.io/aboxofrice/activepieces:<sha> \
 #     -t ghcr.io/aboxofrice/ap-installer:<sha> .
-FROM alpine:3.20
+FROM alpine:3.20.10
 
 RUN apk add --no-cache bash curl openssl python3 docker-cli docker-cli-compose
 

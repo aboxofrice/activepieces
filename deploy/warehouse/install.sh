@@ -42,44 +42,84 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # Settings an installer run may pass with -e and that must survive into .env for the helper services.
 PASSTHROUGH_VARS="GITHUB_TOKEN FLOWS_REPO_URL FLOWS_BRANCH AP_DEPLOY_TARGET SYNC_INTERVAL_MINUTES EXPORT_HOUR
 AP_SYNC_IMAGE AP_BACKUP_IMAGE BACKUP_REMOTE_TYPE BACKUP_TIME BACKUP_DRIVE_FOLDER
-BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL"
+BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
+# AP_* keys docker-compose.yml passes to the app; any other AP_* key in .env is ignored there.
+APP_ENV_KEYS=" AP_PORT AP_FRONTEND_URL AP_EDITION AP_ENVIRONMENT AP_EXECUTION_MODE AP_ENCRYPTION_KEY AP_JWT_SECRET
+AP_POSTGRES_DATABASE AP_POSTGRES_HOST AP_POSTGRES_PORT AP_POSTGRES_USERNAME AP_POSTGRES_PASSWORD AP_REDIS_HOST
+AP_REDIS_PORT AP_TELEMETRY_ENABLED AP_TRIGGER_DEFAULT_POLL_INTERVAL AP_WORKER_CONCURRENCY AP_REUSE_SANDBOX
+AP_FLOW_TIMEOUT_SECONDS AP_WEBHOOK_TIMEOUT_SECONDS AP_IMAGE AP_HTTP_PORT AP_SYNC_IMAGE AP_BACKUP_IMAGE AP_DEPLOY_TARGET "
+
 rand_hex() { openssl rand -hex "$1"; }
 rand_pw() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c "$1"; }
-# Values may be wrapped in single quotes in .env (needed for $, # or spaces); strip them.
+# .env values follow docker compose's dotenv rules: plain, '...' (literal) or "..." (\" \\ escapes,
+# $$ for a literal $). env_get decodes them, env_set writes the form that keeps the value intact.
 env_get() {
-    local v
-    v=$(grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-) || true
-    case "$v" in \'*\') v=${v#\'}; v=${v%\'} ;; esac
-    printf '%s' "$v"
+    ENV_KEY=$1 python3 - "$ENV_FILE" <<'PY'
+import os, re, sys
+key = os.environ['ENV_KEY']
+try:
+    lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+except OSError:
+    lines = []
+for line in lines:
+    if line.startswith(key + '='):
+        v = line[len(key) + 1:]
+        if len(v) >= 2 and v[0] == v[-1] == "'":
+            v = v[1:-1]
+        elif len(v) >= 2 and v[0] == v[-1] == '"':
+            v = re.sub(r'\\(.)', r'\1', v[1:-1]).replace('$$', '$')
+        else:
+            v = re.split(r'\s+#', v, 1)[0].strip()
+        sys.stdout.write(v)
+        break
+PY
 }
 # Replace or append KEY=VALUE without ever leaving a truncated .env: the new file is written next to
 # it (mode 600) and renamed over it; the previous version is kept as .env.bak. The value travels in
-# the environment, so no quoting rules (awk -v, sed) can mangle it.
+# the environment, so no shell quoting rules can mangle it.
 env_set() {
-    [ "$(env_get "$1")" = "$2" ] && grep -qE "^$1=" "$ENV_FILE" && return 0
+    grep -qE "^$1=" "$ENV_FILE" && [ "$(env_get "$1")" = "$2" ] && return 0
     case "$2" in *$'\n'*) die "$1 must be a single line" ;; esac
     local tmp="$ENV_FILE.tmp.$$"
     ENV_KEY=$1 ENV_VALUE=$2 python3 - "$ENV_FILE" "$tmp" <<'PY'
-import os, sys
+import os, re, sys
 src, dst = sys.argv[1:]
 key, value = os.environ['ENV_KEY'], os.environ['ENV_VALUE']
+if re.fullmatch(r'[A-Za-z0-9_./:@,+=%-]*', value):
+    encoded = value
+elif "'" not in value:
+    encoded = f"'{value}'"
+else:
+    encoded = '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '$$') + '"'
 out, done = [], False
 with open(src, encoding='utf-8') as f:
     for line in f.read().splitlines():
         if line.startswith(key + '='):
             if not done:
-                out.append(f'{key}={value}')
+                out.append(f'{key}={encoded}')
                 done = True
             continue
         out.append(line)
 if not done:
-    out.append(f'{key}={value}')
+    out.append(f'{key}={encoded}')
 fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, 'w', encoding='utf-8') as f:
     f.write('\n'.join(out) + '\n')
 PY
     cp -p "$ENV_FILE" "$ENV_FILE.bak"
     mv -f "$tmp" "$ENV_FILE"
+}
+# Since the app no longer reads .env wholesale, extra AP_* settings there are silently ignored.
+warn_unused_app_keys() {
+    local key known unused=''
+    # shellcheck disable=SC2086
+    known=" $(echo $APP_ENV_KEYS) "
+    for key in $(grep -oE '^AP_[A-Z0-9_]+' "$ENV_FILE" | sort -u); do
+        case "$known" in *" $key "*) ;; *) unused="$unused $key" ;; esac
+    done
+    [ -z "$unused" ] && return 0
+    echo "WARNING: .env has AP_* settings the app no longer receives:$unused"
+    echo "         Move them to $DATA_DIR/app.env (same KEY=value format) and re-run the installer."
 }
 compose() {
     local files=(-f "$DATA_DIR/docker-compose.yml")
@@ -154,6 +194,7 @@ EOF
         [ -n "${!var:-}" ] && env_set "$var" "${!var}"
     done
     chmod 600 "$ENV_FILE" "$ENV_FILE.bak" 2>/dev/null || true
+    warn_unused_app_keys
     # Shown right away (and again at the end) until a run completes, see SECRETS_ACK.
     [ -f "$SECRETS_ACK" ] || print_secrets
 }
@@ -178,10 +219,12 @@ start_stack() {
 }
 
 # True when the app container exists and runs a different image than the one about to start.
+OLD_IMAGE=
 upgrade_pending() {
     local cid running wanted
     cid=$(compose ps -a -q activepieces 2>/dev/null | head -1)
     [ -n "$cid" ] || return 1
+    OLD_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null) || true
     running=$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null) || return 1
     wanted=$(docker image inspect -f '{{.Id}}' "$(env_get AP_IMAGE)" 2>/dev/null) || return 1
     [ "$running" != "$wanted" ]
@@ -190,13 +233,20 @@ upgrade_pending() {
 # Starting a new image runs its database migrations, which cannot be undone without a backup.
 backup_before_upgrade() {
     log "New Activepieces image: taking a backup before its database migrations run"
-    if ! compose run --rm --no-deps -T --entrypoint sh backup -c 'test -s "$RCLONE_CONFIG"' </dev/null >/dev/null 2>&1; then
-        echo "WARNING: backups are not set up (run the installer with 'backup-setup'); upgrading WITHOUT a backup."
-        return 0
-    fi
+    local rc=0 stay="re-run the installer with -e AP_IMAGE=${OLD_IMAGE:-<previous image>} to stay on the current version"
+    # Exit 3 = the check ran and found no rclone config. Any other failure (image missing, Docker
+    # error) means we do not know, so stop rather than upgrade without a backup. (3, not 1: compose
+    # itself exits 1 on its own errors.)
+    compose run --rm --no-deps -T --entrypoint sh backup -c 'test -s "$RCLONE_CONFIG" || exit 3' </dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) ;;
+        3) echo "WARNING: backups are not set up (run the installer with 'backup-setup'); upgrading WITHOUT a backup."
+           return 0 ;;
+        *) die "Could not check the backup setup (exit $rc); nothing was upgraded. Fix it and re-run, or $stay." ;;
+    esac
     compose up -d postgres
     compose run --rm -T backup now pre-upgrade </dev/null \
-        || die "Pre-upgrade backup failed; nothing was upgraded. Fix the backup (see the log above) and re-run."
+        || die "Pre-upgrade backup failed; nothing was upgraded. Fix the backup (see the log above) and re-run, or $stay."
 }
 
 # The installer reaches the app over the stack's network, so it works the same on every host OS.
