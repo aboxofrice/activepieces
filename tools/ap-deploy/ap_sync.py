@@ -99,7 +99,11 @@ def _log_apply(msg):
 
 def nightly_export(client, push=True):
     ap_deploy.export_staff(client, FLOWS_DIR, log=log)
-    git('add', '-A', ap_deploy.STAFF_DIR)
+    # With no staff flows the folder may not exist (on disk or in git), and `git add` on a path
+    # that matches nothing fails.
+    if (os.path.isdir(os.path.join(FLOWS_DIR, ap_deploy.STAFF_DIR))
+            or git('ls-files', ap_deploy.STAFF_DIR).stdout.strip()):
+        git('add', '-A', ap_deploy.STAFF_DIR)
     if git('diff', '--cached', '--quiet', check=False).returncode == 0:
         log('export-staff: nothing to commit')
     else:
