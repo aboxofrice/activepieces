@@ -1,7 +1,8 @@
-import { createTrigger, Store, TriggerStrategy } from '@activepieces/pieces-framework';
+import { createTrigger, TriggerStrategy } from '@activepieces/pieces-framework';
 import { ebayAuth } from '../../auth';
 import { EbayAuthProps } from '../../common/client';
-import { FlatOrder, orderCommon } from '../../common/order';
+import { FetchOrders, newOrderPoll } from '../../common/new-order-poll';
+import { EbayOrder, orderCommon } from '../../common/order';
 
 export const newOrder = createTrigger({
     auth: ebayAuth,
@@ -60,10 +61,16 @@ export const newOrder = createTrigger({
         }],
     },
     async onEnable(context) {
-        await context.store.put<TriggerState>(STATE_KEY, { lastPollMs: Date.now(), seenOrderIds: [] });
+        await newOrderPoll.enable({
+            store: context.store,
+            fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: fingerprint({ fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+        });
     },
-    async onDisable(context) {
-        await context.store.delete(STATE_KEY);
+    // State is kept on purpose: a publish disables and re-enables the trigger, and the
+    // store outlives it, so the next enable resumes instead of replaying or skipping.
+    async onDisable() {
+        return;
     },
     async test(context) {
         const { orders } = await orderCommon.listOrders({
@@ -74,42 +81,26 @@ export const newOrder = createTrigger({
         return orders.map((order) => orderCommon.flattenOrder({ order }));
     },
     async run(context) {
-        return pollNewOrders({ auth: context.auth.props, store: context.store, fulfillmentStatus: context.propsValue.fulfillmentStatus });
+        const orders = await newOrderPoll.poll({
+            store: context.store,
+            fetchOrders: buildFetch({ auth: context.auth.props, fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+            fingerprint: fingerprint({ fulfillmentStatus: context.propsValue.fulfillmentStatus }),
+        });
+        return orders.map((order) => orderCommon.flattenOrder({ order }));
     },
 });
 
-async function pollNewOrders({ auth, store, fulfillmentStatus }: { auth: EbayAuthProps; store: Store; fulfillmentStatus: string | undefined }): Promise<FlatOrder[]> {
-    const pollStartedMs = Date.now();
-    const state = await store.get<TriggerState>(STATE_KEY) ?? { lastPollMs: pollStartedMs, seenOrderIds: [] };
-    const { orders } = await orderCommon.listOrders({
+function buildFetch({ auth, fulfillmentStatus }: { auth: EbayAuthProps; fulfillmentStatus: string | undefined }): FetchOrders<EbayOrder> {
+    return async ({ fromMs, offset, maxOrders }) => orderCommon.listOrders({
         auth,
-        filter: orderCommon.buildFilter({
-            dateField: 'creationdate',
-            from: new Date(state.lastPollMs - OVERLAP_MS).toISOString(),
-            fulfillmentStatus,
-        }),
-        maxOrders: MAX_ORDERS_PER_POLL,
+        filter: orderCommon.buildFilter({ dateField: 'creationdate', from: new Date(fromMs).toISOString(), fulfillmentStatus }),
+        maxOrders,
+        offset,
     });
-    const seen = new Set(state.seenOrderIds);
-    const newOrders = orders
-        .filter((order) => !seen.has(order.orderId))
-        .sort((a, b) => new Date(a.creationDate ?? 0).getTime() - new Date(b.creationDate ?? 0).getTime());
-    // The next window starts later than this one, so every order it can return is in this poll's result set
-    // (plus the previously seen ones, kept in case eBay briefly drops an order from the listing).
-    await store.put<TriggerState>(STATE_KEY, {
-        lastPollMs: pollStartedMs,
-        seenOrderIds: [...new Set([...orders.map((order) => order.orderId), ...state.seenOrderIds])].slice(0, MAX_SEEN_IDS),
-    });
-    return newOrders.map((order) => orderCommon.flattenOrder({ order }));
 }
 
-const STATE_KEY = 'ebay_new_order_state';
-const OVERLAP_MS = 2 * 60 * 60 * 1000;
-const MAX_ORDERS_PER_POLL = 1000;
-const MAX_SEEN_IDS = 5000;
-const TEST_ORDERS = 5;
+function fingerprint({ fulfillmentStatus }: { fulfillmentStatus: string | undefined }): string {
+    return `order_new_order:${fulfillmentStatus ?? ''}`;
+}
 
-type TriggerState = {
-    lastPollMs: number;
-    seenOrderIds: string[];
-};
+const TEST_ORDERS = 5;
