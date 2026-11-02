@@ -52,10 +52,10 @@ export const newMessage = createTrigger({
         latest_message_subject: 'Does this fit a 2019 Ram 1500?',
         latest_message_body: 'Hi, will this part fit my 2019 Ram 1500 Laramie?',
         latest_message_sender: 'buyer_username',
-        latest_message_recipient: 'bproautoparts',
+        latest_message_recipient: 'your_store',
         latest_message_date: '2026-09-28T14:02:11.000Z',
         latest_message_read: false,
-        seller_username: 'bproautoparts',
+        seller_username: 'your_store',
     },
     async test(context) {
         return await pollingHelper.test(polling, context);

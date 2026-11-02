@@ -21,7 +21,7 @@ export const newOrder = createTrigger({
         order_fulfillment_status: 'NOT_STARTED',
         order_payment_status: 'PAID',
         cancel_state: 'NONE_REQUESTED',
-        seller_id: 'tgpauto',
+        seller_id: 'your_store',
         buyer_username: 'buyer_username',
         buyer_checkout_notes: null,
         ship_to_name: 'Jane Doe',
