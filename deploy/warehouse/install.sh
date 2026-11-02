@@ -27,7 +27,8 @@
 #   AP_ENCRYPTION_KEY BACKUP_PASSWORD BACKUP_SALT ADMIN_PASSWORD
 #                     first run only, to set up a copy that restores another server's backups (see
 #                     README "Restore a warehouse backup on another machine"): used instead of fresh
-#                     values and never printed. Ignored, with a warning, once .env exists.
+#                     values and never printed. Once .env exists a run may pass the same values
+#                     again but stops if one differs (change .env by hand instead).
 #   GHCR_USER / GHCR_TOKEN   login for the private ghcr.io images: GitHub user (default aboxofrice)
 #                     and a classic token with read:packages only. Any run; saved to .env, never
 #                     printed. Without them, images already on this machine still work.
@@ -42,6 +43,8 @@
 #   stops before starting anything. A helper image whose revision label differs from the one this
 #   installer was built for is reported (warning only).
 set -euo pipefail
+# Tracing would print the secrets this script handles (.env values, tokens, the admin password).
+case $- in *x*) echo "ERROR: do not run the installer with xtrace (bash -x / set -x): it would print secrets" >&2; exit 1 ;; esac
 
 TEMPLATE_DIR=${TEMPLATE_DIR:-$(cd "$(dirname "$0")" && pwd)}
 DATA_DIR=${DATA_DIR:-/data}
@@ -55,9 +58,12 @@ SECRETS_ACK=$DATA_DIR/.secrets-acknowledged
 # Names (never values) of the secrets a first run took from -e instead of generating; the secrets
 # block does not show those.
 SECRETS_GIVEN=$DATA_DIR/.secrets-given
-# First line of every compose.*.yml this installer ships; such a file in the data folder that the
-# installer no longer ships is removed. Files without it (your own overrides) are never touched.
+# First line of every compose.*.yml this installer ships. A file in the data folder is removed only
+# when it carries the marker, is named in PREVIOUSLY_SHIPPED and this installer no longer ships it;
+# anything else there (your own overrides) is never touched. When a release drops a compose file,
+# keep its name in this list.
 MANAGED_MARKER='# managed-by: ap-installer'
+PREVIOUSLY_SHIPPED="compose.ap-sync.yml compose.backup.yml"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -69,6 +75,8 @@ BACKUP_KEEP_NIGHTLY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MANUAL BACKUP_KEEP_PRE_UPGRAD
 BACKUP_WEEKLY_DAY HEALTHCHECK_URL SYNC_HEALTHCHECK_URL"
 # Secrets a first run may take from -e (restoring another server's backups) instead of generating.
 GIVEN_SECRET_VARS="AP_ENCRYPTION_KEY BACKUP_PASSWORD BACKUP_SALT ADMIN_PASSWORD"
+# Set on the first run only: a later run passing a different value stops (see check_first_run_only).
+FIRST_RUN_ONLY_VARS="$GIVEN_SECRET_VARS ADMIN_EMAIL"
 # AP_* keys docker-compose.yml passes to the app; any other AP_* key in .env is ignored there.
 APP_ENV_KEYS=" AP_PORT AP_FRONTEND_URL AP_EDITION AP_ENVIRONMENT AP_EXECUTION_MODE AP_ENCRYPTION_KEY AP_JWT_SECRET
 AP_POSTGRES_DATABASE AP_POSTGRES_HOST AP_POSTGRES_PORT AP_POSTGRES_USERNAME AP_POSTGRES_PASSWORD AP_REDIS_HOST
@@ -159,6 +167,15 @@ warn_unused_app_keys() {
     echo "WARNING: app.env sets$shadowed, which docker-compose.yml already sets; app.env cannot override them."
     echo "         Change them in .env instead."
 }
+# Every key in .env is removed from this shell before compose runs: Docker Compose prefers the
+# environment over --env-file, so an -e value would otherwise reach the containers instead of .env.
+# write_env has already saved (or refused) everything a run may pass.
+unset_env_overrides() {
+    local key
+    for key in $(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" | tr -d =); do
+        unset "$key"
+    done
+}
 compose() {
     local files=(-f "$DATA_DIR/docker-compose.yml")
     for extra in "$DATA_DIR"/compose.*.yml; do [ -f "$extra" ] && files+=(-f "$extra"); done
@@ -177,6 +194,7 @@ copy_templates() {
     local f
     for f in "$DATA_DIR"/compose.*.yml; do
         [ -f "$f" ] && [ ! -f "$TEMPLATE_DIR/${f##*/}" ] || continue
+        case " $PREVIOUSLY_SHIPPED " in *" ${f##*/} "*) ;; *) continue ;; esac
         head -n 1 "$f" | grep -qF "$MANAGED_MARKER" || continue
         echo "  removing ${f##*/} (no longer part of this installer's stack)"
         rm -f "$f"
@@ -216,7 +234,7 @@ AP_FRONTEND_URL=$AP_FRONTEND_URL
 AP_EDITION=${AP_EDITION:-ce}
 AP_ENVIRONMENT=prod
 AP_EXECUTION_MODE=SANDBOX_CODE_ONLY
-AP_ENCRYPTION_KEY=$(rand_hex 16)
+AP_ENCRYPTION_KEY=$(given_or AP_ENCRYPTION_KEY "$(rand_hex 16)")
 AP_JWT_SECRET=$(rand_hex 32)
 AP_POSTGRES_DATABASE=activepieces
 AP_POSTGRES_HOST=postgres
@@ -232,16 +250,16 @@ AP_REUSE_SANDBOX=true
 AP_FLOW_TIMEOUT_SECONDS=600
 AP_WEBHOOK_TIMEOUT_SECONDS=30
 TZ=${TZ:-America/New_York}
-ADMIN_EMAIL=${ADMIN_EMAIL:-admin@warehouse.local}
-ADMIN_PASSWORD=$(rand_pw 24)
-BACKUP_PASSWORD=$(rand_pw 32)
-BACKUP_SALT=$(rand_pw 32)
+ADMIN_EMAIL=$(given_or ADMIN_EMAIL admin@warehouse.local)
+ADMIN_PASSWORD=$(given_or ADMIN_PASSWORD "$(rand_pw 24)")
+BACKUP_PASSWORD=$(given_or BACKUP_PASSWORD "$(rand_pw 32)")
+BACKUP_SALT=$(given_or BACKUP_SALT "$(rand_pw 32)")
 EOF
+        record_given_secrets
         mv "$ENV_FILE.tmp" "$ENV_FILE"
-        apply_given_secrets
     else
         log "Keeping existing .env"
-        warn_ignored_secrets
+        check_first_run_only
         [ -n "${AP_IMAGE:-}" ] && env_set AP_IMAGE "$AP_IMAGE"
         [ -n "${AP_HTTP_PORT:-}" ] && env_set AP_HTTP_PORT "$AP_HTTP_PORT"
         [ -n "${AP_FRONTEND_URL:-}" ] && env_set AP_FRONTEND_URL "$AP_FRONTEND_URL"
@@ -261,7 +279,8 @@ EOF
 }
 
 # A first run may take the secrets of another server (to restore its backups) instead of generating
-# them. Values are checked here and written by env_set; they are never echoed.
+# them. Values are checked here and written with the generated ones in one .env write (given_or);
+# they are never echoed.
 check_given_secrets() {
     if [ -n "${AP_ENCRYPTION_KEY:-}" ]; then
         printf '%s' "$AP_ENCRYPTION_KEY" | grep -qE '^[0-9a-fA-F]{32}$' \
@@ -275,38 +294,80 @@ check_given_secrets() {
         case "${!var:-}" in *$'\n'*) die "$var must be a single line; nothing was written" ;; esac
     done
 }
-apply_given_secrets() {
+# given_or VAR DEFAULT -> the .env-encoded value of $VAR when given, else DEFAULT.
+given_or() {
+    ENV_VALUE=${!1:-$2} python3 -c 'import os, re
+v = os.environ["ENV_VALUE"]
+if re.fullmatch(r"[A-Za-z0-9_./:@,+=%-]*", v):
+    print(v)
+elif "\x27" not in v:
+    print("\x27" + v + "\x27")
+else:
+    print("\"" + v.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "$$") + "\"")'
+}
+record_given_secrets() {
     local var given=''
     for var in $GIVEN_SECRET_VARS; do
-        [ -n "${!var:-}" ] || continue
-        env_set "$var" "${!var}"
-        given="$given $var"
+        [ -n "${!var:-}" ] && given="$given $var"
     done
     [ -n "$given" ] || return 0
-    rm -f "$ENV_FILE.bak"
     ( umask 077; printf '%s\n' $given > "$SECRETS_GIVEN" )
     echo "  taken from -e instead of generated:$given"
 }
-warn_ignored_secrets() {
-    local var ignored=''
-    for var in $GIVEN_SECRET_VARS; do
-        [ -n "${!var:-}" ] && [ "$(env_get "$var")" != "${!var}" ] && ignored="$ignored $var"
+# Docker Compose prefers the environment over --env-file, so a value passed now would reach the
+# containers even though .env keeps the first run's. A different value stops the run; the same one
+# is fine. (unset_env_overrides then removes them before any compose call.)
+check_first_run_only() {
+    local var differs=''
+    for var in $FIRST_RUN_ONLY_VARS; do
+        [ -n "${!var:-}" ] && [ "$(env_get "$var")" != "${!var}" ] && differs="$differs $var"
     done
-    [ -z "$ignored" ] && return 0
-    warn "ignored$ignored: they are read on a first run only, and .env already exists. To change one, edit $ENV_FILE by hand (changing AP_ENCRYPTION_KEY makes saved connections unreadable)."
+    [ -z "$differs" ] && return 0
+    die "-e$differs differs from $ENV_FILE. These are set on the first run only; nothing was changed.
+  Drop the -e (or pass the value .env already has). To really change one, edit .env by hand and
+  re-run (changing AP_ENCRYPTION_KEY makes saved connections unreadable; ADMIN_* must match the
+  account in the database)."
 }
 
-# The token comes from .env (saved there by write_env when given with -e). The login lives in a
-# Docker config inside WORK_DIR, deleted when the run ends. A failed login is not fatal: images
-# already on this machine still work, and pull_images names any that are missing.
+# The token comes from .env (saved there by write_env when given with -e). The login is written to
+# a Docker config inside WORK_DIR, deleted when the run ends, so the token never lands in a
+# credential store. That config keeps the user's settings (current context, credential helpers for
+# other registries) and links everything else (contexts/, cli-plugins/, buildx/), so host runs
+# keep their colima/OrbStack/Desktop context and the compose plugin. Only credsStore and ghcr.io
+# entries are dropped: other registries' logins kept in a credsStore are not used for this run.
+# A failed login is not fatal: images already on this machine still work, and pull_images names
+# any that are missing.
 REGISTRY_LOGIN=
 registry_login() {
-    local token user
+    local token user src entry
     token=$(env_get GHCR_TOKEN); user=$(env_get GHCR_USER)
     [ -n "$token" ] || return 0
     log "Logging in to ghcr.io as ${user:-aboxofrice}"
+    src=${DOCKER_CONFIG:-$HOME/.docker}
+    mkdir -p "$WORK_DIR/docker"
+    if [ -d "$src" ]; then
+        for entry in "$src"/* "$src"/.[!.]*; do
+            [ -e "$entry" ] && [ "${entry##*/}" != config.json ] && ln -s "$entry" "$WORK_DIR/docker/"
+        done
+    fi
+    python3 - "$src/config.json" "$WORK_DIR/docker/config.json" <<'PY'
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as f:
+        cfg = json.load(f)
+except (OSError, ValueError):
+    cfg = {}
+if not isinstance(cfg, dict):
+    cfg = {}
+cfg.pop('credsStore', None)
+for section in ('auths', 'credHelpers'):
+    if isinstance(cfg.get(section), dict):
+        cfg[section] = {k: v for k, v in cfg[section].items() if 'ghcr.io' not in k}
+fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w', encoding='utf-8') as f:
+    json.dump(cfg, f)
+PY
     export DOCKER_CONFIG="$WORK_DIR/docker"
-    mkdir -p "$DOCKER_CONFIG"
     if printf '%s' "$token" | docker login ghcr.io -u "${user:-aboxofrice}" --password-stdin >/dev/null 2>"$WORK_DIR/login.err"; then
         REGISTRY_LOGIN=ok
     else
@@ -671,6 +732,7 @@ case "$cmd" in
         preflight
         copy_templates
         write_env
+        unset_env_overrides
         registry_login
         start_stack
         attach_to_stack
@@ -686,8 +748,8 @@ case "$cmd" in
         [ -f "$ENV_FILE" ] || die "$ENV_FILE not found; run the installer first"
         print_secrets all
         ;;
-    restore) preflight; exec "$TEMPLATE_DIR/restore.sh" "$@" ;;
-    backup-setup) preflight; exec "$TEMPLATE_DIR/backup-setup.sh" "$@" ;;
+    restore) preflight; [ -f "$ENV_FILE" ] && unset_env_overrides; exec "$TEMPLATE_DIR/restore.sh" "$@" ;;
+    backup-setup) preflight; [ -f "$ENV_FILE" ] && unset_env_overrides; exec "$TEMPLATE_DIR/backup-setup.sh" "$@" ;;
     -h|--help|help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
     *) die "unknown command: $cmd (install | --show-secrets | restore [path] | backup-setup | --help)" ;;
 esac

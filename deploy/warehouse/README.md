@@ -71,9 +71,10 @@ On every run the installer pulls each image of the stack and then:
 - warns when a helper image's `org.opencontainers.image.revision` label differs from the revision
   the installer was built for (or the label is missing), i.e. the tag was rebuilt from other code.
 
-Each shipped `compose.*.yml` starts with `# managed-by: ap-installer`. A file with that marker that
-the current installer no longer ships is removed from the data folder on the next run; your own
-`compose.*.yml` overrides (no marker) are never touched.
+Each shipped `compose.*.yml` starts with `# managed-by: ap-installer`. A file in the data folder is
+removed only when it carries that marker, is one an earlier installer shipped (`PREVIOUSLY_SHIPPED`
+in `install.sh`; keep a dropped file's name there) and the current installer no longer ships it.
+Your own `compose.*.yml` overrides are never touched.
 
 ## First run and the admin account
 
@@ -112,7 +113,8 @@ tag as the warehouse) and the warehouse secrets block from the password manager.
    - admin email and password: the restored database holds the warehouse admin, and ap-sync and
      installer re-runs sign in with these values.
 2. Fresh install into a new folder, passing that file. These values are read on a **first** run only
-   (before `.env` exists) and are not printed. Use another stack name and port if anything else runs
+   (before `.env` exists) and are not printed; a later run may pass the same values but stops if one
+   differs from `.env`. Use another stack name and port if anything else runs
    on the machine; if the warehouse used a non-default `BACKUP_DRIVE_FOLDER`, pass the same one:
    ```
    docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock -v ~/ap-restore:/data \

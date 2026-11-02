@@ -24,6 +24,9 @@
 set -eu
 cd "${DATA_DIR:-$(dirname "$0")}"
 [ -f .env ] || { echo "ERROR: .env not found" >&2; exit 1; }
+# Docker Compose prefers the environment over --env-file: drop every .env key from it, so .env is
+# what the containers get even when the installer was started with -e values.
+for key in $(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env); do unset "$key"; done
 if [ -z "${COMPOSE_FILE:-}" ]; then
     # Same file set install.sh uses, so helper services (ap-sync) are stopped and started too.
     COMPOSE_FILE=docker-compose.yml
