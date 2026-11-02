@@ -128,7 +128,10 @@ async function sendOnce<T>({ request }: { request: RawRequest }): Promise<T> {
     }).catch((cause: unknown) => {
         throw new NetworkError({ cause });
     });
-    const text = await response.text();
+    // The timeout also covers reading the body; a failure there is a network error too.
+    const text = await response.text().catch((cause: unknown) => {
+        throw new NetworkError({ cause });
+    });
     const body = parseBody<T>({ text });
     if (!response.ok) {
         throw new SpApiHttpError({
