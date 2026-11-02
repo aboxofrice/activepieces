@@ -37,7 +37,7 @@ rm -rf dist-publish && cp -R dist dist-publish
 Patch `dist-publish/package.json` (script it; don't hand-edit):
 - `name` → `@vqnguyen1/piece-<name>`
 - `main` → `./src/index.js`, `types` → `./src/index.d.ts` (dist folder becomes the package root)
-- **Strip every `@activepieces/*` dependency** — the platform runtime provides framework/shared/common; `workspace:*` deps are invalid on npm and pinned fork versions (e.g. `^0.74.3`) don't exist there. Keep real third-party deps (e.g. `fast-xml-parser`).
+- **Pin the `@activepieces/*` dependencies to versions that exist on npm** — replace the `workspace:*` entries with `@activepieces/pieces-framework` `0.30.0`, `@activepieces/pieces-common` `0.12.4`, `@activepieces/shared` `0.86.0` (a mutually consistent published set: common 0.12.4 pins framework 0.30.0, which pins shared 0.86.0; re-check with `npm view` when the fork's framework version changes). Do NOT strip them: the runtime does not provide them. A piece published without them only loads where some other piece already put `pieces-common` into the shared install cache; on a fresh server it fails with `Cannot find module '@activepieces/pieces-common'` (found 2026-11-01 testing a clean warehouse install). Keep real third-party deps (e.g. `fast-xml-parser`).
 - Remove `scripts`.
 
 Logos: there's no CDN for private pieces — embed the image as a `data:image/webp;base64,...` URI in `logoUrl` in `src/index.ts` (keep it under ~30 KB). Warn if the logo is white-on-transparent (invisible on light theme).
@@ -51,6 +51,7 @@ cd dist-publish && npm publish --access public --userconfig <repo-root>/private-
 - Success line looks like `+ @vqnguyen1/piece-<name>@<version>`.
 - **Brand-new packages 404 on the registry for ~5–15 min** (quarantine/indexing). Don't debug — poll `https://registry.npmjs.org/@vqnguyen1%2fpiece-<name>` until HTTP 200 (background watcher, 60s interval).
 - `npm whoami` may 401 with a granular token even when publish works — ignore it; test auth with `curl -H "Authorization: Bearer <token>" https://registry.npmjs.org/-/whoami`.
+- If that curl also returns 401, the token is expired or revoked (publish then fails with a misleading `404 Not Found - PUT`). Generate a new granular token (read+write on the `@vqnguyen1` scope) and replace it in `private-npmrc`.
 
 ## Step 4 — Install on the platform
 
@@ -70,7 +71,9 @@ curl -X POST http://localhost:8080/api/v1/pieces \
 npm view @vqnguyen1/piece-<name>@<version> main dependencies --json
 ```
 
-`dependencies` must contain the real third-party deps and **no** `@activepieces/*` entries (empty-deps tarballs poison worker installs silently — the hubspot 0.8.5–0.8.7 bug). `main` must be `./src/index.js`.
+`dependencies` must contain the real third-party deps **plus** the three pinned `@activepieces/*` entries above (empty-deps tarballs poison worker installs silently — the hubspot 0.8.5–0.8.7 bug). `main` must be `./src/index.js`.
+
+Before publishing anything new, prove the tarball installs on a **fresh** instance (no other custom pieces in its cache): `npm pack` it and install via `POST /v1/pieces` with `packageType: ARCHIVE` on a throwaway CE stack, then run one action in a flow.
 
 ## Updating a published piece
 

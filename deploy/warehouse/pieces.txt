@@ -1,0 +1,4 @@
+# Custom pieces the managed flows need, installed from npm by install.sh: <package> <version>
+# Official @activepieces/* pieces come from the registry automatically.
+@vqnguyen1/piece-sellercloud 0.2.7
+@vqnguyen1/piece-ebay 0.0.2

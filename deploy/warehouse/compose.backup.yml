@@ -1,0 +1,38 @@
+# Nightly encrypted database backup to Google Drive (PLAN.md section 6).
+# Use together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f compose.backup.yml up -d
+# Named volumes only (the stack is driven by a containerized installer; host paths would not resolve).
+#
+# One-time Drive authorization:   docker compose ... run --rm backup setup     (or ./backup-setup.sh)
+# Backup now (exit 1 on failure): docker compose ... run --rm backup now pre-upgrade
+# List / restore:                 docker compose ... run --rm backup list      (restore: ./restore.sh)
+#
+# Settings read from .env (all optional except the BACKUP_PASSWORD/BACKUP_SALT that install.sh writes):
+#   TZ                    timezone for BACKUP_TIME, e.g. America/Los_Angeles (default UTC)
+#   BACKUP_TIME           nightly run time HH:MM (default 02:30)
+#   BACKUP_DRIVE_FOLDER   Drive folder (default "Activepieces Backups/warehouse")
+#   BACKUP_KEEP_NIGHTLY / BACKUP_KEEP_WEEKLY / BACKUP_KEEP_MANUAL   (default 14 / 8 / 10)
+#   BACKUP_WEEKLY_DAY     1=Mon .. 7=Sun (default 7)
+services:
+  backup:
+    # Pre-built and pushed to GHCR (the installer runs compose without the build context).
+    image: ${AP_BACKUP_IMAGE:-ghcr.io/aboxofrice/ap-backup:1.0.0}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: ${TZ:-UTC}
+      BACKUP_REMOTE_TYPE: ${BACKUP_REMOTE_TYPE:-drive}
+    depends_on:
+      - postgres
+    volumes:
+      - backup_config:/config
+      - backup_status:/status
+      # BACKUP_REMOTE_TYPE=local only (testing / NAS mount): the encrypted files live here.
+      - backup_local:/local-backups
+
+volumes:
+  # rclone.conf (Drive token + obscured crypt passwords), mode 600, root only.
+  backup_config:
+  # status file: last_success / last_failure timestamps, readable by other services.
+  backup_status:
+  backup_local:

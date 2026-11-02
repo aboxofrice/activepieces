@@ -8,6 +8,9 @@ ENV LANG=en_US.UTF-8 \
 # Install all system dependencies in a single layer with cache mounts
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    # Bullseye security updates moved to archive.debian.org after its LTS ended (Aug 2026); the
+    # deb.debian.org index still lists them but the files 404.
+    sed -i 's|http://deb.debian.org/debian-security|http://archive.debian.org/debian-security|' /etc/apt/sources.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         openssh-client \
@@ -65,6 +68,10 @@ WORKDIR /usr/src/app
 COPY .npmrc package.json bun.lock bunfig.toml ./
 COPY packages/ ./packages/
 
+# redis-memory-server is a test-only dependency; its postinstall compiles Redis from source on
+# arm64 and fails. The image never runs the tests, so skip it.
+ENV REDISMS_DISABLE_POSTINSTALL=1
+
 # Install all dependencies with frozen lockfile
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
@@ -95,6 +102,9 @@ RUN rm -rf packages/pieces/core packages/pieces/custom && \
 
 ### STAGE 2: Run ###
 FROM base AS run
+
+# See the build stage: skip redis-memory-server's arm64 compile in the production install too.
+ENV REDISMS_DISABLE_POSTINSTALL=1
 
 WORKDIR /usr/src/app
 
