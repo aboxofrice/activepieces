@@ -57,7 +57,7 @@ export const findProducts = createAction({
         const max = Math.min(MAX_RESULTS, Math.max(1, limit ?? 25));
         const auth = sellercloudAuthProps(context.auth);
         const token = await sellercloudClient.getToken({ auth, store: context.store });
-        const { items, total } = await sellercloudListing.listPages<SellercloudCatalogProduct>({
+        const { items, total, truncated } = await sellercloudListing.listPages<SellercloudCatalogProduct>({
             auth,
             token,
             path: '/Catalog',
@@ -71,13 +71,18 @@ export const findProducts = createAction({
                 'model.brandIds': isNil(brand) ? undefined : [Number(brand)],
                 'model.companyID': sellercloudDropdowns.resolveCompanyIds({ selected: companies, other: otherCompanyIds }),
             },
-            maxPages: Math.ceil(max / sellercloudListing.PAGE_SIZE),
+            // A part-number search filters keyword matches afterwards, so the exact ones can sit
+            // past the first pages; read further than the result count needs.
+            maxPages: searchBy === 'MPN' ? Math.max(MPN_SCAN_PAGES, Math.ceil(max / sellercloudListing.PAGE_SIZE)) : Math.ceil(max / sellercloudListing.PAGE_SIZE),
         });
         const matched = searchBy === 'MPN' ? items.filter((product) => mpnMatches({ candidate: product.ManufacturerSKU, query: text })) : items;
         const products = matched.slice(0, max).map((product) => sellercloudRecords.flattenProduct({ product }));
         return {
             count: products.length,
             total_matches: searchBy === 'MPN' ? matched.length : total,
+            // For a part-number search: more keyword matches existed than were scanned, so
+            // further exact matches (or the only one) may exist.
+            search_truncated: searchBy === 'MPN' ? truncated : matched.length > max || total > items.length,
             products,
         };
     },
@@ -91,3 +96,4 @@ function mpnMatches({ candidate, query }: { candidate: string | null | undefined
 }
 
 const MAX_RESULTS = 200;
+const MPN_SCAN_PAGES = 10;
