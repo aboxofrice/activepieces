@@ -89,3 +89,26 @@ describe('turn14PlaceOrder.placeOrder without the repeat-quote guard', () => {
         expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '777' })).toEqual(earlier);
     });
 });
+
+describe('turn14PlaceOrder.placeOrder claim re-check', () => {
+    it('sends nothing when another run took over the quote during the open-order lookup', async () => {
+        const store = memoryStore();
+        const posts: string[] = [];
+        vi.stubGlobal('fetch', vi.fn(async (request: unknown, init?: RequestInit) => {
+            const url = requestUrl({ input: request });
+            if (url.endsWith('/v1/token')) {
+                return jsonResponse({ body: { access_token: 'token' } });
+            }
+            if (init?.method === 'POST') {
+                posts.push(url);
+                return jsonResponse({ body: { data: { id: 'O-9' } } });
+            }
+            // Another run overwrites the claim while this one is looking up open orders.
+            await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '777', attempt: { status: 'sending', token: 'intruder', at: 'x', poNumber: 'PO-77', environment: 'testing', orderId: null } });
+            return jsonResponse({ body: { data: [], meta: { total_pages: 0 } } });
+        }));
+        await expect(turn14PlaceOrder.placeOrder({ store, auth, input: input(), settleMs: 5 })).rejects.toThrow(/Another run took over quote 777/);
+        expect(posts).toHaveLength(0);
+        expect((await turn14OrderGuards.readAttempt({ store, auth, quoteId: '777' }))?.token).toBe('intruder');
+    });
+});

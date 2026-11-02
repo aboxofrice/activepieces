@@ -27,6 +27,7 @@ async function placeOrder({ store, auth, input, settleMs }: { store: Store; auth
             return { orders: rows, complete: !truncated };
         },
     });
+    await turn14OrderGuards.assertStillClaimed({ store, auth, quoteId, claim, poNumber });
     const record = { token: claim.token, at: claim.at, poNumber, environment };
     // Only this run's own claim may be overwritten or removed; without a claim, nothing existing is touched.
     const save = (attempt: AttemptRecord) => (claim.owned

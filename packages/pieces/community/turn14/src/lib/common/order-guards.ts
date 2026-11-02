@@ -36,6 +36,18 @@ async function claimOrder({ store, auth, quoteId, poNumber, environment, refuseR
     return claim;
 }
 
+// Called right before the POST: the open-order lookup takes time, and another run may have taken
+// the quote over meanwhile.
+async function assertStillClaimed({ store, auth, quoteId, claim, poNumber }: { store: Store; auth: Turn14AuthProps; quoteId: string; claim: OrderClaim; poNumber: string }): Promise<void> {
+    if (!claim.owned) {
+        return;
+    }
+    const current = await readAttempt({ store, auth, quoteId });
+    if (current?.token !== claim.token) {
+        throw new Error(`Another run took over quote ${quoteId} before this one sent its order, so this run sent nothing. Check List Open Orders / Get Order for PO "${poNumber}".`);
+    }
+}
+
 // Records an order made without a claim, but only where no record exists yet.
 async function recordIfAbsent({ store, auth, quoteId, attempt }: { store: Store; auth: Turn14AuthProps; quoteId: string; attempt: AttemptRecord }): Promise<void> {
     if (await readAttempt({ store, auth, quoteId }) === null) {
@@ -109,8 +121,8 @@ function assertClearable({ quoteId, attempt, clearClaim, refuseOpenPo, now }: { 
         throw new Error(`Clearing the stuck claim for quote ${quoteId} needs "Refuse if an Open Order Has This PO" switched on, so an order Turn14 did create is still caught.`);
     }
     const ageMs = now - Date.parse(attempt.at);
-    if (attempt.status === 'sending' && !(ageMs >= MIN_STUCK_AGE_MS)) {
-        throw new Error(`The claim for quote ${quoteId} was made at ${attempt.at}, less than ${MIN_STUCK_AGE_MS / 60000} minutes ago, and may still be in progress. Try again later.`);
+    if (!(ageMs >= MIN_STUCK_AGE_MS)) {
+        throw new Error(`The claim for quote ${quoteId} was made at ${attempt.at}, less than ${MIN_STUCK_AGE_MS / 60000} minutes ago; its order may still be in progress or not yet visible in Turn14. Try again later.`);
     }
 }
 
@@ -167,6 +179,7 @@ const MIN_STUCK_AGE_MS = 15 * 60 * 1000;
 
 export const turn14OrderGuards = {
     claimOrder,
+    assertStillClaimed,
     releaseClaim,
     recordIfAbsent,
     findOpenOrderWithPo,

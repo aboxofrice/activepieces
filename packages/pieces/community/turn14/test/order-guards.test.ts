@@ -142,6 +142,13 @@ describe('turn14OrderGuards with the repeat-quote guard off or a stuck claim', (
         await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: Date.parse(OLD) + 5 * 60 * 1000, clearClaim: 'stale-token' }))).rejects.toThrow(/less than 15 minutes ago/);
     });
 
+    it('applies the 15-minute age gate to an unknown-outcome claim too', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { ...stuck, status: 'unknown' } });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: Date.parse(OLD) + 5 * 60 * 1000, clearClaim: 'stale-token' }))).rejects.toThrow(/less than 15 minutes ago/);
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, now: LATER, clearClaim: 'stale-token' }))).resolves.toMatchObject({ owned: true });
+    });
+
     it('requires the open-PO check while clearing', async () => {
         const store = memoryStore();
         await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: stuck });
