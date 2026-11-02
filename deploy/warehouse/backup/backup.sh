@@ -15,7 +15,7 @@
 #                            The replaced database is kept as <db>__before_restore_<UTC timestamp>.
 #   backup prune             apply retention only
 #   backup status            print the status file
-#   backup setup             write the rclone config (interactive; run via backup-setup.sh)
+#   backup setup             write the rclone config (interactive; run via the installer: ... ap-installer:<tag> backup-setup)
 #
 # Remote layout (inside the encrypted folder; names are encrypted in Drive):
 #   nightly/activepieces-YYYYMMDDTHHMMSS-nightly.dump   newest BACKUP_KEEP_NIGHTLY kept
@@ -86,7 +86,7 @@ cmd_daemon() {
     printf '%s %s * * * . /run/backup.env; /usr/local/bin/backup nightly > /proc/1/fd/1 2>&1\n' \
         "$(strip0 "$mm")" "$(strip0 "$hh")" > /etc/crontabs/root
     log "backup daemon started: nightly at $BACKUP_TIME ($(date +%Z)), remote type $BACKUP_REMOTE_TYPE"
-    [ -s "$RCLONE_CONFIG" ] || log "WARNING: no rclone config yet; nightly backups will fail until you run ./backup-setup.sh"
+    [ -s "$RCLONE_CONFIG" ] || log "WARNING: no rclone config yet; nightly backups will fail until you run the installer with backup-setup"
     exec crond -f -l 8
 }
 
@@ -94,7 +94,7 @@ run_backup() { # run_backup <folder> <label>
     folder=$1; label=$2
     trap 'on_error "$folder"' EXIT
     STEP="checking configuration"
-    [ -s "$RCLONE_CONFIG" ] || fail "rclone is not configured; run ./backup-setup.sh on the server"
+    [ -s "$RCLONE_CONFIG" ] || fail "rclone is not configured; run the installer with backup-setup on the server"
     configure_remote
 
     STEP="waiting for postgres"
@@ -323,7 +323,7 @@ base_path() {
 
 # The folder comes from .env on every run, so changing BACKUP_DRIVE_FOLDER needs no new setup.
 configure_remote() {
-    [ -s "$RCLONE_CONFIG" ] || die "rclone is not configured; run ./backup-setup.sh on the server"
+    [ -s "$RCLONE_CONFIG" ] || die "rclone is not configured; run the installer with backup-setup on the server"
     RCLONE_CONFIG_BACKUP_REMOTE=$(base_path)
     export RCLONE_CONFIG_BACKUP_REMOTE
 }

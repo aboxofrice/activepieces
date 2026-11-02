@@ -6,7 +6,7 @@
 # Nothing secret is printed.
 set -eu
 cd "${DATA_DIR:-$(dirname "$0")}"
-[ -f .env ] || { echo "ERROR: .env not found; run install.sh first" >&2; exit 1; }
+[ -f .env ] || { echo "ERROR: .env not found; run the installer first" >&2; exit 1; }
 if [ -z "${COMPOSE_FILE:-}" ]; then
     # Same file set install.sh uses, so helper services (ap-sync) are stopped and started too.
     COMPOSE_FILE=docker-compose.yml
