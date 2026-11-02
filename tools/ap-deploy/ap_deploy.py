@@ -393,6 +393,10 @@ def _onoff(status):
     return {'ENABLED': 'on', 'DISABLED': 'off'}.get(status, '-')
 
 
+def _any_flagged(records):
+    return any(r.get('error') or r['state'] in ('error', 'drifted', 'missing-deps') for r in records)
+
+
 # ---------- export-staff (target instance) ----------
 
 def export_staff(client, repo, log=print):
@@ -451,12 +455,13 @@ def main(argv=None):
         if not args.target:
             raise ApiError('set AP_DEPLOY_TARGET or --target')
         if args.cmd == 'status':
-            print(format_status(evaluate(client, repo, args.target)))
-            return 0
+            records = evaluate(client, repo, args.target)
+            print(format_status(records))
+            return 1 if _any_flagged(records) else 0
         records = apply(client, repo, args.target, dry_run=args.cmd == 'plan')
         if not any(r['action'] != 'none' for r in records):
             print('nothing to do')
-        return 1 if any(r.get('error') or r['state'] in ('error', 'drifted', 'missing-deps') for r in records) else 0
+        return 1 if _any_flagged(records) else 0
     except ApiError as e:
         print(f'error: {e}', file=sys.stderr)
         return 2
