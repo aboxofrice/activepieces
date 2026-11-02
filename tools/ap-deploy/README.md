@@ -50,6 +50,24 @@ flow first, then re-export the one referencing it.
 name, which resolves from inside the app container where the engine runs. It is used rather than
 `AP_FRONTEND_URL` because the LAN address can change (DHCP) and the call never leaves the Docker
 network. Set `AP_DEPLOY_BASE_URL` to override.
+- `AP_NETWORK_MODE=STRICT` (engine SSRF guard / egress filter) would block these calls: the
+  internal URL is a private address. The warehouse runs the default `UNRESTRICTED`; switching to
+  STRICT means the orchestrator can no longer fire its workers.
+- The base URL is whatever the applying process resolves, and it is recorded per flow
+  (`deployBaseUrl`). A manual apply from somewhere with a different `AP_URL` (e.g. the host, with
+  `AP_URL=http://localhost:8080`) re-imports every flow using `{{ap-base-url}}` with that URL, and
+  the next ap-sync pass re-imports them back. Run manual applies inside the ap-sync container
+  (`docker compose exec ap-sync python3 ap_deploy.py --repo /data/flows apply`), or set
+  `AP_DEPLOY_BASE_URL` to the same value.
+
+Export also warns about server-local URLs it did not turn into `{{ap-base-url}}` (localhost,
+`host.docker.internal`, `*.local`, private LAN IPs, the source's frontend URL): they would not work
+on the target. Pass `--base-url` if one of them is the source server itself.
+
+`ap_deploy.py --repo <flows repo> check-pieces deploy/warehouse/pieces.txt` fails if a managed flow
+uses a piece version pieces.txt does not pin (a fresh server only has the latest official versions,
+so the installer must install every pinned one). The unit tests run it too when they find the flows
+repo (`AP_FLOWS_REPO`, or `activepieces-flows` next to this checkout).
 
 Apply:
 - creates every new flow (empty) before importing any, so flows that reference each other resolve
@@ -96,7 +114,7 @@ A staff edit always creates a new version id, so it is still flagged. Metadata w
 ap-deploy (`hashVersion` 1 or 2) is compared the old way once and then re-recorded.
 
 `"enabled": false` in deploy.json always wins: it turns the flow off even when the flow is
-drifted, missing deps or its file is broken. The other way round is not automatic: if a flow
+drifted, missing deps (also when found only during the apply, e.g. a piece that could not be unhidden), its file is broken, or its import failed. The other way round is not automatic: if a flow
 that apply left **on** is turned **off** in the UI (an emergency stop), apply flags it as drifted
 and leaves it off. Accept the stop with `"enabled": false`, or turn it back on in the UI.
 

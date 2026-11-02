@@ -693,3 +693,89 @@ class FlowRefApplyTests(unittest.TestCase):
         f['metadata'] = dict(f['metadata'], hashVersion=2, deployHash=ap_deploy.target_hash(f, 2))
         r = evaluate(self.ap, self.repo)['worker']
         self.assertEqual((r['state'], r['action']), ('in-sync', 'rebaseline'))
+
+
+class ReviewFixTests(unittest.TestCase):
+    def setUp(self):
+        self.ap, self.repo = FakeAP(), Repo(self)
+
+    def test_blocked_flow_that_wants_off_is_disabled(self):
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.repo.put('a', make_def('a', code='return 2'))  # pending update...
+        self.repo.deploy({'a': {'enabled': False}})
+        self.ap.hidden = {PIECE['name']}               # ...but its piece is hidden and cannot be unhidden
+        self.ap.fail_platform_update = True
+        self.ap.has_piece = lambda name, version: True  # so evaluate() alone does not defer it
+        r = apply(self.ap, self.repo)['a']
+        self.assertEqual((r['state'], r['action']), ('missing-deps', 'disable'))
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+
+    def test_failed_update_still_honours_enabled_false(self):
+        self.repo.put('a', make_def('a'))
+        self.repo.deploy({'a': {'enabled': True}})
+        apply(self.ap, self.repo)
+        self.repo.put('a', make_def('a', code='return 2'))
+        self.repo.deploy({'a': {'enabled': False}})
+        real = self.ap.operate
+
+        def failing(flow_id, op_type, request):
+            if op_type == 'IMPORT_FLOW':
+                raise ap_deploy.ApiError('POST /v1/flows -> 400: bad', status=400)
+            return real(flow_id, op_type, request)
+        self.ap.operate = failing
+        logs = []
+        recs = {r['key']: r for r in ap_deploy.apply(self.ap, self.repo.path, 'warehouse', log=logs.append)}
+        self.assertTrue(recs['a'].get('error'))
+        self.assertEqual(flow_of(self.ap, 'a')['status'], 'DISABLED')
+        self.assertTrue(any(m.startswith('disable a -> DISABLED ok') for m in logs))
+
+    def test_leftover_server_urls(self):
+        trigger = {'a': 'http://localhost:3000/x', 'b': 'see http://192.168.1.50:8080/api', 'c': 'http://host.docker.internal:9418',
+                   'd': 'https://vpic.nhtsa.dot.gov/api', 'e': '{{ap-base-url}}/api', 'f': 'http://172.20.0.3', 'g': 'http://172.40.0.3',
+                   'h': 'http://warehouse.example.com:8080/flows'}
+        self.assertEqual(ap_deploy.leftover_server_urls(trigger, 'http://warehouse.example.com:8080'),
+                         ['http://172.20.0.3', 'http://192.168.1.50:8080', 'http://host.docker.internal:9418',
+                          'http://localhost:3000', 'http://warehouse.example.com:8080'])
+
+    def test_export_warns_on_leftover_urls(self):
+        src = FakeAP()
+        src.url = 'http://localhost:8080'
+        f = src.request('POST', '/v1/flows', {'displayName': 'F', 'metadata': {}})
+        src._flows[f['id']]['version']['trigger']['nextAction']['settings']['input'] = {
+            'ok': 'http://localhost:8080/api', 'bad': 'http://localhost:3000/api'}
+        real = src.request
+        src.request = lambda method, path, body=None, auth=True: {'PUBLIC_URL': 'http://lan:8080/'} if path == '/v1/flags' else real(method, path, body, auth)
+        logs = []
+        ap_deploy.export(src, self.repo.path, ['f'], flow_id=f['id'], log=logs.append)
+        warns = [m for m in logs if 'server-local address' in m]
+        self.assertEqual(len(warns), 1)
+        self.assertIn('http://localhost:3000', warns[0])
+
+    def test_pieces_file_check(self):
+        self.repo.put('a', make_def('a'))
+        path = os.path.join(self.repo.path, 'pieces.txt')
+        with open(path, 'w') as f:
+            f.write('# comment\n@vqnguyen1/piece-extra 1.0.0\n')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(self.repo.path, path), [f'{PIECE["name"]}@{PIECE["version"]} (used by a)'])
+        with open(path, 'a') as f:
+            f.write(f'{PIECE["name"]} {PIECE["version"]}  # pinned\n')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(self.repo.path, path), [])
+
+
+def _flows_repo():
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.abspath(os.path.join(here, '..', '..', '..'))
+    for path in (os.environ.get('AP_FLOWS_REPO'), os.path.join(root, '..', 'activepieces-flows'), os.path.join(root, '..', 'flows-add9')):
+        if path and os.path.isdir(os.path.join(path, ap_deploy.MANAGED_DIR)):
+            return path, os.path.join(root, 'deploy', 'warehouse', 'pieces.txt')
+    return None, None
+
+
+class PiecesFileTests(unittest.TestCase):
+    def test_warehouse_pieces_txt_covers_the_flows_repo(self):
+        repo, pieces = _flows_repo()
+        if not repo:
+            self.skipTest('flows repo not found (set AP_FLOWS_REPO)')
+        self.assertEqual(ap_deploy.pieces_file_mismatches(repo, pieces), [])

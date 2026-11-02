@@ -54,6 +54,9 @@ HASH_VERSION = 3
 FLOW_REF = '{{ap-flow:%s}}'
 FLOW_EXTERNAL_REF = '{{ap-flow-external:%s}}'
 BASE_URL_REF = '{{ap-base-url}}'
+SERVER_URL_RE = re.compile(
+    r'https?://(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|host\.docker\.internal|[A-Za-z0-9-]+\.local'
+    r'|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(?::\d+)?(?![A-Za-z0-9.-])')
 PLACEHOLDER_RE = re.compile(r'\{\{ap-(flow|flow-external):([a-z0-9][a-z0-9-]*)\}\}|\{\{ap-base-url\}\}')
 # States that need a human; status exits 1 and ap-sync logs them.
 FLAGGED_STATES = ('error', 'drifted', 'missing-deps')
@@ -482,6 +485,9 @@ def export(client, repo, keys, flow_id=None, name=None, base_urls=(), log=print)
         version = client.flow(flow['id'])['version']
         stamped = [dict(f, metadata={**(f.get('metadata') or {}), 'deployKey': key}) if f['id'] == flow['id'] else f for f in flows]
         flow_def = normalize_flow(version, key, source_refs(stamped, [client.url, *base_urls]))
+        for url in leftover_server_urls(flow_def['trigger'], _frontend_url(client)):
+            log(f'warn {key}: still contains {url}, a server-local address that was not turned into {BASE_URL_REF}; '
+                'it will not work on the target (use --base-url if it is this server)')
         for other in unmanaged_refs(flow_def['trigger'], stamped):
             log(f'warn {key}: references flow {other["id"]} ("{other["version"]["displayName"]}"), which has no deployKey; '
                 'export it first and re-export this one, or the reference breaks on the target')
@@ -496,6 +502,27 @@ def export(client, repo, keys, flow_id=None, name=None, base_urls=(), log=print)
             f'{", flows: " + ", ".join(flow_def["flowRefs"]) if flow_def["flowRefs"] else ""})')
         written.append(path)
     return written
+
+
+def leftover_server_urls(trigger, frontend_url=None):
+    """Server-local URLs left after export: localhost, host.docker.internal, *.local, private
+    (LAN) IPs, and the source's frontend URL. Placeholders are already gone from these strings."""
+    found = set()
+    for text in _strings(trigger):
+        for m in SERVER_URL_RE.finditer(text):
+            found.add(m.group(0))
+        if frontend_url and frontend_url in text:
+            found.add(frontend_url)
+    return sorted(found)
+
+
+def _frontend_url(client):
+    try:
+        flags = client.request('GET', '/v1/flags')
+    except Exception:  # noqa: BLE001 - only used for a warning
+        return None
+    url = (flags.get('PUBLIC_URL') or flags.get('FRONTEND_URL')) if isinstance(flags, dict) else None
+    return url.rstrip('/') if isinstance(url, str) and url else None
 
 
 def unmanaged_refs(trigger, flows):
@@ -744,6 +771,8 @@ def apply(client, repo, target, dry_run=False, log=print):
                 rec.update(state='missing-deps', action='none', reason=blocked[rec['key']])
         if blocked:
             _check_flow_refs(records, next(r['refs'] for r in records if 'refs' in r))
+            for rec in records:
+                _kill_switch(rec)
         if not dry_run:
             _create_shells(client, records, log)
         for rec in records:
@@ -765,10 +794,28 @@ def apply(client, repo, target, dry_run=False, log=print):
             except Exception as e:  # noqa: BLE001 - one failing flow must not stop the others
                 rec['error'] = str(e)
                 log(f'FAIL {label}: {type(e).__name__}: {e}')
+                _disable_after_failure(client, rec, log)
         return records
     finally:
         if lock:
             lock.close()
+
+
+def _disable_after_failure(client, rec, log):
+    """The kill switch still holds when the apply itself failed (e.g. an unresolved reference): a
+    flow deploy.json wants off must not stay on because its import did not go through."""
+    if rec['desired'] != 'DISABLED' or rec['action'] == 'disable':
+        return
+    for flow in rec.get('matches') or []:
+        try:
+            fresh = client.flow(flow['id'])
+            if fresh.get('status') != 'ENABLED':
+                continue
+            client.operate(flow['id'], 'CHANGE_STATUS', {'status': 'DISABLED'})
+            _update_metadata(client, client.flow(flow['id']), {'deployedStatus': 'DISABLED'})
+            log(f'disable {rec["key"]} -> DISABLED ok (flow {flow["id"]}; apply failed, deploy.json wants it off)')
+        except Exception as e:  # noqa: BLE001
+            log(f'FAIL disable {rec["key"]}: {type(e).__name__}: {e}')
 
 
 def _create_shells(client, records, log):
@@ -889,6 +936,29 @@ def _missing_deps(client, flow_def, connections, piece_cache):
     return missing
 
 
+def pieces_file_mismatches(repo, pieces_path):
+    """Pieces (name@version) the managed flows in repo use that pieces_path does not pin.
+
+    A fresh server has only the latest version of each official piece, so every version a flow
+    references must be installed by the installer from pieces.txt. Extra lines are allowed
+    (pieces staff flows use)."""
+    pinned = set()
+    with open(pieces_path, encoding='utf-8') as f:
+        for line in f:
+            parts = line.split('#', 1)[0].split()
+            if len(parts) >= 2:
+                pinned.add((parts[0], parts[1]))
+    used = {}
+    managed = os.path.join(repo, MANAGED_DIR)
+    for name in sorted(os.listdir(managed)):
+        if not name.endswith('.json'):
+            continue
+        flow_def = read_json(os.path.join(managed, name))
+        for p in flow_def.get('pieces') or pieces_used(flow_def['trigger']):
+            used.setdefault((p['name'], p['version']), []).append(name[:-5])
+    return [f'{n}@{v} (used by {", ".join(keys)})' for (n, v), keys in sorted(used.items()) if (n, v) not in pinned]
+
+
 def format_status(records):
     rows = [('DEPLOY KEY', 'STATE', 'ON/OFF', 'WANT', 'FLOW', 'NOTE')]
     for r in records:
@@ -918,12 +988,20 @@ def main(argv=None):
     e.add_argument('--name', help='source flow display name')
     e.add_argument('--base-url', action='append', default=[],
                    help='another URL the source is reached by, written as {{ap-base-url}} (the source AP URL always is)')
+    c = sub.add_parser('check-pieces', help='fail if pieces.txt misses a piece version a managed flow uses')
+    c.add_argument('pieces_file')
     for name in ('plan', 'apply', 'status'):
         s = sub.add_parser(name)
         s.add_argument('--target', default=os.environ.get('AP_DEPLOY_TARGET'))
     args = p.parse_args(argv)
     repo = os.path.abspath(args.repo)
     try:
+        if args.cmd == 'check-pieces':
+            missing = pieces_file_mismatches(repo, args.pieces_file)
+            for m in missing:
+                print(f'not in {args.pieces_file}: {m}')
+            print('pieces.txt covers every managed flow' if not missing else f'{len(missing)} missing')
+            return 1 if missing else 0
         if args.cmd == 'export':
             export(Client.from_env('AP_SOURCE_'), repo, args.keys, args.flow_id, args.name, args.base_url)
             return 0
