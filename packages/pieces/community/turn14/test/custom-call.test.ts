@@ -2,15 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { turn14CustomCall } from '../src/lib/common/custom-call';
 
 describe('turn14CustomCall.assertAllowed', () => {
-    it('refuses writes to the quote and order endpoints however the path is written', () => {
-        ['/order', 'order/from_quote', '/v1/quote', 'https://api.turn14.com/v1/order', '/./ORDERS/1', '%2Forder', '/items/../order'].forEach((url) => {
-            expect(() => turn14CustomCall.assertAllowed({ propsValue: { method: 'POST', url: { url } } })).toThrow(/refuses POST/);
+    it('refuses every method except GET, whatever the path', () => {
+        ['POST', 'PUT', 'PATCH', 'DELETE', 'post'].forEach((method) => {
+            expect(() => turn14CustomCall.assertAllowed({ propsValue: { method, url: { url: '/items/1' } } })).toThrow(/only sends GET/);
         });
+        expect(() => turn14CustomCall.assertAllowed({ propsValue: { method: 'POST', url: { url: '/order;x' } } })).toThrow(/only sends GET/);
     });
 
-    it('allows reads and other endpoints', () => {
+    it('allows GET', () => {
         expect(() => turn14CustomCall.assertAllowed({ propsValue: { method: 'GET', url: { url: '/orders' } } })).not.toThrow();
-        expect(() => turn14CustomCall.assertAllowed({ propsValue: { method: 'POST', url: { url: '/items/data/brand/1' } } })).not.toThrow();
-        expect(() => turn14CustomCall.assertAllowed({ propsValue: { method: 'POST', url: { url: '/ordering-guide' } } })).not.toThrow();
     });
 });

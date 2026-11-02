@@ -103,6 +103,33 @@ describe('turn14OrderGuards.claimOrder', () => {
     });
 });
 
+describe('turn14OrderGuards with the repeat-quote guard off or a stuck claim', () => {
+    it('leaves an existing record untouched when "Refuse a Second Order" is off', async () => {
+        const store = memoryStore();
+        const placed = { status: 'placed' as const, token: 'other', at: 'x', poNumber: 'PO-1001', environment: 'testing' as const, orderId: '77' };
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: placed });
+        const claim = await turn14OrderGuards.claimOrder(guardParams({ store, refuseRepeatQuote: false }));
+        expect(claim.owned).toBe(false);
+        await turn14OrderGuards.recordIfAbsent({ store, auth, quoteId: '555', attempt: { ...placed, token: claim.token, orderId: '88' } });
+        await turn14OrderGuards.releaseClaim({ store, auth, quoteId: '555', token: claim.token });
+        expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '555' })).toEqual(placed);
+    });
+
+    it('tells the user how to clear a stuck claim, and clears it only when asked', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { status: 'sending', token: 'stale', at: 'x', poNumber: 'PO-1001', environment: 'testing', orderId: null } });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store }))).rejects.toThrow(/Check PO "PO-1001" in Turn14.*tick "Clear Stuck Claim for This Quote"/);
+        const claim = await turn14OrderGuards.claimOrder(guardParams({ store, clearStuckClaim: true }));
+        expect((await turn14OrderGuards.readAttempt({ store, auth, quoteId: '555' }))?.token).toBe(claim.token);
+    });
+
+    it('refuses to clear a claim recorded as placed', async () => {
+        const store = memoryStore();
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '555', attempt: { status: 'placed', token: 'other', at: 'x', poNumber: 'PO-1001', environment: 'testing', orderId: '77' } });
+        await expect(turn14OrderGuards.claimOrder(guardParams({ store, clearStuckClaim: true }))).rejects.toThrow(/does not apply to a placed order/);
+    });
+});
+
 describe('turn14OrderGuards.findOpenOrderWithPo', () => {
     it('ignores orders without a PO and an empty PO', () => {
         const orders = [openOrder({ id: '1', po: '' }), { id: '2' }];

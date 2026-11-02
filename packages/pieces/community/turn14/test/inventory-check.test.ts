@@ -98,4 +98,20 @@ describe('turn14InventoryCheck.runInventoryCheck', () => {
         const chunkWrites = store.log.filter((entry) => entry.startsWith('put:turn14_inventory_seen_') && !entry.endsWith('_meta'));
         expect(chunkWrites).toEqual([`put:turn14_inventory_seen_${hour}_0`]);
     });
+
+    it('keeps the cursor when the enable-time seed cannot read the whole window, and flags the rest', async () => {
+        const store = memoryStore();
+        const calls: { window: number; startPage: number }[] = [];
+        const paged: ReadUpdates = async ({ window, startPage }) => {
+            calls.push({ window, startPage });
+            return startPage === 1 ? { rows: [row({ id: '1', qty: 1 })], nextPage: 2 } : { rows: [row({ id: '2', qty: 2 })], nextPage: null };
+        };
+        await turn14InventoryCheck.seedInventoryState(params({ store, now: NOW, readUpdates: paged }));
+        const first = await turn14InventoryCheck.runInventoryCheck(params({ store, now: NOW + 3 * MINUTE, readUpdates: paged }));
+        expect(calls.map((call) => call.startPage)).toEqual([1, 2]);
+        expect(first.outputs.map((output) => [output['item_id'], output['possibly_before_enable']])).toEqual([['2', true]]);
+        const state = await store.get<{ lastPollAt: number; unsure?: boolean }>('turn14_inventory_changed_state');
+        expect(state?.lastPollAt).toBe(NOW);
+        expect(state?.unsure).toBeUndefined();
+    });
 });

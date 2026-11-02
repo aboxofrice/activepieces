@@ -17,6 +17,7 @@ function input() {
         acknowledgeEpa: false,
         refuseOpenPo: true,
         refuseRepeatQuote: true,
+        clearStuckClaim: false,
     };
 }
 
@@ -72,5 +73,20 @@ describe('turn14PlaceOrder.placeOrder', () => {
         const store = memoryStore();
         await expect(turn14PlaceOrder.placeOrder({ store, auth, input: input(), settleMs: 5 })).rejects.toThrow(/Quote expired/);
         expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '777' })).toBeNull();
+    });
+});
+
+describe('turn14PlaceOrder.placeOrder without the repeat-quote guard', () => {
+    it('does not delete or overwrite an earlier record when Turn14 refuses or accepts', async () => {
+        const store = memoryStore();
+        const earlier = { status: 'unknown' as const, token: 'earlier', at: 'x', poNumber: 'PO-77', environment: 'testing' as const, orderId: null };
+        await turn14OrderGuards.recordAttempt({ store, auth, quoteId: '777', attempt: earlier });
+        stubTurn14({ orderResponse: () => jsonResponse({ status: 422, body: { errors: [{ title: 'Quote expired' }] } }) });
+        await expect(turn14PlaceOrder.placeOrder({ store, auth, input: { ...input(), refuseRepeatQuote: false }, settleMs: 5 })).rejects.toThrow(/Quote expired/);
+        expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '777' })).toEqual(earlier);
+        stubTurn14({ orderResponse: () => jsonResponse({ body: { data: { id: 'O-3' } } }) });
+        const result = await turn14PlaceOrder.placeOrder({ store, auth, input: { ...input(), refuseRepeatQuote: false }, settleMs: 5 });
+        expect(result.order_id).toBe('O-3');
+        expect(await turn14OrderGuards.readAttempt({ store, auth, quoteId: '777' })).toEqual(earlier);
     });
 });
