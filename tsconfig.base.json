@@ -1355,6 +1355,9 @@
       "@activepieces/piece-truelayer": [
         "packages/pieces/community/truelayer/src/index.ts"
       ],
+      "@vqnguyen1/piece-turn14": [
+        "packages/pieces/community/turn14/src/index.ts"
+      ],
       "@activepieces/piece-twilio": [
         "packages/pieces/community/twilio/src/index.ts"
       ],

@@ -7300,6 +7300,16 @@
         "tslib": "2.6.2",
       },
     },
+    "packages/pieces/community/turn14": {
+      "name": "@vqnguyen1/piece-turn14",
+      "version": "0.1.0",
+      "dependencies": {
+        "@activepieces/pieces-common": "workspace:*",
+        "@activepieces/pieces-framework": "workspace:*",
+        "@activepieces/shared": "workspace:*",
+        "tslib": "2.6.2",
+      },
+    },
     "packages/pieces/community/twilio": {
       "name": "@activepieces/piece-twilio",
       "version": "0.4.5",
@@ -12683,6 +12693,8 @@
     "@vqnguyen1/piece-plaid": ["@vqnguyen1/piece-plaid@workspace:packages/pieces/custom/plaid"],
 
     "@vqnguyen1/piece-sageworks": ["@vqnguyen1/piece-sageworks@workspace:packages/pieces/custom/sageworks"],
+
+    "@vqnguyen1/piece-turn14": ["@vqnguyen1/piece-turn14@workspace:packages/pieces/community/turn14"],
 
     "@webassemblyjs/ast": ["@webassemblyjs/ast@1.14.1", "", { "dependencies": { "@webassemblyjs/helper-numbers": "1.13.2", "@webassemblyjs/helper-wasm-bytecode": "1.13.2" } }, "sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ=="],
 
