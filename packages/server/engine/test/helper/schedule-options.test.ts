@@ -18,4 +18,13 @@ describe('scheduleOptionsUtils.toCronSchedule', () => {
         expect(() => scheduleOptionsUtils.toCronSchedule({ cronExpression: 'not a cron' })).toThrow(InvalidCronExpressionError)
         expect(() => scheduleOptionsUtils.toCronSchedule({ intervalMs: 90_000 })).toThrow(InvalidCronExpressionError)
     })
+
+    it('accepts only hour intervals that divide 24', () => {
+        expect(scheduleOptionsUtils.toCronSchedule({ intervalMs: 12 * 3_600_000 }).cronExpression).toBe('0 */12 * * *')
+        expect(scheduleOptionsUtils.toCronSchedule({ intervalMs: 24 * 3_600_000 }).cronExpression).toBe('0 0 * * *')
+        for (const hours of [5, 7, 9, 10, 11, 13, 23, 48]) {
+            expect(() => scheduleOptionsUtils.toCronSchedule({ intervalMs: hours * 3_600_000 })).toThrow(InvalidCronExpressionError)
+        }
+        expect(scheduleOptionsUtils.toCronSchedule({ intervalMs: 7 * 60_000 }).cronExpression).toBe('*/7 * * * *')
+    })
 })

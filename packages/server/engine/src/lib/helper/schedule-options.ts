@@ -18,11 +18,14 @@ function toCronSchedule(request: ScheduleRequest): CronSchedule {
 
 function intervalToCron(intervalMs: number): string {
     const minutes = intervalMs / 60_000
+    // Minute values that do not divide 60 (e.g. 7) restart at the top of each hour, so the last gap
+    // is shorter. That is exactly what piece-schedule <= 0.1.19 did with `*/N * * * *`; keep it.
     if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 59) {
         return minutes === 1 ? '* * * * *' : `*/${minutes} * * * *`
     }
+    // Hours must divide 24, otherwise `0 */N * * *` would silently give uneven gaps across midnight.
     const hours = minutes / 60
-    if (Number.isInteger(hours) && hours >= 1 && hours <= 23) {
+    if (HOUR_DIVISORS.includes(hours)) {
         return hours === 1 ? '0 * * * *' : `0 */${hours} * * *`
     }
     if (hours === 24) {
@@ -30,6 +33,8 @@ function intervalToCron(intervalMs: number): string {
     }
     throw new InvalidCronExpressionError(`intervalMs=${intervalMs}`)
 }
+
+const HOUR_DIVISORS = [1, 2, 3, 4, 6, 8, 12]
 
 export const scheduleOptionsUtils = { toCronSchedule }
 
