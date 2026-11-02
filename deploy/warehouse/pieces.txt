@@ -1,7 +1,13 @@
 # Custom pieces the managed flows need, installed from npm by install.sh: <package> <version>
-# Official @activepieces/* pieces come from the registry automatically.
+# Official @activepieces/* pieces come from the registry automatically, but only at their latest
+# version. The managed flows pin older versions that a fresh server does not have, so those are
+# installed here too (otherwise apply flags the flows missing-deps).
 @vqnguyen1/piece-sellercloud 0.3.1
 @vqnguyen1/piece-ebay 0.1.1
 @vqnguyen1/piece-amazon-seller 0.0.2
 @vqnguyen1/piece-walmart 0.0.2
 @vqnguyen1/piece-turn14 0.1.1
+@activepieces/piece-webhook 0.1.42
+@activepieces/piece-sftp 0.5.5
+@activepieces/piece-smtp 0.4.8
+@activepieces/piece-file-helper 0.1.30
